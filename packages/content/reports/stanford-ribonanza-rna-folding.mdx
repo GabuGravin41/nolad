@@ -290,7 +290,7 @@ Self-supervised pre-training (Data2Vec, BERT-style masking) gave inconsistent re
 ## How this compares with other competitions
 
 - **ASL fingerspelling** and **Ribonanza** share the Squeezeformer: an architecture from speech recognition moved to sign-language landmarks and then to RNA. The common structure is a 1D sequence with both local patterns (convolutions) and long-range dependencies (attention).
-- **Leash BELKA** (small-molecule binding) also works from molecular strings, but its winners found that graph and string models trained from scratch with physical priors worked better than pretrained language models; here too, the RNA language model RNA-FM did not help, while the physics-based BPPM did.
+- **Leash BELKA** (small-molecule binding) also works from molecular strings, and its winner trained a tiny SMILES transformer from scratch; pre-training on the much larger ZINC database did not help him. In Ribonanza, similarly, embeddings from the RNA language model RNA-FM did not help, while the physics-based BPPM did.
 - **CAFA 5** (protein function) is the opposite case: protein language-model embeddings were the strongest single input.
 
 ## Compute and deployment

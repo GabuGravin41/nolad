@@ -1,0 +1,260 @@
+---
+slug: leash-BELKA
+title: "Leash BELKA (NeurIPS 2024): a tiny SMILES transformer that generalises to new building blocks"
+shortTitle: Leash BELKA
+kaggleSlug: leash-BELKA
+kaggleUrl: https://www.kaggle.com/competitions/leash-BELKA
+year: 2024
+dates: { start: "2024-04-04", end: "2024-07-08" }
+host: Leash Biosciences (NeurIPS 2024 competition track)
+collection: molecular
+field: Early-stage drug discovery
+modality: [Small-molecule SMILES strings, DNA-encoded library screening data]
+tasks: [binary classification per molecule and protein]
+techniques:
+  - molecular-strings
+  - transformers
+  - self-supervised-pretraining
+  - external-data
+  - multi-label-classification
+  - imbalance-handling
+  - grouped-cv
+  - leaderboard-discipline
+metric:
+  name: Mean average precision
+  summary: "Average precision computed separately for each protein target and each test group (shared building blocks, unseen building blocks, a different library), then averaged."
+constraints: { runtime: "Predictions submitted as a file", hardware: "Participants' own hardware", internet: true }
+summary: "Predict which of millions of small molecules bind to three proteins, from screening data of a DNA-encoded chemical library. The private leaderboard rewarded generalisation to molecules built from building blocks never seen in training. The winner, a self-described non-chemist, trained a transformer with a model dimension of only 32 from scratch on character-level SMILES: first as a masked language model, then to predict the molecule's ECFP fingerprint, and finally on the binding labels with a focal loss, validating on held-out building blocks."
+winningIdea: "Pre-train a very small SMILES transformer twice without binding labels (masked tokens, then predicting Morgan fingerprints), fine-tune with focal loss, and choose everything by validation on molecules containing held-out building blocks, which mimics the hardest test group."
+solutions:
+  - rank: 1
+    team: Victor Shlepov
+    members: [{ name: "Victor Shlepov", handle: "victorshlepov" }]
+    writeup: https://www.kaggle.com/competitions/leash-BELKA/writeups/victor-shlepov-1st-place-solution-updated
+    code:
+      - { label: "Solution notebook", url: "https://www.kaggle.com/code/victorshlepov/belka2024-1stplacesolution" }
+    note: "Model code and vocabulary are published as a Kaggle dataset linked from the write-up."
+deployability:
+  score: 4
+  verdict: "The model has a 32-dimensional embedding and four layers, so scoring a billion molecules is a modest GPU job, and it needs only SMILES as input. The limitation is scientific rather than technical: DEL binding calls are noisy proxies for affinity, and predictions for new chemistry must be confirmed experimentally."
+  inference: "One forward pass of a 4-layer, 32-dimensional transformer per SMILES string; hundreds of thousands of molecules per second on a single GPU."
+  models: "One SMILES transformer encoder (4 layers, 8 heads, model dimension 32, vocabulary of 43 tokens) with three sigmoid outputs."
+  training: "Pre-training for about 20 passes over roughly 100 million molecules at batch size 2048, then fingerprint and binding stages; run on a single A100 in Google Colab."
+  externalData: "Additional sEH binding data from the paper 'Building Block-Based Binding Predictions for DNA-Encoded Libraries', processed and shared by other competitors."
+  licences:
+    code: "Kaggle notebook and dataset (Kaggle terms)."
+    data: "BELKA data released by Leash Biosciences under the competition terms (see the data page for current licence)."
+    weights: "See the linked Kaggle dataset."
+  risks:
+    - "A DEL 'hit' means the DNA tag was enriched after binding selection; it is affected by the DNA tag, linker and library chemistry, and does not measure affinity."
+    - "Performance on the new-library test group was far lower than on shared building blocks; out-of-distribution predictions should be treated as a ranking to test, not as results."
+    - "Only three proteins; the model says nothing about other targets."
+related:
+  - stanford-ribonanza-rna-folding
+  - cafa-5-protein-function-prediction
+papers:
+  - { label: "Devlin J. et al. (2019). BERT: pre-training of deep bidirectional transformers for language understanding.", url: "https://arxiv.org/abs/1810.04805" }
+  - { label: "Rogers D., Hahn M. (2010). Extended-connectivity fingerprints. Journal of Chemical Information and Modeling.", url: "https://doi.org/10.1021/ci100050t" }
+  - { label: "Weininger D. (1988). SMILES, a chemical language and information system. Journal of Chemical Information and Computer Sciences.", url: "https://doi.org/10.1021/ci00057a005" }
+  - { label: "Lin T.-Y. et al. (2017). Focal loss for dense object detection.", url: "https://arxiv.org/abs/1708.02002" }
+dataLinks:
+  - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/leash-BELKA/data" }
+priority: 19
+updated: "2026-09-28"
+---
+
+## The problem in its field
+
+Most drugs are small molecules that bind to a protein and change its activity. Early drug discovery searches for molecules that bind a chosen target protein. The space of drug-like molecules is often estimated at around $10^{60}$, while the US FDA has approved only about 2,000 novel molecular entities in its history. Public databases of measured protein–molecule binding, such as BindingDB, contain a few million measurements. The competition description frames the question: can a model trained on very large screening data predict binding for molecules that were never tested?
+
+**DNA-encoded chemical libraries (DELs)** make it possible to screen hundreds of millions of molecules in one experiment. Each molecule is attached to a short DNA strand that records how it was built. The whole library is mixed with an immobilised protein, unbound molecules are washed away, and the DNA tags of the molecules that remain are sequenced. Tags that are enriched identify binders.
+
+Leash Biosciences screened about 133 million molecules against three proteins and released the data as **BELKA** (Big Encoded Library for Chemical Assessment), then the largest public dataset of its kind.
+
+<Deep title="The three protein targets" kind="domain">
+
+- **BRD4 (bromodomain-containing protein 4)** reads acetylated lysines on histones and regulates gene expression; it is a target in cancer and inflammation research.
+- **HSA (human serum albumin)** is the most abundant protein in blood plasma. Binding to it is not a therapeutic goal but a pharmacokinetic property: strong albumin binding reduces the free, active fraction of a drug.
+- **sEH (soluble epoxide hydrolase)** metabolises signalling lipids; inhibitors have been studied for hypertension and inflammation.
+
+The three targets have very different binding sites, so a model must learn target-specific patterns, not just "sticky" molecules.
+</Deep>
+
+<Deep title="How a DEL molecule is built" kind="domain">
+
+The BELKA library is built on a **triazine core**, a six-membered ring with three attachment points. Three **building blocks** are attached, one at each point, from separate pools, so a library of $n_1 \times n_2 \times n_3$ molecules comes from $n_1 + n_2 + n_3$ building blocks. A few thousand building blocks yield hundreds of millions of molecules.
+
+This combinatorial structure has two consequences for modelling:
+
+1. Molecules sharing a building block share a large part of their structure, so random splits leak information: a test molecule usually has all its building blocks represented in training.
+2. A real discovery campaign wants predictions for **new** building blocks, which a random split does not test.
+</Deep>
+
+## The data
+
+Each training row is a molecule (as a SMILES string, plus the SMILES of its three building blocks), a protein, and a binary label: bound or not. There are about 98 million molecules, each screened against all three proteins, giving about 295 million rows. Positives are rare, about 0.5%.
+
+The test set has three groups:
+
+- molecules whose building blocks all appear in training,
+- molecules containing building blocks never seen in training, and
+- molecules from a **different library** with other chemistry.
+
+The public leaderboard was dominated by the easy group, and the private leaderboard weighted generalisation to unseen building blocks much more. The result was a large shake-up: a team second on the public leaderboard finished 13th privately.
+
+<Deep title="SMILES: a molecule as a string" kind="domain">
+
+SMILES (Weininger, 1988) writes a molecular graph as text by walking along it:
+
+- Atoms are written by their symbols: `C`, `N`, `O`, `Cl`; aromatic atoms in lower case: `c`, `n`.
+- Bonds between consecutive atoms are single unless marked (`=` double, `#` triple).
+- Branches are enclosed in parentheses: `CC(C)O` is isopropanol.
+- Rings are closed with matching digits: `c1ccccc1` is benzene.
+- Atoms with charge, explicit hydrogens or stereochemistry go in brackets: `[NH3+]`, `[C@@H]`.
+
+The same molecule can be written in many valid SMILES strings; canonicalisation algorithms choose one. A string is a lossy view of the 3D molecule, and nearby atoms in the molecule can be far apart in the string, but transformers can learn to recover much of the structure.
+</Deep>
+
+## The metric
+
+For each protein and test group, **average precision (AP)** is computed from the ranking of predicted probabilities; the score is the mean over these combinations.
+
+<Foundation id="precision-recall-fbeta" />
+
+<Deep title="Average precision as area under the precision–recall curve" kind="math">
+
+Sort the $N$ test molecules by predicted score, descending. Let $\text{P}@k$ be the precision among the top $k$ and $\text{R}@k$ the recall. Average precision is
+$$
+\text{AP} = \sum_{k=1}^{N} \big(\text{R}@k - \text{R}@(k-1)\big)\,\text{P}@k = \frac{1}{N_+}\sum_{k:\,y_{(k)}=1} \text{P}@k,
+$$
+the mean of the precision values at the ranks where positives occur. It approximates the area under the precision–recall curve.
+
+Two properties matter here:
+
+- **It only depends on the ranking.** Calibration is irrelevant; a model can output any monotone transformation of its scores.
+- **Its baseline is the positive rate.** A random ranking has expected AP close to $N_+/N$, about 0.005 at a 0.5% positive rate, unlike ROC-AUC, whose random baseline is 0.5. AP is dominated by the top of the ranking: how many true binders are among the molecules the model is most confident about. That is also what matters in practice, where only the top few hundred predictions can be synthesised and tested.
+
+Averaging AP over test groups gives the hard groups (unseen building blocks, new library) equal influence despite their small size.
+</Deep>
+
+## How the winning solution works
+
+Victor Shlepov won alone and described himself as not a chemist. His model is unusually small, and the work went into pre-training and validation.
+
+<Pipeline steps={[
+  {tag: "Tokens", title: "Near character-level SMILES", detail: "vocabulary of 43 tokens"},
+  {tag: "Pre-train 1", title: "Masked language model", detail: "train + test + external SMILES; focal cross-entropy"},
+  {tag: "Pre-train 2", title: "Predict ECFP fingerprint", detail: "2048 bits; frozen embeddings"},
+  {tag: "Fine-tune", title: "Binding for 3 proteins", detail: "binary focal loss; masked for missing labels"},
+  {tag: "Validate", title: "Held-out building blocks", detail: "3% of blocks; about 9M molecules"}
+]} caption="The winning pipeline." />
+
+<Foundation id="models-and-loss" />
+
+### The model
+
+A transformer encoder in the style of the TensorFlow tutorial: **4 layers, 8 heads, key and value dimension 32, model dimension 32.** He tried dimensions 16 and 64 and found both worse, and more than 6 layers did not help.
+
+<Foundation id="attention-transformers" />
+
+**Tokenisation.** A vocabulary of 43 tokens, close to character level: atoms, ring-closure digits, bonds, parentheses and bracket expressions such as `[C@@]` are single tokens. More elaborate schemes (bigrams, trigrams, a correct use of the atomInSmiles tokeniser) were worse; the author notes his own use of atomInSmiles was not the intended one.
+
+A model this small has few parameters to overfit the building blocks it sees; it must learn general chemical patterns to predict hundreds of millions of labels.
+
+### Pre-training stage 1: masked language modelling
+
+On SMILES from the training set, the test set and external data, he trained a BERT-style masked language model. 15% of token positions are selected; of these, 80% are replaced with a mask token, 10% with a random token and 10% left unchanged; the model predicts the original tokens at the selected positions. The loss was a categorical **focal** cross-entropy. Training ran for about 100 epochs of 10,000 steps at batch size 2,048, roughly 20 passes over the data.
+
+<Deep title="The masked-language-model objective" kind="math">
+
+For a token sequence $x = (x_1, \dots, x_T)$, a random subset $M$ of positions is selected. The corrupted input $\tilde x$ replaces selected tokens as described (mask, random or unchanged). The model outputs, at each position $t$, a distribution $p_\theta(\cdot \mid \tilde x)_t$ over the vocabulary. The loss is
+$$
+\mathcal{L}_{\text{MLM}}(\theta) = -\,\mathbb{E}_{x}\,\mathbb{E}_{M}\Big[\frac{1}{|M|}\sum_{t \in M} \log p_\theta(x_t \mid \tilde x)_t\Big].
+$$
+To predict a masked atom, the model must infer it from the surrounding string: from valence rules, ring closures and common functional groups. This forces the representations to encode chemistry without any binding labels, and it can use the unlabelled **test** molecules, including those with unseen building blocks, which is legitimate because their labels are never used.
+
+The 10% of selected tokens left unchanged prevent the model from learning that "a real token never needs predicting", since at fine-tuning time there are no mask tokens; the 10% random tokens teach it to check whether a visible token is plausible.
+</Deep>
+
+<Foundation id="softmax-cross-entropy" />
+
+### Pre-training stage 2: predicting the fingerprint
+
+With the embeddings frozen, a sigmoid head was trained for 20–50 epochs to predict each molecule's **ECFP fingerprint** (2048 bits, with chirality), reaching a mean average precision of about 0.4 on this task. Fingerprints were computed quickly with the scikit-fingerprints library.
+
+<Deep title="Extended-connectivity fingerprints (ECFP)" kind="math">
+
+ECFP (Rogers and Hahn, 2010), closely related to Morgan fingerprints, describes a molecule by the set of circular substructures it contains.
+
+1. **Initialise.** Give each heavy atom $a$ an integer identifier $h_a^{(0)}$ from a hash of its local invariants: element, number of heavy neighbours, number of hydrogens, charge, ring membership (and, with chirality, its stereo configuration).
+2. **Iterate** for $r = 1, \dots, R$ (ECFP4 has $R = 2$, a diameter of 4 bonds): update each atom's identifier from its own and its neighbours' previous identifiers, with bond types,
+$$
+h_a^{(r)} = \operatorname{hash}\Big(h_a^{(r-1)},\ \operatorname{sorted}\big\{(\text{bond}_{ab},\, h_b^{(r-1)}) : b \in \mathcal{N}(a)\big\}\Big).
+$$
+   Each $h_a^{(r)}$ identifies the substructure within radius $r$ of atom $a$.
+3. **Collect and fold.** Gather all identifiers from all iterations, remove duplicates, and set bit $h \bmod 2048$ in a 2048-bit vector.
+
+This is a message-passing procedure on the molecular graph, with fixed hash functions instead of learned weights. Graph neural networks generalise it by learning the update function.
+
+Predicting ECFP from SMILES therefore teaches the transformer to recover **graph neighbourhoods** from the string, where bonded atoms can be far apart (across a branch or ring closure). It injects well-established medicinal-chemistry knowledge (substructures) into the representation without binding labels.
+</Deep>
+
+### Fine-tuning on binding
+
+The final stage trained the model on the binding labels for the three proteins, plus external sEH data from the paper "Building Block-Based Binding Predictions for DNA-Encoded Libraries" (found by hengck23 and processed by chemdatafarmer). External molecules have labels only for sEH, so the loss was **masked** for missing labels, and a **binary focal loss** handled the 0.5% positive rate.
+
+<Foundation id="focal-loss" />
+
+<Deep title="Masked multi-task focal loss" kind="code">
+
+A Nolad illustration in PyTorch; the author's implementation is in TensorFlow.
+
+```python
+import torch
+
+def masked_focal_bce(logits, targets, gamma=2.0, alpha=0.25):
+    """logits, targets: (B, 3) for BRD4, HSA, sEH; targets = -1 where the label is missing."""
+    known = targets >= 0
+    y = targets.clamp(min=0).float()
+    p = logits.sigmoid()
+    p_t = torch.where(y == 1, p, 1 - p)
+    a_t = torch.where(y == 1, torch.full_like(p, alpha), torch.full_like(p, 1 - alpha))
+    ce = torch.nn.functional.binary_cross_entropy_with_logits(logits, y, reduction="none")
+    loss = a_t * (1 - p_t) ** gamma * ce
+    return (loss * known).sum() / known.sum().clamp(min=1)
+```
+</Deep>
+
+### Validation that matches the private test
+
+He held out **3% of the building blocks**: every molecule containing at least one of them, about 9 million, went to validation. This reproduces the hard test group, in which molecules contain unseen building blocks, and it is the reason his choices generalised to the private leaderboard while those of many public-leaderboard leaders did not.
+
+<Foundation id="cross-validation" />
+
+<Callout kind="key" title="The split is the model">
+A random split of BELKA puts nearly every validation molecule's building blocks into training, and the validation score then measures memorisation of building-block effects. Grouping by building block is the molecular analogue of grouping by patient in medical imaging.
+</Callout>
+
+### What did not work
+
+Complex tokenisations; wider or deeper models; multiple inputs (SMILES together with fingerprints); a month of pre-training on the ZINC database of commercially available molecules; custom losses; and gated fusion of building-block representations. Training ran on a single A100 in Google Colab.
+
+<Foundation id="transfer-learning" />
+
+## How this compares with other competitions
+
+- **Stanford Ribonanza** also predicts properties from biological sequences. There, a physics-based input (base-pairing probabilities) was decisive and a pretrained RNA language model did not help. Here, pre-training helped only when done on the relevant molecules (including the test set), and the domain knowledge entered through ECFP targets.
+- **CAFA 5** (protein function) is the contrast: large pretrained protein language models trained on hundreds of millions of sequences provided the strongest features. Protein sequences share evolutionary structure that a general model can learn; DEL molecules are synthetic combinations with a narrower chemistry.
+- **Leaderboard shake-up** here came from a distribution shift designed into the test set, not from noise; the winner succeeded by validating on that shift.
+
+## Compute and deployment
+
+| Setting | What the solution needs |
+| --- | --- |
+| Competition | Pre-training over about 100 million SMILES; one A100 in Colab. |
+| Discovery group | One GPU scores a billion-molecule virtual library in hours; the input is only a SMILES string. |
+| Drug discovery pipeline | Predictions prioritise molecules for synthesis and testing; each target needs its own screening data. |
+
+<Callout kind="deploy" title="The minimum useful version">
+A 4-layer, 32-dimensional SMILES transformer, pre-trained with masked tokens and ECFP prediction on all available molecules, fine-tuned with a masked focal loss, and validated on held-out building blocks. Use it to rank candidates for experimental testing, not as a measure of affinity.
+</Callout>
