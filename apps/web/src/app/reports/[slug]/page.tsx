@@ -99,7 +99,7 @@ export default async function ReportPage({ params }: { params: Promise<{ slug: s
               <p className="mt-2 font-serif text-[1.05rem] leading-relaxed">{m.winningIdea}</p>
               <p className="mt-3 text-sm text-muted">
                 1st place: <strong className="text-fg">{winner.team}</strong>
-                {winner.members.some((p) => p.name !== winner.team)
+                {winner.members.some((p) => !winner.team.includes(p.name))
                   ? ` (${winner.members.map((p) => p.name).join(", ")})`
                   : ""}
                 .
@@ -140,7 +140,7 @@ export default async function ReportPage({ params }: { params: Promise<{ slug: s
                       <td>{s.rank}</td>
                       <td>
                         <strong>{s.team}</strong>
-                        {s.members.some((p) => p.name !== s.team) ? (
+                        {s.members.some((p) => !s.team.includes(p.name)) ? (
                           <>
                             <br />
                             <span className="text-muted">{s.members.map((p) => p.name).join(", ")}</span>
