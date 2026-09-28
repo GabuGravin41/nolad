@@ -1,0 +1,276 @@
+---
+slug: rsna-2022-cervical-spine-fracture-detection
+title: "RSNA 2022 Cervical Spine Fracture Detection: segment the vertebrae, then classify each one"
+shortTitle: RSNA Cervical Spine Fracture
+kaggleSlug: rsna-2022-cervical-spine-fracture-detection
+kaggleUrl: https://www.kaggle.com/competitions/rsna-2022-cervical-spine-fracture-detection
+year: 2022
+dates: { start: "2022-07-28", end: "2022-10-27" }
+host: RSNA with ASNR and ASSR
+collection: medicine
+field: Emergency and musculoskeletal radiology
+modality: [Cervical spine CT]
+tasks: [multi-label classification per vertebra and per patient]
+techniques:
+  - localisation-then-classification
+  - semantic-segmentation
+  - 3d-volumes
+  - 2-5d-slices
+  - unet
+  - cnn-backbones
+  - sequence-models
+  - multi-label-classification
+  - hierarchical-labels
+  - imbalance-handling
+  - ensembling
+metric:
+  name: Weighted multi-label log loss
+  summary: "Log loss over eight labels per study (a fracture in each of C1–C7, and a fracture anywhere), with positive labels and the patient-level label weighted more heavily."
+constraints: { runtime: "Code competition: notebook inference in at most 9 hours", hardware: "Kaggle CPU or GPU notebook", internet: false }
+summary: "Decide, from a CT of the neck, which of the seven cervical vertebrae are fractured. Both top solutions segment the vertebrae first with a model trained on only 87 annotated studies, crop each vertebra, and classify the crop with a 2D CNN over sampled slices followed by a recurrent layer. The winner added a patient-level model that reads all seven vertebrae together."
+winningIdea: "Use a small 3D segmentation model to find each vertebra, then classify each vertebra's crop from 15 slices (with neighbouring slices and the vertebra's own mask as extra channels) using a 2D CNN and an LSTM; train a second model on all 105 slices of a patient to predict the overall label."
+solutions:
+  - rank: 1
+    team: Qishen Ha
+    members: [{ name: "Qishen Ha" }]
+    writeup: https://www.kaggle.com/competitions/rsna-2022-cervical-spine-fracture-detection/writeups/qishen-ha-1st-place-solution
+    code:
+      - { label: "Code (linked from the discussion post)", url: "https://www.kaggle.com/competitions/rsna-2022-cervical-spine-fracture-detection/discussion/362787" }
+  - rank: 2
+    team: RAWE
+    members:
+      - { name: "Ryan R", handle: "ryanyuerong" }
+      - { name: "Jackeylov3" }
+      - { name: "Zhenghan Chen" }
+      - { name: "Hao Chen" }
+    writeup: https://www.kaggle.com/competitions/rsna-2022-cervical-spine-fracture-detection/writeups/rawe-2nd-place-solution-segmentation-2-5d-cnn-gru-
+    code:
+      - { label: "Code", url: "https://github.com/ryanyuerong/RSNA2022RAWE" }
+deployability:
+  score: 4
+  verdict: "A two-stage pipeline of standard components (a 3D U-Net at 128³ and 2D CNNs with a recurrent layer) that fits in a Kaggle notebook; the winner's full ensemble used 7.5 of the 9 allowed hours for the test set, and a reduced version is fast. The per-vertebra output is directly clinically meaningful."
+  inference: "One 3D segmentation pass at 128³ per study, then per vertebra one 2D CNN pass over 15 slices and a recurrent layer; seconds per study for a single model."
+  models: "Winner: 10 segmentation models (ResNet18d-UNet and EfficientNetV2-S-UNet, 5 folds each) and 25 classification models (EfficientNetV2-S, ConvNeXt tiny/nano/pico, NFNet-L0)."
+  training: "Winner: a workstation with two NVIDIA A6000 GPUs."
+  externalData: "None."
+  licences:
+    code: "Public GitHub repository (second place) and code linked from the winner's post."
+    data: "RSNA competition data terms (non-commercial research)."
+    weights: "Not released as a separate artefact."
+  risks:
+    - "The segmentation model was trained on only 87 studies; unusual anatomy (surgical hardware, severe degeneration, children) may be mislocalised, and every downstream prediction depends on it."
+    - "Elderly patients with osteoporosis and degenerative change are the hardest cases and the most common in practice."
+    - "Missing a fracture is far more costly than a false alarm; the operating point must be set for sensitivity."
+related:
+  - rsna-2024-lumbar-spine-degenerative-classification
+  - rsna-2023-abdominal-trauma-detection
+  - rsna-intracranial-hemorrhage-detection
+  - uw-madison-gi-tract-image-segmentation
+papers:
+  - { label: "Ronneberger O. et al. (2015). U-Net: convolutional networks for biomedical image segmentation.", url: "https://arxiv.org/abs/1505.04597" }
+dataLinks:
+  - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/rsna-2022-cervical-spine-fracture-detection/data" }
+priority: 14
+updated: "2026-09-28"
+---
+
+## The problem in its field
+
+The competition description cites more than 1.5 million spine fractures a year in the United States and more than 17,000 spinal cord injuries. The **cervical spine** (the neck) is the most common site of spinal fracture, and a missed unstable fracture can lead to paralysis. After trauma, patients are imaged quickly; CT has replaced plain radiographs as the standard test because it shows the bone in full.
+
+Reading a cervical spine CT is not difficult for a trained radiologist when the fracture is clear, but subtle fractures are missed, particularly in older patients whose bones are thinned by osteoporosis and distorted by degenerative change. An automated second reader that flags possible fractures, vertebra by vertebra, would help in busy emergency departments.
+
+<Deep title="The seven cervical vertebrae" kind="domain">
+
+The cervical spine has seven vertebrae, **C1 to C7**, from the skull downwards.
+
+- **C1 (atlas)** is a ring without a vertebral body that supports the skull.
+- **C2 (axis)** has a peg (the dens, or odontoid process) that projects upwards through the ring of C1 and allows the head to rotate. C2 fractures, especially of the dens, are common in the elderly after falls.
+- **C3–C7** have a similar structure: a vertebral body at the front, a ring of bone (the neural arch) around the spinal canal behind it, and processes for muscle attachment. C7 has a long spinous process that can be felt at the base of the neck.
+
+Below C7 come the thoracic vertebrae T1–T12. A CT of the neck includes the lower skull and often the upper thoracic spine.
+
+A fracture can involve any part of a vertebra. Some are displaced and obvious; others are thin lines through the cortex, visible on a few slices only.
+</Deep>
+
+## The data
+
+The RSNA, with the American Society of Neuroradiology and the American Society of Spine Radiology, assembled about 3,000 CT studies from twelve sites in nine countries on six continents. Experts annotated fractures with the vertebral level and location. About 2,000 studies were used for training.
+
+Each training study has eight labels: `C1` to `C7` (is this vertebra fractured?) and `patient_overall` (is any vertebra fractured?). Two kinds of extra annotation exist for subsets:
+
+- **87 studies with 3D segmentation masks** in NIfTI format, giving a label to every voxel of each vertebra.
+- **Bounding boxes** around fractures on individual slices for some positive studies.
+
+Studies arrive as DICOM series of 200–300 axial slices. The raw training set is around 300 GB.
+
+<Foundation id="dicom-and-volumes" />
+
+<Foundation id="ct-hounsfield-windowing" />
+
+## The metric
+
+For each study, eight binary log losses are computed and combined with weights that depend on the label and on its true value:
+$$
+\mathcal{L} = \frac{\sum_{i}\sum_{j} w_{ij}\,\ell(y_{ij}, p_{ij})}{\sum_i\sum_j w_{ij}},
+\qquad \ell(y, p) = -\big[y\log p + (1-y)\log(1-p)\big].
+$$
+The organisers did not publish the weights. Competitors inferred from submissions that a vertebra label has weight 1 when negative and 2 when positive, and the patient-level label weight 7 when negative and 14 when positive. Positives therefore count twice as much as negatives, and the patient label counts as much as all seven vertebrae together.
+
+<Foundation id="weighted-log-loss" />
+
+<Deep title="The optimal prediction under class-dependent weights" kind="math">
+
+Take one label with true probability of fracture $q$ given the image. The expected weighted loss of predicting $p$, with weight $w_1$ on positives and $w_0$ on negatives, is
+$$
+R(p) = -\,w_1\,q\log p - w_0\,(1-q)\log(1-p).
+$$
+Differentiate:
+$$
+R'(p) = -\frac{w_1 q}{p} + \frac{w_0(1-q)}{1-p}.
+$$
+Set to zero: $w_1 q (1-p) = w_0 (1-q) p$, so
+$$
+p^* = \frac{w_1 q}{w_1 q + w_0(1-q)}.
+$$
+With $w_1 = 2w_0$, $p^* = 2q/(1+q)$. A true probability of 0.1 should be reported as 0.18; 0.5 as 0.67. Weighting positives more makes the optimal prediction larger than the calibrated probability.
+
+In the normalised metric the weights also appear in the denominator, which depends on the true labels rather than the predictions, so it does not change the optimum for any single label.
+
+A model trained with the same weighting in its loss learns $p^*$ directly. A model trained with unweighted binary cross-entropy learns $q$, and the conversion above can be applied afterwards; the equivalent operation on logits is adding $\log(w_1/w_0) = \log 2$.
+</Deep>
+
+<Deep title="Consistency between the vertebra labels and the patient label" kind="math">
+
+`patient_overall` is 1 exactly when at least one of C1–C7 is 1. If a model's vertebra predictions $p_1, \dots, p_7$ were calibrated and the fractures independent given the image,
+$$
+P(\text{any}) = 1 - \prod_{c=1}^{7} (1 - p_c).
+$$
+The independence assumption is wrong in practice: fractures cluster (a high-energy injury often fractures adjacent vertebrae), and the same image evidence influences neighbouring predictions. A model that predicts the patient label directly from all vertebrae can learn these dependencies, which is why the winner trained a separate patient-level model. Because the patient label carries as much weight as all seven vertebrae combined, getting it right matters a great deal for the score.
+</Deep>
+
+## How the winning solution works
+
+Qishen Ha won alone. His solution has two stages.
+
+<Pipeline steps={[
+  {tag: "Stage 1", title: "3D segmentation at 128³", detail: "7-channel U-Net, one channel per vertebra"},
+  {tag: "Crop", title: "One crop per vertebra", detail: "7 crops per study; 14k training samples"},
+  {tag: "Sample", title: "15 slices per crop", detail: "each with ±2 neighbours + the vertebra mask"},
+  {tag: "Stage 2a", title: "2D CNN + LSTM per vertebra", detail: "one label per vertebra"},
+  {tag: "Stage 2b", title: "2D CNN + LSTM per patient", detail: "all 7 × 15 = 105 slices; learns patient_overall"}
+]} caption="The winning pipeline." />
+
+<Foundation id="models-and-loss" />
+
+### Stage 1: segment the seven vertebrae
+
+A 3D U-Net takes the whole study resampled to $128 \times 128 \times 128$ voxels and outputs seven channels, one per vertebra. Encoders: ResNet18d and EfficientNetV2-S (via timm), 5 folds each. It is trained on the 87 studies with masks and then predicts masks for all 2,000 training studies and, at inference, for every test study.
+
+<Foundation id="unet" />
+
+<Foundation id="dice-and-overlap" />
+
+Resolution 128³ is coarse: a vertebra spans perhaps 15–20 voxels in height. That is enough to locate each vertebra and draw a box around it, which is all stage 2 needs; the fracture itself is found at full resolution in stage 2.
+
+Separating the vertebrae in the segmentation, rather than just "bone", gives the vertebral level directly: the channel index is the label.
+
+### Stage 2: classify each vertebra
+
+Each study gives seven crops, so the 2,000 training studies give about 14,000 vertebra samples, each with one binary label. This multiplies the number of training examples by seven and makes each example much smaller than a full study.
+
+From each crop, **15 slices** are taken at even intervals along the vertical axis. Each is turned into a six-channel image:
+
+- channels 1–5: the slice and its two neighbours above and two below (**2.5D** input), and
+- channel 6: the **predicted mask** of this vertebra on the slice.
+
+The mask channel matters because a crop around C5 also contains parts of C4 and C6. Without it, the classifier would see a fracture in C4 and label C5 positive. With it, the model knows which bone the label refers to.
+
+<Deep title="Why 2.5D and a recurrent layer instead of a 3D CNN" kind="detail">
+
+Qishen Ha reports that 3D CNNs on the crops did not work well. Several reasons are plausible:
+
+- 2D backbones have ImageNet-pretrained weights; comparable 3D weights did not exist for CT in 2022.
+- A thin fracture line is often visible within a slice, so 2D convolutions at full in-plane resolution see it well; its extent across slices matters less.
+- With 14,000 samples, a 3D network has many more parameters to fit per sample.
+
+The 2D CNN produces a feature vector per slice; an **LSTM** over the 15 vectors combines them into a vertebra prediction. This is the same design that won the 2019 intracranial haemorrhage competition, applied to a crop instead of a full scan.
+</Deep>
+
+<Foundation id="recurrent-networks" />
+
+<Foundation id="cnn-backbones" />
+
+### Two kinds of classification model
+
+- **Type 1 (vertebra level).** Input: one vertebra's 15 slices. Output: that vertebra's label. Backbones: EfficientNetV2-S at 512, ConvNeXt-tiny at 384.
+- **Type 2 (patient level).** Input: all $7 \times 15 = 105$ slices of a patient at once, with an LSTM over them. Outputs: all seven vertebra labels and `patient_overall`. Because it sees the whole neck, it can learn the dependencies between vertebrae described above. The memory cost is high, so it uses small backbones (ConvNeXt nano, pico, tiny; NFNet-L0) and batch size 1.
+
+<Deep title="The shape of a type-2 forward pass" kind="code">
+
+A Nolad illustration of the tensor shapes; see the winner's code for the implementation.
+
+```python
+import torch, torch.nn as nn, timm
+
+class PatientModel(nn.Module):
+    def __init__(self, backbone="convnext_nano", in_ch=6, hidden=256):
+        super().__init__()
+        self.cnn  = timm.create_model(backbone, pretrained=True, in_chans=in_ch, num_classes=0)
+        d = self.cnn.num_features
+        self.lstm = nn.LSTM(d, hidden, batch_first=True, bidirectional=True)
+        self.vert = nn.Linear(2 * hidden, 1)        # per-slice logit, pooled per vertebra
+        self.any  = nn.Linear(2 * hidden, 1)        # patient_overall
+
+    def forward(self, x):                           # x: (B, 7, 15, 6, H, W)
+        B, V, S = x.shape[:3]
+        f = self.cnn(x.flatten(0, 2))               # (B*105, d)
+        h, _ = self.lstm(f.view(B, V * S, -1))      # sequence of 105 slices, C1 top to C7 bottom
+        v = self.vert(h).view(B, V, S).amax(-1)     # (B, 7) one logit per vertebra
+        a = self.any(h.amax(1)).squeeze(-1)         # (B,)  patient-level logit
+        return v, a
+```
+</Deep>
+
+### The final ensemble and runtime
+
+Segmentation: 5 folds of ResNet18d-UNet and 5 of EfficientNetV2-S-UNet at 128³. Classification: type 1 with 5 folds of EfficientNetV2-S (512) and 5 of ConvNeXt-tiny (384); type 2 with 5 folds of ConvNeXt-nano (512), 2 of ConvNeXt-pico (512), 2 of ConvNeXt-tiny (384) and 2 of NFNet-L0 (384). The submission took 7.5 of the 9 permitted hours. Training was done largely on a workstation with two NVIDIA A6000 GPUs.
+
+<Foundation id="ensembling-tta" />
+
+## Second place: 2.5D segmentation, then CNN + GRU with attention
+
+Team RAWE (Ryan R, Jackeylov3, Zhenghan Chen and Hao Chen) used the same two-stage structure with different choices.
+
+**Segmentation in 2.5D.** Instead of a 3D model, a 2D U-Net (segmentation_models_pytorch, EfficientNet-B0 encoder) took three adjacent slices $(i-1, i, i+1)$ as channels and predicted nine classes: background, C1–C7 and a single class for the thoracic vertebrae T1–T12. Including the thoracic spine as a class prevents T1 from being mistaken for C7. The approach was adapted from a public 2.5D notebook by Awsaf for the UW-Madison GI tract segmentation competition.
+
+<Foundation id="data-augmentation" />
+
+**Cropping.** A study has 200–300 slices, about 30 per vertebra. They sampled **24** slices evenly per vertebra (`np.linspace`). Because the data amount to about 300 GB, they stored crop coordinates rather than cropped voxels.
+
+**Classification.** The input is a stack of 24 slices $(B, 24, H, W)$. A CNN (EfficientNetV2-S or ResNeSt-50d) encodes each slice, a **bidirectional GRU** reads the sequence, and an attention layer pools it. They report that a custom GRU initialisation and spatial dropout helped, and they removed two training studies they judged to be mislabelled.
+
+They did not try detection with the bounding boxes or a transformer sequence model.
+
+## Comparison with the other RSNA spine and trauma competitions
+
+| Competition | Localisation | Classification | Label structure |
+| --- | --- | --- | --- |
+| Intracranial haemorrhage (2019) | none (whole scan) | 2D CNN per slice + GRU/LSTM | per slice |
+| **Cervical spine (2022)** | segmentation of 7 vertebrae | 2.5D CNN + LSTM/GRU per crop | per vertebra + patient |
+| Abdominal trauma (2023) | organ segmentation | 2.5D CNN + GRU per organ | per organ, three grades |
+| Lumbar spine (2024) | point or box detection of 5 discs | crops per disc and condition | per level, three severities |
+
+The step from the 2019 to the 2022 design is localisation: once each labelled structure is found and cropped, the classifier works on small, well-defined inputs and each study yields several training examples. The 2023 and 2024 winners kept this pattern.
+
+## Compute and deployment
+
+| Setting | What the solution needs |
+| --- | --- |
+| Competition | 9-hour notebook; the full winning ensemble used 7.5 hours for the test set. |
+| Hospital research group | One GPU for a single segmentation model and a single type-1 classifier; seconds per study. |
+| Product | Validation on elderly and post-surgical patients; sensitivity-first operating point; regulatory approval. |
+
+<Callout kind="deploy" title="The minimum useful version">
+One 3D segmentation model at 128³ (or a 2.5D U-Net that includes a thoracic class), one EfficientNetV2-S type-1 classifier with the mask channel, and a patient-level combination. Report the predicted mask with each vertebra's score, so the radiologist can check both where the model looked and what it concluded.
+</Callout>
