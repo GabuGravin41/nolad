@@ -1,0 +1,308 @@
+---
+slug: stanford-ribonanza-rna-folding
+title: "Stanford Ribonanza RNA Folding (2023): transformers with base-pairing attention bias"
+shortTitle: Stanford Ribonanza RNA Folding
+kaggleSlug: stanford-ribonanza-rna-folding
+kaggleUrl: https://www.kaggle.com/competitions/stanford-ribonanza-rna-folding
+year: 2023
+dates: { start: "2023-09-07", end: "2023-12-07" }
+host: Das Lab (Stanford University) and the Eterna citizen-science project
+collection: molecular
+field: RNA structural biology
+modality: [RNA sequences, chemical mapping profiles]
+tasks: [per-nucleotide regression]
+techniques:
+  - per-position-regression
+  - molecular-strings
+  - pair-features
+  - transformers
+  - conformers
+  - imbalance-handling
+  - grouped-cv
+  - leaderboard-discipline
+  - ensembling
+metric:
+  name: Mean absolute error
+  summary: "MAE between predicted and measured reactivity for every nucleotide of every test sequence, in two chemical mapping experiments, with measured values clipped to [0, 1]."
+constraints: { runtime: "Predictions submitted as a file (about 540 million values)", hardware: "Participants' own hardware", internet: true }
+summary: "Predict, for each nucleotide of an RNA sequence, how strongly it reacts with two chemical probes; reactivity is high where the nucleotide is unpaired and flexible, so the task is an indirect readout of RNA structure. Both top solutions were transformer encoders over the sequence whose attention logits receive a bias computed from the base-pairing probability matrix predicted by a classical folding program. The winner added a learned relative position bias that extrapolates to longer sequences."
+winningIdea: "Give the transformer the physics-based base-pairing probability matrix as a per-head bias on its attention logits, so that attention between nucleotides that may pair is favoured, and use a learned relative position bias that generalises to longer test sequences."
+solutions:
+  - rank: 1
+    team: vigg
+    members:
+      - { name: "Dmitry Penzar" }
+      - { name: "Valeriy Vyaltsev" }
+      - { name: "Elizaveta Aristova" }
+      - { name: "Artemy Bakulin" }
+      - { name: "polymerase" }
+    writeup: https://www.kaggle.com/competitions/stanford-ribonanza-rna-folding/writeups/vigg-1st-place-solution-transformer-model-with-dyn
+    code:
+      - { label: "Code", url: "https://github.com/autosome-ru/vigg_ribonanza/" }
+  - rank: 2
+    team: Hoyeol Sohn
+    members: [{ name: "Hoyeol Sohn", handle: "hoyso48" }]
+    writeup: https://www.kaggle.com/competitions/stanford-ribonanza-rna-folding/writeups/hoyeol-sohn-2nd-place-solution-squeezeformer-bpp-c
+    code:
+      - { label: "Code", url: "https://github.com/hoyso48/Stanford---Ribonanza-RNA-Folding-2nd-place-solution" }
+deployability:
+  score: 4
+  verdict: "The networks are small (dimension 192, 12 layers) and run on sequences of a few hundred nucleotides; the second-place single model trains in about 30 hours on one RTX 4090. The per-sequence base-pairing matrix from EternaFold costs more than the network itself, but is a standard CPU computation."
+  inference: "For each sequence: an EternaFold base-pairing probability computation (cubic in length) and one transformer pass; milliseconds of GPU time per sequence plus the folding computation."
+  models: "Winner: an average of 27 transformer models (15 with squeeze-excitation convolutions on the BPPM, 10 with plain convolutions, 2 trained on length splits) plus one DMS-to-2A3 model."
+  training: "Winner: 270 epochs over the training set per model; runner-up: about 30 GPU-hours per model on an RTX 4090."
+  externalData: "None used for the final models; EternaFold is a pretrained folding package."
+  licences:
+    code: "Public GitHub repositories for both top solutions (see each repository's licence)."
+    data: "Ribonanza dataset released by the Das Lab after the competition (see the competition data page and the Ribonanza paper for terms)."
+    weights: "See the repositories."
+  risks:
+    - "Reactivity is an indirect readout of structure; converting predictions into a secondary structure needs a further step."
+    - "Training sequences are mostly 177 or 206 nucleotides long; accuracy on much longer RNAs is less certain."
+    - "Chemical mapping is noisy; the per-sequence signal-to-noise measure matters for both training and evaluation."
+related:
+  - leash-BELKA
+  - cafa-5-protein-function-prediction
+  - asl-fingerspelling
+papers:
+  - { label: "Kretsch R.C. et al. (2024). Ribonanza: deep learning of RNA structure through dual crowdsourcing. bioRxiv.", url: "https://doi.org/10.1101/2024.02.24.581671" }
+  - { label: "Wayment-Steele H.K. et al. (2022). RNA secondary structure packages evaluated and improved by high-throughput experiments (EternaFold). Nature Methods.", url: "https://doi.org/10.1038/s41592-022-01605-0" }
+  - { label: "McCaskill J.S. (1990). The equilibrium partition function and base pair binding probabilities for RNA secondary structure. Biopolymers.", url: "https://doi.org/10.1002/bip.360290621" }
+  - { label: "Wang W. et al. (2023). CrossFormer++: a versatile vision transformer hinging on cross-scale attention (dynamic position bias).", url: "https://arxiv.org/abs/2303.06908" }
+  - { label: "Press O. et al. (2022). Train short, test long: attention with linear biases (ALiBi).", url: "https://arxiv.org/abs/2108.12409" }
+  - { label: "Kim S. et al. (2022). Squeezeformer: an efficient transformer for automatic speech recognition.", url: "https://arxiv.org/abs/2206.00888" }
+dataLinks:
+  - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/stanford-ribonanza-rna-folding/data" }
+  - { label: "Arnie (Das Lab wrapper for RNA folding packages)", url: "https://github.com/DasLabStanford/arnie" }
+priority: 13
+updated: "2026-09-28"
+---
+
+## The problem in its field
+
+RNA molecules are single strands of nucleotides (A, C, G, U) that fold back on themselves: complementary bases pair (A with U, G with C, and the weaker G–U wobble pair) to form helices, separated by loops of unpaired nucleotides. This **secondary structure**, and the 3D shape built on it, determines what many RNAs do: how ribosomes and riboswitches work, how stable an mRNA vaccine is, and whether a designed RNA drug binds its target.
+
+Measuring RNA structure directly (crystallography, cryo-EM, NMR) is slow and costly. **Chemical mapping** is a high-throughput alternative: add a reagent that modifies nucleotides that are unpaired or flexible, then read the modifications by sequencing. The result is a **reactivity profile**, one number per nucleotide, high where the nucleotide is exposed and low where it is paired or buried.
+
+The Ribonanza competition was organised by Rhiju Das's lab at Stanford with the Eterna project, an online game in which players design RNA sequences. It follows the lab's earlier OpenVaccine competition (2020) on mRNA degradation. The organisers' goal was a model that predicts chemical mapping from sequence well enough to serve as a building block for structure prediction and RNA design.
+
+<Deep title="DMS and 2A3: the two chemical probes" kind="domain">
+
+- **DMS (dimethyl sulfate)** methylates the Watson–Crick face of unpaired **A and C**. G and U are largely unreactive, so the DMS profile carries information mainly at A and C.
+- **2A3** is a **SHAPE** reagent (selective 2′-hydroxyl acylation analysed by primer extension). It acylates the 2′-OH of the ribose, which is reactive when the nucleotide is flexible, for **all four bases**.
+
+In both experiments, the modification is detected by **mutational profiling (MaP)**: reverse transcriptase reads through a modified nucleotide and introduces a mutation, and sequencing counts the mutation rate at each position. The rate, normalised, is the reactivity.
+
+Both signals are noisy. The organisers provide a signal-to-noise estimate per sequence and experiment and a `SN_filter` flag for reliable profiles.
+</Deep>
+
+<Deep title="Base-pairing probabilities from a folding model" kind="domain">
+
+Classical RNA folding programs assign a free energy $\Delta G(S)$ to each possible secondary structure $S$ of a sequence, from experimentally measured nearest-neighbour parameters (stacking energies of adjacent pairs, loop penalties). The equilibrium probability of a structure follows the Boltzmann distribution,
+$$
+P(S) = \frac{e^{-\Delta G(S)/RT}}{Z}, \qquad Z = \sum_{S'} e^{-\Delta G(S')/RT},
+$$
+where $Z$ is the partition function. The **base-pairing probability** of nucleotides $i$ and $j$ is the total probability of all structures containing that pair:
+$$
+P_{ij} = \sum_{S \ni (i,j)} P(S).
+$$
+McCaskill's algorithm (1990) computes $Z$ and all $P_{ij}$ by dynamic programming in $O(L^3)$ time for a sequence of length $L$, avoiding the exponential enumeration of structures. The result is the **base-pairing probability matrix (BPPM)**, an $L \times L$ symmetric matrix. The probability that nucleotide $i$ is unpaired is $1 - \sum_j P_{ij}$, which should correlate with reactivity.
+
+**EternaFold** (Wayment-Steele et al., 2022) is a folding package whose parameters were trained on Eterna players' designs and chemical mapping data; it was the most useful BPPM source in this competition.
+</Deep>
+
+## The data
+
+Training data contain chemical mapping profiles for hundreds of thousands of sequences, mostly of length 177 or 206 nucleotides, many of them designed by Eterna players, with the two experiments measured separately. Many profiles are noisy.
+
+The test set is very large: 1,343,824 sequences with a total length of about 270 million nucleotides, so a submission holds about 540 million predictions (two experiments per nucleotide). Test sequences include longer ones than seen in training, and most of the private test labels were measured while the competition was running.
+
+About 13% of the public test sequences were identical to training sequences, a leak the winners dealt with explicitly (see below).
+
+## The metric
+
+The score is the mean absolute error over all scored nucleotides and both experiments, with measured reactivities clipped to $[0, 1]$.
+
+<Deep title="Mean absolute error estimates the median" kind="math">
+
+For a single position with random target $Y$, the expected absolute error of a constant prediction $c$ is
+$$
+R(c) = \mathbb{E}\,|Y - c| = \int_{-\infty}^{c} (c - y)\,dF(y) + \int_{c}^{\infty} (y - c)\,dF(y).
+$$
+Differentiate with respect to $c$ (Leibniz rule; the boundary terms vanish because the integrand is zero at $y = c$):
+$$
+R'(c) = \int_{-\infty}^{c} dF(y) - \int_{c}^{\infty} dF(y) = F(c) - \big(1 - F(c)\big) = 2F(c) - 1.
+$$
+This is zero when $F(c) = 1/2$: the minimiser is the **median** of $Y$. For squared error the minimiser would be the mean. Reactivity distributions are skewed (most nucleotides near zero, a long tail of high values), so the median is lower than the mean, and a model trained with MSE would systematically overpredict under MAE. Both top solutions trained with (weighted) L1 loss, matching the metric.
+
+Clipping targets to $[0,1]$ reduces the influence of extreme, often noisy values.
+</Deep>
+
+## How the winning solution works
+
+Team vigg (Dmitry Penzar, Valeriy Vyaltsev, Elizaveta Aristova, Artemy Bakulin and a team member known as polymerase; several are authors of the LegNet model for regulatory DNA) built a transformer encoder that receives the BPPM through its attention.
+
+<Pipeline steps={[
+  {tag: "Fold", title: "EternaFold BPPM", detail: "L × L base-pairing probabilities"},
+  {tag: "Embed", title: "Tokens + quality embedding", detail: "A/C/G/U, start/end; SN flag"},
+  {tag: "Encode", title: "12 transformer layers", detail: "BPPM conv features added to attention logits; dynamic position bias"},
+  {tag: "Head", title: "Two outputs per nucleotide", detail: "2A3 and DMS reactivity"},
+  {tag: "Ensemble", title: "Average 27 models", detail: "+ a DMS-to-2A3 model"}
+]} caption="The winning pipeline." />
+
+<Foundation id="models-and-loss" />
+
+<Foundation id="attention-transformers" />
+
+### The input
+
+Each sequence becomes tokens: the four nucleotides plus start and end tokens, embedded in dimension 192. An embedding of the **quality flag** (`SN_filter`) is added to every token. During training the flag tells the model whether a profile is clean or noisy; at inference it is set to "clean", so the model predicts what a high-quality experiment would measure.
+
+### BPPM as an attention bias
+
+Standard self-attention for head $h$ computes, for query position $i$ and key position $j$,
+$$
+a^{(h)}_{ij} = \operatorname{softmax}_j\!\left( \frac{q_i^{(h)} \cdot k_j^{(h)}}{\sqrt{d_h}} \right).
+$$
+The winners add a per-head bias computed from the BPPM:
+$$
+a^{(h)}_{ij} = \operatorname{softmax}_j\!\left( \frac{q_i^{(h)} \cdot k_j^{(h)}}{\sqrt{d_h}} + B^{(h)}_{ij} + D^{(h)}_{ij} \right),
+$$
+where $B^{(h)}$ comes from a small 2D convolutional block applied to the $L\times L$ BPPM (2D convolution, batch normalisation, activation, and a learnable per-channel scale $\gamma$; in one variant a squeeze-and-excitation block), with one output channel per head, and $D^{(h)}$ is the positional bias described next. With 6 heads of dimension 32, each head can use the pairing information differently.
+
+<Deep title="What an additive attention bias does" kind="math">
+
+Write $s_{ij} = q_i\cdot k_j/\sqrt{d}$ and add a bias $b_{ij}$. Then
+$$
+a_{ij} = \frac{e^{s_{ij} + b_{ij}}}{\sum_{j'} e^{s_{ij'} + b_{ij'}}} = \frac{e^{b_{ij}}\,e^{s_{ij}}}{\sum_{j'} e^{b_{ij'}}\,e^{s_{ij'}}}.
+$$
+The bias multiplies the unnormalised attention weight by $e^{b_{ij}}$. A bias of $+2$ makes position $j$ about 7.4 times more attractive to $i$ than it would otherwise be; a very negative bias effectively masks $j$.
+
+If $b_{ij} = \lambda P_{ij}$ with $\lambda > 0$, nucleotide $i$ attends preferentially to its likely pairing partners. Pairing partners can be hundreds of positions apart in sequence, so a model restricted to local context (a CNN) cannot see them easily. The winners report that a fully convolutional LegNet, their own architecture for DNA, was worse here for exactly this reason: long-range contacts need attention.
+
+Passing the BPPM through a learned convolution instead of using it directly lets the model learn patterns in the matrix, such as helices, which appear as diagonal stripes perpendicular to the main diagonal ($P_{i,j}, P_{i+1,j-1}, P_{i+2,j-2}, \dots$). A 3 × 3 convolution can detect such a stripe and distinguish a stable helix from an isolated, unlikely pair.
+
+The idea comes from shujun717's solution to OpenVaccine (2020), which added BPPM features to attention in the same way.
+</Deep>
+
+### Dynamic positional bias
+
+The positional term $D^{(h)}_{ij}$ is a **dynamic position bias** taken from CrossFormer++: a small MLP maps the relative offset $i - j$ to one bias per head,
+$$
+D^{(h)}_{ij} = \mathrm{MLP}(i - j)_h.
+$$
+Because it is a function of the offset rather than a lookup table of fixed size, it produces values for offsets never seen in training. The winners compared it with absolute embeddings, rotary embeddings, xPos and ALiBi, and found it extrapolated best to longer sequences, which matters because the test set contains longer sequences than training.
+
+<Deep title="Relative position biases: ALiBi versus a learned function" kind="math">
+
+**ALiBi** (Press et al., 2022) uses a fixed linear penalty,
+$$
+D^{(h)}_{ij} = -m_h\,|i - j|,
+$$
+with head-specific slopes $m_h$ forming a geometric sequence (for 8 heads, $m_h = 2^{-h}$). Distant tokens are down-weighted by a factor $e^{-m_h|i-j|}$, which gives each head a characteristic range. ALiBi needs no training and extrapolates to any length, but it assumes attention should decay with distance. In RNA, that assumption fails for base pairs, which link distant positions.
+
+A **learned function** of the offset can represent non-monotone preferences, such as "attend to neighbours at offsets $\pm 1, \pm 2$", while the BPPM term handles long-range pairs. Because an MLP is smooth in its input, its output for an offset of 300 is an extrapolation of its behaviour for offsets up to 205; this is not guaranteed to be sensible, but in practice it generalised better than the alternatives the team tried.
+
+The second-place solution used ALiBi and still placed second, so the difference between these choices is small next to the BPPM bias.
+</Deep>
+
+<Deep title="A BPPM-biased attention layer" kind="code">
+
+A Nolad illustration of the mechanism in PyTorch; the team's implementation is in their repository.
+
+```python
+import torch, torch.nn as nn, torch.nn.functional as F
+
+class BPPBias(nn.Module):
+    """Turns an L x L base-pairing matrix into one attention bias per head."""
+    def __init__(self, n_heads, hidden=16):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(1, hidden, 3, padding=1), nn.BatchNorm2d(hidden), nn.GELU(),
+            nn.Conv2d(hidden, n_heads, 3, padding=1),
+        )
+        self.gamma = nn.Parameter(torch.ones(1, n_heads, 1, 1))   # learnable per-head scale
+
+    def forward(self, bpp):                  # bpp: (B, L, L)
+        return self.gamma * self.conv(bpp.unsqueeze(1))           # (B, H, L, L)
+
+class DynamicPosBias(nn.Module):
+    def __init__(self, n_heads, hidden=64):
+        super().__init__()
+        self.mlp = nn.Sequential(nn.Linear(1, hidden), nn.ReLU(), nn.Linear(hidden, n_heads))
+
+    def forward(self, L, device):
+        idx = torch.arange(L, device=device)
+        rel = (idx[:, None] - idx[None, :]).float().unsqueeze(-1)  # (L, L, 1)
+        return self.mlp(rel).permute(2, 0, 1).unsqueeze(0)         # (1, H, L, L)
+
+def biased_attention(q, k, v, bias, pad_mask):
+    # q, k, v: (B, H, L, d);  bias: (B, H, L, L);  pad_mask: (B, L) True where padded
+    s = q @ k.transpose(-1, -2) / q.shape[-1] ** 0.5 + bias
+    s = s.masked_fill(pad_mask[:, None, None, :], float("-inf"))
+    return F.softmax(s, dim=-1) @ v
+```
+</Deep>
+
+### Training
+
+The training recipe came from a public notebook by Iafoss: one-cycle learning rate (maximum $2.5\times10^{-3}$, 5% warm-up), AdamW with weight decay 0.05, batch size 128, and 270 epochs. Each sequence receives a sample weight depending on its signal-to-noise ratio,
+$$
+w = 0.5 \cdot \max\!\big(\log(\text{SN} + 1.01),\; 0.01\big),
+$$
+so noisy profiles contribute little but are not discarded. The team found this weighted sampling better than filtering by signal-to-noise. A further 15 short epochs of plain SGD at the end improved the result.
+
+<Foundation id="adam-adamw" />
+
+<Foundation id="learning-rate-schedules" />
+
+### Validation and the public leak
+
+The team compared several splitting schemes: clusters of similar sequences (DBSCAN on Hamming distance, threshold 0.2) and a length split (train on shorter than 206, validate on 206). Their scores correlated with those of plain K-fold, so K-fold was used.
+
+About 13% of the public test sequences were also in the training set. A model that memorised the training data would score better on these, and the public leaderboard would reward memorisation. To compare models fairly, the team **set the predictions for those sequences to zero** before submitting diagnostic runs, so the public score reflected only unseen sequences.
+
+<Foundation id="cross-validation" />
+
+### The ensemble
+
+15 models with squeeze-excitation BPPM convolutions, 10 with plain convolutions, and 2 trained on length splits were averaged. For the 2A3 output, the final prediction gave weight 1/28 to a separate model that predicts 2A3 from DMS (the two experiments are correlated).
+
+What did not help: other structure features (CapR loop types, bracket structures from EternaFold, ContraFold, ViennaRNA and IPknot), BPPMs from other packages or their average, RFold, RNA-FM language-model embeddings, SQUARNA, fine-tuning on public RMDB data, 3D structure predictions, reverse-sequence augmentation, sliding windows, pseudo-labelling for the ensemble, masking high-error positions, and an SN-weighted loss (as opposed to weighted sampling).
+
+<Foundation id="ensembling-tta" />
+
+## Second place: Squeezeformer with BPPM bias
+
+Hoyeol Sohn, working alone, brought the **Squeezeformer** architecture from the ASL fingerspelling competition (where it had been central to top solutions): a speech-recognition model that alternates self-attention with depthwise 1D convolutions.
+
+- 12 layers, dimension 192, 4 heads, convolution kernel 17, batch normalisation after the 1D convolution, and a SwiGLU feed-forward block; a single GRU layer as the head; ALiBi positional bias.
+- The BPPM added as an attention bias with per-head scales improved MAE by 0.0025; a shallow two-layer 2D CNN on the BPPM, shared across layers, gained a further 0.002.
+- Hand-crafted features from OpenVaccine (CapR loop types, EternaFold minimum-free-energy structure, predicted loop type, BPPM row sums, non-zero counts and maxima) gained only about 0.0005.
+- 200 epochs, batch 256, learning rate $2\times10^{-3}$ with warm-up and cosine decay, AdamW with weight decay 0.01, and an L1 loss weighted by $\operatorname{clip}(\log(1+\text{SN}), 0, 10)$.
+
+A single model scored 0.119 in cross-validation, 0.140 public and 0.142 private; a seed ensemble 0.135 public and 0.140 private. Each model took about 30 hours on one RTX 4090. For comparison, the organisers' RNAdegformer baseline scored 0.1437 public and 0.1458 private.
+
+Self-supervised pre-training (Data2Vec, BERT-style masking) gave inconsistent results, models wider than 512 failed to train, and augmentations had no effect.
+
+<Foundation id="recurrent-networks" />
+
+## How this compares with other competitions
+
+- **ASL fingerspelling** and **Ribonanza** share the Squeezeformer: an architecture from speech recognition moved to sign-language landmarks and then to RNA. The common structure is a 1D sequence with both local patterns (convolutions) and long-range dependencies (attention).
+- **Leash BELKA** (small-molecule binding) also works from molecular strings, but its winners found that graph and string models trained from scratch with physical priors worked better than pretrained language models; here too, the RNA language model RNA-FM did not help, while the physics-based BPPM did.
+- **CAFA 5** (protein function) is the opposite case: protein language-model embeddings were the strongest single input.
+
+## Compute and deployment
+
+| Setting | What the solution needs |
+| --- | --- |
+| Competition | Multi-GPU training for an ensemble of 27 models; EternaFold BPPMs for 1.3 million test sequences (a substantial CPU job). |
+| Research lab | One RTX 4090 trains a strong single model in about 30 hours. |
+| RNA design pipeline | A single model plus EternaFold scores a candidate sequence in well under a second, fast enough to screen thousands of designs. |
+
+The organisers' Ribonanza paper (Kretsch et al., 2024) describes the competition results and a model, RibonanzaNet, developed from the lessons of the top solutions.
+
+<Callout kind="deploy" title="The minimum useful version">
+A 12-layer, 192-dimensional transformer with BPPM attention bias and a learned relative position bias, trained with an SN-weighted L1 loss. The EternaFold computation is the main runtime cost at inference and can be parallelised on CPUs.
+</Callout>
