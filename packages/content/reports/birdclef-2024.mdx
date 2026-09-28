@@ -1,0 +1,242 @@
+---
+slug: birdclef-2024
+title: "BirdCLEF 2024: identifying birds of the Western Ghats on a CPU in two hours"
+shortTitle: BirdCLEF 2024
+kaggleSlug: birdclef-2024
+kaggleUrl: https://www.kaggle.com/competitions/birdclef-2024
+year: 2024
+dates: { start: "2024-04-03", end: "2024-06-10" }
+host: BirdCLEF / LifeCLEF 2024
+collection: beyond
+field: Bioacoustics and conservation
+modality: [Audio]
+tasks: [multi-label classification]
+techniques:
+  - multi-label-classification
+  - spectrograms
+  - cnn-backbones
+  - pseudo-labelling
+  - soft-labels
+  - label-denoising
+  - mixing-augmentation
+  - ensembling
+  - model-compression
+  - leaderboard-discipline
+metric:
+  name: Macro-averaged ROC AUC
+  summary: "AUC per bird species, averaged over the species that occur in the test soundscapes."
+constraints: { runtime: "120 min", hardware: "CPU only (GPU submissions effectively disabled)", internet: false }
+summary: "Recognise which of 182 bird species are calling in each five-second window of about 1,100 four-minute field recordings, using only a CPU for two hours. The winners trained EfficientNet-B0 and RegNetY-008 on mel spectrograms in Kaggle's free notebooks, cleaned the training labels with Google's bird classifier, pseudo-labelled unlabelled recordings from the test sites, and compiled the models with OpenVINO."
+winningIdea: "Small CNNs on 10-second mel spectrograms, trained with softmax cross-entropy but read out with sigmoids, combined by taking the minimum across models; the data work (duplicate removal, Google-classifier filtering, soundscape pseudo-labels) mattered more than the architecture."
+solutions:
+  - rank: 1
+    team: Team kefir
+    members: [{ name: "Kirill Chemrov", handle: "chemrovkirill" }, { name: "Arseny Poyda", handle: "arsenypoyda" }]
+    writeup: https://www.kaggle.com/competitions/birdclef-2024/writeups/team-kefir-1st-place-solution
+    code:
+      - { label: "Inference notebook", url: "https://www.kaggle.com/code/chemrovkirill/birdclef-2024-1st-place-inference" }
+  - rank: 2
+    team: ADSR
+    writeup: https://www.kaggle.com/competitions/birdclef-2024/writeups/adsr-2nd-place-solution
+  - rank: 3
+    team: NVBird
+    writeup: https://www.kaggle.com/competitions/birdclef-2024/writeups/nvbird-3rd-solution
+  - rank: 4
+    team: Team Cerberus
+    writeup: https://www.kaggle.com/competitions/birdclef-2024/writeups/team-cerberus-4th-place-solution-team-cerberus
+  - rank: 5
+    team: coolz
+    writeup: https://www.kaggle.com/competitions/birdclef-2024/writeups/coolz-5th-solution
+deployability:
+  score: 5
+  verdict: "Built for a CPU from the start: one model processes the whole test set in about 18 minutes on a Kaggle CPU, and the entire training was done in free Kaggle notebooks."
+  inference: "About 18 minutes per model for roughly 73 hours of audio on a Kaggle CPU with OpenVINO, i.e. several hundred times faster than real time; six models in about 2 hours."
+  models: "Six small CNNs (EfficientNet-B0 and RegNetY-008), ImageNet-pretrained."
+  training: "Up to 2 hours per model on a free Kaggle P100."
+  externalData: "None beyond the competition's recordings; Google's public bird vocalisation classifier was used to filter and pseudo-label."
+  licences:
+    code: "Public Kaggle notebook."
+    data: "Xeno-canto recordings under their individual Creative Commons licences; soundscapes from the competition hosts."
+    weights: "Available through the inference notebook's attached datasets; backbones from timm."
+  risks:
+    - "The species list and soundscapes are specific to the Western Ghats in one season; another region needs its own species list and retraining."
+    - "Macro AUC skips species absent from the test set and does not measure how often a species is falsely reported, which matters for monitoring."
+related:
+  - hms-harmful-brain-activity-classification
+  - asl-fingerspelling
+  - child-mind-institute-detect-sleep-states
+papers:
+  - { label: "Google bird vocalization classifier (Kaggle Models / TF Hub)", url: "https://www.kaggle.com/models/google/bird-vocalization-classifier" }
+dataLinks:
+  - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/birdclef-2024/data" }
+  - { label: "Xeno-canto", url: "https://xeno-canto.org" }
+priority: 7
+updated: "2026-09-28"
+---
+
+## The problem in its field
+
+Birds are sensitive indicators of an ecosystem's health, and many species are easier to hear than to see. **Passive acoustic monitoring** places autonomous recorders in forests and grasslands for weeks at a time; the recordings then have to be listened to. A single recorder produces hundreds of hours of audio per month, far more than experts can review. Automatic species identification turns those recordings into counts of which species were present, when and where.
+
+BirdCLEF 2024 focused on the **Western Ghats**, a mountain range along India's west coast and one of the world's biodiversity hotspots, with many endemic species. Competitors had to identify 182 species in recordings from sites in the range.
+
+<Deep title="Why field recordings are hard" kind="domain">
+
+- **Focal versus passive recordings.** Training data come mostly from **Xeno-canto**, a citizen-science archive where recordists point a directional microphone at one bird and record it clearly. Test data are **soundscapes**: an unattended recorder captures whatever happens nearby, often several species at once, at varying distances, with wind, rain, insects, streams and human noise.
+- **Weak labels.** A Xeno-canto file is labelled with its main species and sometimes a list of background species, not with the times each one calls. A 60-second file labelled "species A" may contain 10 seconds of A.
+- **Variation within a species.** Birds have songs and calls, juvenile and adult vocalisations, and regional dialects.
+- **Class imbalance.** Common species have hundreds of recordings; rare endemics may have a handful.
+</Deep>
+
+## The data
+
+- **train_audio**: short focal recordings from Xeno-canto for the 182 species, resampled to 32 kHz, with a primary label, optional secondary labels, location and recordist.
+- **unlabeled_soundscapes**: long recordings from the same locations as the test data, without labels.
+- **test_soundscapes** (hidden): about 1,100 recordings of four minutes each. Predictions are required for every five-second window, a probability per species.
+
+## The constraint
+
+Notebooks could run on a **CPU for at most 120 minutes**; GPU submissions were effectively disabled. The test set holds roughly 73 hours of audio (1,100 × 4 minutes), so the whole pipeline, including decoding audio and computing spectrograms, had to run several hundred times faster than real time on a CPU. This rules out large models and most ensembles, and it resembles the constraint on a solar-powered field device or a conservation organisation's laptop.
+
+## The metric
+
+For each species that occurs at least once in the test data, compute the ROC AUC over all five-second windows; average across species. Species that never occur are skipped (AUC is undefined without positives).
+
+<Foundation id="roc-auc" />
+
+Macro-averaging gives a rare species the same weight as a common one. A model that ranks windows well for common species but ignores rare ones loses heavily.
+
+## How the winning solution works
+
+Kirill Chemrov and Arseny Poyda (team kefir) became Kaggle Masters and received master's degrees in the same week. Their write-up credits luck for the narrow margin over second and third place, and gives a complete ablation of the steps that took them there.
+
+<Pipeline steps={[
+  {tag: "Data", title: "Clean the focal recordings", detail: "remove duplicates, filter chunks with Google's classifier, soften labels"},
+  {tag: "Data", title: "Pseudo-label the soundscapes", detail: "ensemble of Google's classifier and own models"},
+  {tag: "Input", title: "10-second mel spectrogram", detail: "128 mel bands × 640 frames"},
+  {tag: "Model", title: "EfficientNet-B0 / RegNetY-008", detail: "softmax cross-entropy in training"},
+  {tag: "Output", title: "Sigmoid, smooth, take the minimum", detail: "OpenVINO on CPU; 6 models ≈ 2 h"}
+]} caption="The winning pipeline." />
+
+<Foundation id="models-and-loss" />
+
+### Data: only this year's recordings
+
+The final models used only BirdCLEF 2024 data. Extra Xeno-canto recordings and earlier years' data made results worse, even after filtering. The private leaderboard confirmed this.
+
+**Fold statistics.** Early on, a random fold 0 gave much better models than the other folds. The authors computed signal-strength statistics for each file, $T = \text{std} + \text{var} + \text{rms} + \text{power}$, and found that fold 0 had lower values. Their ensembles therefore used fold 0 plus the files below the 0.8 quantile of $T$: very loud or noisy recordings hurt the models.
+
+**Cleaning train_audio.**
+
+1. Remove duplicate recordings.
+2. Cut each file into chunks and run **Google's public bird vocalisation classifier** on each. If the classifier's top prediction does not match the file's primary label, drop the chunk: it probably contains no call from that species, or a poor one. If the top prediction matches a *secondary* label instead, relabel the chunk with that species.
+3. For files with secondary labels, give the primary species 0.5 of the label mass and share the remaining 0.5 equally among the secondaries.
+4. Add the Google classifier's predictions to the label with coefficient 0.05, a mild form of label smoothing towards an expert model.
+5. Pad very short clips by repeating them (cyclic padding) rather than with silence.
+
+<Foundation id="soft-labels" />
+
+**Pseudo-labelling the soundscapes.** The unlabelled soundscapes come from the test sites, with the same recorders, background noise and species mix. The authors labelled them with an ensemble of Google's classifier and their own best models trained on train_audio, and added them to training. This was one of the largest single gains (private AUC 0.615 to 0.640).
+
+<Foundation id="pseudo-labelling" />
+
+### Input: 10-second mel spectrograms
+
+Models are trained on **10-second** clips, built from two adjacent 5-second chunks with averaged labels. A bird song or a repeated call often spans more than five seconds, or is cut by a 5-second boundary; 10 seconds more often contains a whole song or a full cycle of repeated calls.
+
+<Foundation id="spectrograms" />
+
+Spectrogram parameters: FFT size 1024, hop length 500, 128 mel bands from 40 Hz to 15 kHz, power 2, at 32 kHz sampling. A 10-second clip becomes a 1 × 128 × 640 image.
+
+<Plot series={[{fn: "mel", label: "mel(f) = 2595 · log10(1 + f / 700)"}]} x={[0, 15000]} y={[0, 3000]} xLabel="frequency (Hz)" yLabel="mels" caption="The mel scale compresses high frequencies. With 128 bands between 40 Hz and 15 kHz, each band is a few dozen hertz wide at the bottom and several hundred hertz wide at the top." />
+
+### Models
+
+**EfficientNet-B0** and **RegNetY-008**, both ImageNet-pretrained, reading the spectrogram as a one-channel image. SE-ResNeXt matched EfficientNet's accuracy at about three times the inference time. Vision transformers were clearly worse for this team. Sound event detection (SED) heads and a CNN design from the BirdCLEF 2021 runner-up were slower and less accurate than plain backbones. The authors did not try larger models because they had no compute beyond Kaggle's free notebooks.
+
+<Foundation id="cnn-backbones" />
+
+### Training with softmax, predicting with sigmoid
+
+The single most surprising choice: **cross-entropy with softmax**, not binary cross-entropy with sigmoids, even though several species can call in the same window.
+
+Their reasoning: in training, almost every clip has one dominant species among 182 (two or three after augmentation), so the task behaves like multi-class classification. BCE, weighted BCE and focal loss all scored noticeably worse.
+
+At inference they do **not** apply the softmax. They pass the same logits through a **sigmoid**, so each species gets an independent score. In their ablation, switching from softmax to sigmoid at inference raised the private score from 0.544 to 0.588, the largest step in the table.
+
+<Foundation id="softmax-cross-entropy" />
+
+<Deep title="Why sigmoid at inference helps with softmax-trained logits" kind="math">
+
+Softmax probabilities depend on all logits: $p_k = e^{z_k}/\sum_j e^{z_j}$. If two species call in the same window, the model raises both logits, and softmax splits the probability between them; each gets about half. If one species calls alone, it gets nearly all of it. The same species' score then depends on what else is calling, which scrambles its ranking across windows, and AUC is computed per species across windows.
+
+A sigmoid of the logit, $\sigma(z_k)$, depends only on $z_k$. Cross-entropy training still pushes the true species' logit up and others' down, so $z_k$ remains an informative score for species $k$, but now it is not diluted by co-occurring species. For per-species ranking, that is the right quantity.
+
+The cost is calibration: sigmoid outputs of a softmax-trained model are not probabilities and are noisy. The authors' min-ensemble, below, is a response to that noise.
+</Deep>
+
+**Training details.** AdamW, cosine annealing, initial learning rate $10^{-3}$ to $3\times10^{-3}$, 7 to 12 epochs, batch size 96. Up to two hours per model on a Kaggle P100.
+
+**Augmentation.** Random selection of the audio segment, XY masking (SpecAugment-style blanking of time and frequency stripes), and horizontal CutMix (splicing two clips in time). Mixup, added noise, blur, pixel dropout, horizontal flips and waveform augmentations all hurt.
+
+**Balancing long and short files.** Each epoch, the model sees one random chunk per file. train_audio has many short files and a few very long ones; the soundscapes are few and long. The authors split every file into segments of $X$ seconds and treated each as a separate file, which balanced the two sources. $X = 60$ was best (private 0.640 to 0.650).
+
+### Inference: context, smoothing and the minimum
+
+To predict chunk $n$, the model reads 10 seconds: all of chunk $n$ plus 2.5 seconds from each neighbour. Predictions of neighbouring chunks are averaged.
+
+Across models, predictions are combined with **min()** rather than the mean. Because sigmoid outputs of softmax-trained models are noisy, a species is scored high only when every model agrees; any model that is unsure pulls the score down. In the ablation, the minimum over five EfficientNets beat their mean (private 0.689 against 0.686; public 0.735 against 0.724).
+
+<Foundation id="ensembling-tta" />
+
+### Making it fit on a CPU
+
+- **OpenVINO** compilation of each model with a fixed input size (Intel's inference engine for CPUs).
+- **Parallel spectrogram computation** with joblib.
+- **All spectrograms kept in RAM** once computed, so each model reads them without recomputation.
+
+One model processes the whole test set in about 18 minutes; six models plus spectrogram computation take about two hours.
+
+<Foundation id="mixed-precision-quantisation" />
+
+### The ablation
+
+<Bars data={[
+  ["Baseline: EfficientNet-B0, softmax inference, first 5 s", 0.544],
+  ["Sigmoid at inference", 0.588],
+  ["Random 5 s chunk", 0.602],
+  ["XY masking", 0.602],
+  ["Horizontal CutMix", 0.615],
+  ["Pseudo-labelled soundscapes", 0.640],
+  ["60-second segmentation", 0.650],
+  ["Secondary labels", 0.643],
+  ["Google-classifier filtering", 0.655],
+  ["10-second input", 0.670],
+  ["Mean of 5 EfficientNet-B0", 0.686],
+  ["Min of 5 EfficientNet-B0", 0.689],
+  ["Min of 6 EfficientNet-B0 (submitted)", 0.689],
+  ["Mean of [min(3 B0), min(3 RegNetY)]", 0.692]
+]} domain={[0.5, 0.7]} decimals={3} highlight="Min of 6 EfficientNet-B0 (submitted)" caption="Private-leaderboard AUC after each cumulative change (winners' table). Public and private scores correlated at 0.96 across their submissions." />
+
+Two features of this table are unusual for Kaggle. First, every step is a data or inference decision except the ensemble at the end; the backbone never changed. Second, public and private scores correlated at 0.96, because the test set was large (about 52,800 windows) and the authors avoided tuning on the public board.
+
+### What did not work
+
+- **Negligible:** a 183rd "no call" class (no public gain; private rose from 0.655 to 0.671, which the authors report without having selected it), mel normalisation, other mel settings, 224 × 224 inputs, 15-second chunks, softmax temperature, SWA and EMA, pseudo-labels with temperature, pretraining on earlier years.
+- **Harmful:** BCE, weighted BCE, focal loss; mixup, noise, pixel dropout, blur, 1D audio augmentations, flips; STFT instead of mel; any additional Xeno-canto data; strong pseudo-labels on train_audio; training on 10 s and predicting on 5 s; separate bird-call detectors (scores near random); multi-stage training.
+
+## Other top solutions
+
+The third-place team (NVBird) chose **EfficientViT** for its speed on CPU; the winners found vision transformers worse in their own setting, a reminder that architecture comparisons between teams are confounded by everything else in the pipeline. Across the top solutions the common elements were small CNNs, mel spectrograms, pseudo-labelling of the soundscapes and CPU-specific compilation.
+
+## Compute and deployment
+
+| Setting | What the solution needs |
+| --- | --- |
+| Kaggle | 2 hours on a CPU for about 73 hours of audio. |
+| Conservation organisation | A laptop CPU. Retraining a model takes about 2 hours on a free cloud GPU. |
+| Field device | EfficientNet-B0 at this input size runs on embedded CPUs; one model instead of six reduces the budget further at a cost of about 0.02 AUC. |
+
+<Callout kind="deploy" title="Transferring to another region">
+The pipeline is general; the species list is not. A new region needs its own training recordings (Xeno-canto covers most species), unlabelled soundscapes from the target sites for pseudo-labelling, and a local check of false detections, which the macro AUC does not measure.
+</Callout>
