@@ -1,0 +1,291 @@
+---
+slug: asl-fingerspelling
+title: "Google ASL Fingerspelling Recognition (2023): a phone-sized sequence-to-sequence model"
+shortTitle: ASL Fingerspelling Recognition
+kaggleSlug: asl-fingerspelling
+kaggleUrl: https://www.kaggle.com/competitions/asl-fingerspelling
+year: 2023
+dates: { start: "2023-05-10", end: "2023-08-24" }
+host: Google with the Deaf Professional Arts Network
+collection: beyond
+field: Sign language and accessibility
+modality: [Hand, face and pose landmarks from phone video]
+tasks: [sequence-to-sequence]
+techniques:
+  - sequence-to-sequence
+  - landmark-sequences
+  - conformers
+  - transformers
+  - auxiliary-losses
+  - domain-augmentation
+  - mixing-augmentation
+  - model-compression
+  - threshold-tuning
+  - grouped-cv
+metric:
+  name: Normalised total Levenshtein distance
+  summary: "(N − D) / N, where N is the total number of characters in the reference phrases and D the total edit distance of the predictions."
+constraints: { runtime: "5 h for about 35 hours of video", hardware: "TensorFlow Lite runtime (CPU)", internet: false, other: "The submission is a TFLite model file of at most 40 MB." }
+summary: "Turn fingerspelled American Sign Language, captured by a phone's selfie camera and reduced to body landmarks, into text. The submission had to be a TensorFlow Lite file under 40 MB, so the winning model is phone-ready by construction: a Squeezeformer-style encoder with rotary attention, a two-layer transformer decoder, fingers dropped at random during training, and a confidence head that replaces hopeless predictions with a fixed fallback string."
+winningIdea: "Treat fingerspelling like speech recognition on landmarks: a deep conformer-style encoder made affordable by rotary attention, masking and FP16, a small autoregressive decoder that beat CTC, and augmentations (finger dropout, time-wise CutMix within a signer) that mimic how the landmark data actually fail."
+solutions:
+  - rank: 1
+    team: Christof Henkel and Darragh Hanley
+    members: [{ name: "Christof Henkel", handle: "christofhenkel" }, { name: "Darragh Hanley", handle: "darraghdog" }]
+    writeup: https://www.kaggle.com/competitions/asl-fingerspelling/writeups/darragh-dieter-1st-place-solution-improved-squeeze
+    code:
+      - { label: "Code and weights", url: "https://github.com/ChristofHenkel/kaggle-asl-fingerspelling-1st-place-solution" }
+  - rank: 2
+    team: Hoyeol Sohn
+    members: [{ name: "Hoyeol Sohn", handle: "hoyso48" }]
+    writeup: https://www.kaggle.com/competitions/asl-fingerspelling/writeups/hoyeol-sohn-2nd-place-solution-test-compare-asr-al
+  - rank: 3
+    team: gezi
+    writeup: https://www.kaggle.com/competitions/asl-fingerspelling/writeups/gezi-3rd-place-solution-with-code-17-layers-squeez
+    note: "17-layer Squeezeformer with time reduction and RoPE; code released."
+  - rank: 5
+    team: Jungwoo Park
+    writeup: https://www.kaggle.com/competitions/asl-fingerspelling/writeups/jungwoo-park-5th-place-solution-vanilla-transforme
+    note: "Vanilla transformer, data2vec pretraining, CutMix and knowledge distillation."
+deployability:
+  score: 5
+  verdict: "The competition required an on-device model format and size, so the winning submission is already a 40 MB TFLite file that runs on a phone CPU."
+  inference: "TFLite FP16 on CPU; the whole hidden test set (about 35 hours of video) within 5 hours, i.e. many times faster than real time. Landmark extraction by MediaPipe runs on phones in real time."
+  models: "Two seeds of one encoder–decoder model, logits averaged at each decoding step; 39,988 KB in total."
+  training: "400 epochs; the authors trained on A100 GPUs and also ran Kaggle kernels. Not reproducible on a free notebook in reasonable time."
+  externalData: "Only the competition's supplemental data, used sparingly."
+  licences:
+    code: "Public repository with weights (see its licence)."
+    data: "ASL Fingerspelling Recognition Corpus released by Google for the competition (check dataset card for terms)."
+    weights: "Released in the repository."
+  risks:
+    - "Trained on landmarks from MediaPipe 0.9.0.1; a different landmark model version changes the input distribution."
+    - "Over 100 signers is a large corpus for sign language but small for the variety of hands, speeds and lighting in the world; accuracy for signers unlike those in the corpus is unknown."
+related:
+  - stanford-ribonanza-rna-folding
+  - birdclef-2024
+  - hms-harmful-brain-activity-classification
+papers:
+  - { label: "Kim et al. (2022). Squeezeformer: an efficient transformer for automatic speech recognition.", url: "https://arxiv.org/abs/2206.00888" }
+  - { label: "Gulati et al. (2020). Conformer: convolution-augmented transformer for speech recognition.", url: "https://arxiv.org/abs/2005.08100" }
+  - { label: "Su et al. (2021). RoFormer: rotary position embedding.", url: "https://arxiv.org/abs/2104.09864" }
+dataLinks:
+  - { label: "Competition data and dataset card (Kaggle)", url: "https://www.kaggle.com/competitions/asl-fingerspelling/data" }
+priority: 5
+updated: "2026-09-28"
+---
+
+## The problem in its field
+
+More than 70 million Deaf people use a sign language, and more than 1.5 billion people live with some hearing loss. Voice assistants and speech-to-text have made phones far more useful for hearing people; sign-language recognition has lagged because large datasets did not exist.
+
+**Fingerspelling** spells words letter by letter with hand shapes, one shape (or short movement) per letter. It is a small part of American Sign Language used mostly for names, addresses, phone numbers, web addresses and words without an established sign: exactly the information people type into phones. The competition description notes that ASL fingerspelling averages about 57 words per minute against about 36 for typing on a phone keyboard.
+
+<Deep title="Why fingerspelling is hard to recognise" kind="domain">
+
+- **Speed and coarticulation.** Fluent signers do not hold each letter; hand shapes blend into each other, and some letters are visible only for a frame or two.
+- **Similar shapes.** Several letters differ only in thumb or finger placement (for example A, S, T, M, N, E), and the difference can be hidden by the hand's own angle to the camera.
+- **Motion letters.** J and Z are traced in the air.
+- **Variation.** Signers differ in speed, hand size, handedness and style.
+- **Capture conditions.** Selfie cameras, arbitrary backgrounds and lighting, hands partly out of frame.
+</Deep>
+
+## The data
+
+Google released the largest fingerspelling corpus to date: more than three million fingerspelled characters by over a hundred Deaf signers, recorded with phone selfie cameras. The data were not video. Each frame was processed with **MediaPipe Holistic** (version 0.9.0.1) into landmark coordinates: 21 points per hand, 468 face points and 33 body pose points, each with $x$, $y$ and $z$. Frames where a hand was not detected have missing values. Each sequence is labelled with its phrase: a name, an address, a phone number, or a URL. A supplemental set added about 50,000 more sequences but covered only about 500 unique phrases.
+
+<Deep title="What a landmark is" kind="domain">
+
+A landmark model is a small neural network that, given an image, outputs the positions of predefined points: fingertips and knuckles, lip corners, shoulders. MediaPipe's hand model predicts 21 points per hand (wrist, and four joints on each finger), normalised to the image size. Working from landmarks rather than pixels removes background, clothing and lighting from the problem, makes the data small (a few hundred numbers per frame), and protects signers' privacy. The price: when the landmark model fails, for example on a fast or blurred hand, the downstream model sees missing or wrong points and cannot recover the information from pixels.
+</Deep>
+
+## The metric and the submission format
+
+With $N$ the total number of characters in all reference phrases and $D$ the total Levenshtein distance between predictions and references, the score is
+
+$$
+\text{score} = \frac{N - D}{N}.
+$$
+
+<Foundation id="sequence-decoding" />
+
+Submissions were not predictions but a **TensorFlow Lite model**, which Kaggle ran with TFLite runtime 2.14 on its own machines. The model received landmark frames and had to output per-character probabilities; the evaluator decoded by argmax. The file had to be at most 40 MB, and inference over roughly 35 hours of video had to finish within 5 hours. These rules turned the competition into an on-device modelling problem: any architecture, loss or trick was allowed, as long as the result fitted in 40 MB and ran quickly on a CPU runtime.
+
+<Foundation id="mixed-precision-quantisation" />
+
+## How the winning solution works
+
+Christof Henkel and Darragh Hanley built one encoder–decoder model and submitted two seeds of it. They developed in PyTorch and then translated every component by hand to TensorFlow, copied the weights across, and exported to TFLite.
+
+<Pipeline steps={[
+  {tag: "Input", title: "130 landmarks per frame", detail: "hands, arm pose, lips, nose, eyes; normalised; NaN → 0"},
+  {tag: "Features", title: "Convolutional feature extractor", detail: "2D conv over (landmarks × time); 208-d per frame, two branches"},
+  {tag: "Encoder", title: "Squeezeformer blocks", detail: "attention + convolution + feed-forward, rotary attention, no time reduction"},
+  {tag: "Decoder", title: "2-layer transformer decoder", detail: "character by character; auxiliary reversed-sequence decoder in training"},
+  {tag: "Safety", title: "Confidence head", detail: "low confidence or < 15 frames → fallback phrase"}
+]} caption="The winning architecture. Everything had to be expressible in TensorFlow Lite." />
+
+<Foundation id="models-and-loss" />
+
+### Validation
+
+Training data were split into four folds **by signer**, so the model was always evaluated on people it had never seen. Early in the competition, fold-0 CV correlated almost perfectly with the public leaderboard; the authors mostly trained and tracked only fold 0.
+
+<Foundation id="cross-validation" />
+
+### Input
+
+From the 543 MediaPipe landmarks they kept 130: 21 per hand (42), 6 pose points per arm (12), and 76 face points around the lips, nose and eyes. Each coordinate was normalised by mean and standard deviation, and missing values were set to zero. Sequences longer than 384 frames were resized along time to 384 by linear interpolation; shorter ones were padded to 384 for batching during training only. At inference TFLite received each sequence at its true length.
+
+### Augmentation
+
+The authors describe augmentation as essential for generalising to new signers and for making deep models trainable at all. The list:
+
+- **Temporal**: resize along the time axis; shift in time; windowed time warping (stretch some parts, compress others).
+- **Spatial**: left–right flip of the landmarks; random affine (scale, shear, shift, rotate).
+- **CutMix in time**: pick a fraction $\lambda\in[0,1]$, cut two sequences at that fraction of their length, join the first part of one to the second part of the other, and join their phrases at the same fraction. Mixing only sequences from the same signer worked best.
+- **FingerDropout**: set 2 to 6 fingers to zero over 2 or 3 time windows.
+- **Face or pose dropout**: zero all face landmarks, or all pose landmarks.
+- **Hand dropout**: in about 5% of samples, zero all hand landmarks.
+- **Temporal masking** in windows of various sizes; **spatial masking**.
+
+Most were applied to 50% of samples; resizing and the affine transform to about 80%.
+
+<Deep title="Why finger dropout and same-signer CutMix fit this data" kind="detail">
+
+Finger dropout mimics the landmark model's failure mode. When MediaPipe loses track of fingers, they vanish from the data. A model trained only on complete hands has never seen that and may produce nonsense; a model trained with random finger dropout has learned to read letters from the fingers that remain and from context.
+
+Time-wise CutMix creates new phrases. The label of a spliced sequence is the corresponding splice of the two phrases, which is approximately correct because fingerspelling proceeds letter by letter at a roughly steady rate. Restricting mixing to the same signer keeps hand size, speed and camera position consistent across the cut, so the model does not learn to detect the splice.
+
+In the authors' rough ablation, CutMix, FingerDropout and face/pose dropout each added about 0.005 to the score.
+</Deep>
+
+<Foundation id="data-augmentation" />
+
+### Feature extraction
+
+The authors treat a sequence as a small image: width = time (up to 384 frames), height = 130 landmarks, channels = the $x, y, z$ coordinates. A 2D convolution with batch normalisation, followed by a linear layer on the flattened landmark axis, produces one feature vector per frame. There are five such modules: one reads all landmarks and outputs 208 dimensions; four read one landmark type each (left hand, right hand, face, pose) and output 52 dimensions each, concatenated to 208. The encoder receives both 208-dimensional vectors per frame.
+
+<Foundation id="convolution" />
+
+### The encoder: an improved Squeezeformer
+
+**Conformer** blocks, developed for speech recognition, combine multi-head self-attention (global context) with depthwise convolution (local patterns) and two half-step feed-forward modules in a "macaron" arrangement. **Squeezeformer** (Kim et al., 2022) reorganised these blocks and added temporal downsampling in the middle of the network (a temporal U-Net). The winners kept the block design and changed three things:
+
+1. **No time reduction.** Every layer works at the input's frame rate; downsampling gave no benefit.
+2. **Rotary attention instead of relative positional encoding.** Relative positional encodings, standard in conformers, are slow and add parameters in every layer. The authors replaced them with Llama-style attention using rotary position embeddings (RoPE), which sped up training about 2× and TFLite inference about 3×. They computed the rotary embeddings once and fed them to every layer, removing about 20% of parameters.
+3. **Learnable scaling instead of redundant layer norms**, as suggested in the Squeezeformer paper.
+
+<Foundation id="attention-transformers" />
+
+<Deep title="Rotary position embeddings, derived" kind="math">
+
+Split a query vector into pairs of coordinates $(q_{2m}, q_{2m+1})$ and treat each pair as a complex number $\tilde q_m = q_{2m} + i\,q_{2m+1}$. For position $t$, rotate each pair by an angle proportional to $t$, with a different frequency per pair:
+
+$$
+\tilde q_m(t) = \tilde q_m\, e^{i\,t\,\theta_m}, \qquad \theta_m = b^{-2m/d},
+$$
+
+where $d$ is the head dimension and $b$ a base (10,000 by default). Apply the same rotation to keys. The attention score between a query at position $t$ and a key at position $s$ is the real part of the sum of products of one with the conjugate of the other:
+
+$$
+\mathrm{Re}\sum_m \tilde q_m e^{it\theta_m}\,\overline{\tilde k_m e^{is\theta_m}} = \mathrm{Re}\sum_m \tilde q_m \overline{\tilde k_m}\, e^{i(t-s)\theta_m}.
+$$
+
+The absolute positions $t$ and $s$ have disappeared; only $t - s$ remains. RoPE therefore gives relative-position attention with no extra parameters and no per-layer lookup tables, which is why it is cheaper than the relative encodings in the original conformer.
+</Deep>
+
+### The decoder
+
+A two-layer transformer decoder, similar to Hugging Face's `Speech2TextDecoder`, generates the phrase one character at a time while attending to the encoder's output. The model is trained end to end with cross-entropy on the next character.
+
+The authors found this autoregressive decoder better than **CTC**, "even in a setting where computational efficiency matters a lot". Adding CTC as an auxiliary loss made scores worse.
+
+Two further decoder details:
+
+- **Reversed auxiliary decoder.** A causal decoder can rely on previously generated characters to predict the next one, so it leans on the encoder mainly for the beginning of the phrase. A second decoder trained on the reversed phrase is forced to read the end of the phrase from the encoder. Its loss is added during training; it is not used at inference.
+- **Decoder input masking**: randomly masking the decoder's input characters during training (+0.003) makes it rely more on the encoder.
+
+At inference, generation stops as soon as the end token is produced, and past key–value tensors are cached so each step does not recompute attention over earlier characters. Beam search was too slow for the time limit.
+
+### A confidence score and a fallback phrase
+
+Some test sequences were corrupt: a handful of frames, hands never detected. For those, any decoded string is probably wrong. A single linear layer on the encoder's first output token predicts a **confidence score**, trained to match the normalised Levenshtein distance (clipped to [0, 1]) that an earlier model achieved on each out-of-fold training sequence.
+
+When confidence is below 0.15, or the sequence has fewer than 15 frames, the model outputs the fixed string `2 a-e -aroe`. Anokas had shown in a public notebook that this string has a small expected edit distance to typical phrases in the data: it contains common characters (digits, spaces, hyphens, frequent letters) in plausible positions. This post-processing added 0.006.
+
+<Deep title="Why a meaningless string can be the best guess" kind="math">
+
+For a sequence the model cannot read, choose the output $s$ that minimises the expected edit distance to the unknown true phrase $y$:
+
+$$
+s^\star = \arg\min_s \ \mathbb{E}_y\big[\mathrm{Lev}(s, y)\big].
+$$
+
+An empty string costs $|y|$, the phrase length. A confident wrong phrase of similar length costs about $|y|$ as well (mostly substitutions). A short string of characters that appear often in phrases, in the positions they tend to occupy, saves a few edits on average because some characters align with the truth. Across the test set's corrupt sequences, that small saving per sequence was worth 0.006, as much as a major architectural change.
+</Deep>
+
+### Training
+
+- Cosine schedule over **400 epochs**, peak learning rate 0.0045, 10 epochs of warm-up, weight decay 0.08, dropout 0.1, effective batch size 512.
+- **Mixed-precision (FP16) training.** The final TFLite model runs in FP16, which halves its size. Training in FP32 and converting afterwards lost about 0.01 between CV and leaderboard; training in FP16 from the start removed the gap.
+- **Masking of padded frames.** Training batches pad sequences to 384 frames, but TFLite inference runs on unpadded sequences. To ensure the model computes the same thing in both cases, every layer that mixes information across time (the feature extractor and the macaron layers) was masked so padded frames have no effect. In Keras this is a built-in masking layer; in PyTorch the authors implemented it layer by layer. It also allowed variable-length inference, which is much faster.
+
+The two final seeds together measured 39,988 KB, 12 KB under the limit.
+
+<Foundation id="learning-rate-schedules" />
+
+### Supplemental data
+
+The supplemental set had 50,000 sequences but only about 500 distinct phrases, so a model trained on it learns to classify whole phrases instead of reading characters. The only use that helped (0.838 to 0.839): each epoch, add one randomly chosen sequence per phrase, i.e. 500 supplemental sequences alongside about 50,000 training ones.
+
+### Ensembling
+
+The two seeds are averaged **at every decoding step**: both decoders compute logits for the next character, the logits are averaged, and the averaged argmax is fed back to both. Averaging finished strings would be meaningless because two strings of different lengths cannot be averaged.
+
+### Ablation
+
+The authors' rough accounting of what each change was worth:
+
+<Bars data={[
+  ["Replace bad predictions with fallback phrase", 0.006],
+  ["CutMix", 0.005],
+  ["FingerDropout", 0.005],
+  ["Face / pose dropout", 0.005],
+  ["CNN feature extraction", 0.005],
+  ["Squeezeformer over previous 1st-place ISLR net", 0.005],
+  ["Deeper model via masking / variable length", 0.005],
+  ["Deeper model via decoder caching / early stop", 0.005],
+  ["Masking decoder inputs", 0.003],
+  ["Two-branch feature extraction", 0.003],
+  ["Transformer decoder instead of CTC", 0.003],
+  ["Deeper model via FP16", 0.003],
+  ["Deeper model via Llama (rotary) attention", 0.003],
+  ["Confidence head instead of simple rules", 0.002]
+]} domain={[0, 0.007]} decimals={3} caption="Approximate score gains reported by the winners. Four of the entries are efficiency improvements whose benefit came from the deeper model they made possible within the limits." />
+
+Four of the gains listed are not accuracy improvements in themselves. FP16, rotary attention, masking and decoder caching each made the model cheaper, and the saved time and memory were spent on more layers. Under a fixed deployment budget, efficiency and accuracy are the same currency.
+
+### What did not help
+
+Using all supplemental data; edit distance as a training loss; CTC, even as an auxiliary loss; label smoothing; adversarial weight perturbation (NaNs in FP16); test-time augmentation; hidden-layer mixup and SpecAugment++; beam search.
+
+## Other top solutions
+
+- **Second place (Hoyeol Sohn)** compared speech-recognition architectures systematically and also arrived at a Squeezeformer. The same author later won second place in Stanford Ribonanza with a Squeezeformer adapted to RNA, crediting this competition for the idea.
+- **Third place (gezi)** used a 17-layer Squeezeformer that kept time reduction and used RoPE, and released code.
+- **Fifth place (Jungwoo Park)** used a vanilla transformer with data2vec self-supervised pretraining, CutMix, and knowledge distillation from larger models into one that fitted the size limit.
+
+<Foundation id="pseudo-labelling" />
+
+## Compute and deployment
+
+| Setting | What the solution needs |
+| --- | --- |
+| Kaggle | TFLite, 40 MB, 5 hours on CPU for the test set. |
+| Phone app | MediaPipe for landmarks (real time on current phones) plus the 40 MB model. The pipeline is the product's inference path already. |
+| Retraining | Hundreds of epochs; A100-class GPUs are practical, free notebooks are not. Fine-tuning the released weights on new signers is far cheaper than training from scratch. |
+
+<Callout kind="deploy" title="What remains before a product">
+Fingerspelling is only part of signing. A usable text-entry feature needs detection of when fingerspelling starts and stops within natural signing, user correction of errors, and evaluation with Deaf users across ages, skin tones, lighting and devices. The model is the part that is already done.
+</Callout>
