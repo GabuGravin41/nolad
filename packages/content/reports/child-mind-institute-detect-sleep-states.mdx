@@ -1,0 +1,296 @@
+---
+slug: child-mind-institute-detect-sleep-states
+title: "Child Mind Institute Detect Sleep States (2023): finding sleep onset and waking in wrist accelerometry"
+shortTitle: CMI Detect Sleep States
+kaggleSlug: child-mind-institute-detect-sleep-states
+kaggleUrl: https://www.kaggle.com/competitions/child-mind-institute-detect-sleep-states
+year: 2023
+dates: { start: "2023-09-05", end: "2023-12-05" }
+host: Child Mind Institute (Healthy Brain Network)
+collection: medicine
+field: Sleep science and wearables
+modality: [Wrist accelerometer time series]
+tasks: [event detection]
+techniques:
+  - event-detection
+  - sequence-models
+  - unet
+  - soft-labels
+  - gradient-boosting
+  - threshold-tuning
+  - ensembling
+  - grouped-cv
+metric:
+  name: Event-detection average precision
+  summary: "Average precision of predicted onset and wake-up times, averaged over ten time tolerances from 1 to 30 minutes and over the two event types."
+constraints: { runtime: "9 h", hardware: "Kaggle notebook", internet: false }
+summary: "Given weeks of wrist accelerometer readings from children and adolescents, mark when each night's sleep began and ended. The winners built a small convolution–GRU network with targets that shrink during training, then a second-stage model that estimates the probability of an event in each minute, and finally a submission builder that picks timestamps to maximise the expected score directly."
+winningIdea: "Separate what to predict from what to submit: a CNN–GRU–CNN model gives smooth event scores, a second-level model turns them into per-minute probabilities, and a greedy algorithm chooses submission times that maximise expected average precision across all ten tolerances."
+solutions:
+  - rank: 1
+    team: sakami, kami and shimacos
+    members: [{ name: "sakami" }, { name: "kami", handle: "kami634" }, { name: "shimacos" }]
+    writeup: https://www.kaggle.com/competitions/child-mind-institute-detect-sleep-states/writeups/shimacos-vs-sakami-vs-kami-1st-place-solution
+    code:
+      - { label: "Code", url: "https://github.com/sakami0000/child-mind-institute-detect-sleep-states-1st-place" }
+  - rank: 2
+    team: k-mat
+    writeup: https://www.kaggle.com/competitions/child-mind-institute-detect-sleep-states/writeups/k-mat-2nd-place-solution
+  - rank: 3
+    team: Quants and Poets
+    writeup: https://www.kaggle.com/competitions/child-mind-institute-detect-sleep-states/writeups/quants-and-poets-3rd-place-solution-gru-unet-and-l
+    note: "GRU, U-Net and LightGBM."
+  - rank: 6
+    team: Fritz Cremer
+    writeup: https://www.kaggle.com/competitions/child-mind-institute-detect-sleep-states/writeups/fritz-cremer-6th-place-solution-bilstm-unet
+    note: "BiLSTM U-Net."
+  - rank: 11
+    team: Chris Deotte
+    writeup: https://www.kaggle.com/competitions/child-mind-institute-detect-sleep-states/writeups/chris-deotte-11th-place-gru-cnn-transformer-gpu-de
+deployability:
+  score: 4
+  verdict: "The first-stage network is small and fast and reads only two signals every wrist-worn research device records; the post-processing is tailored to the competition metric and would be replaced by a simpler event rule for research use."
+  inference: "A compact 1D model over multi-day series; seconds per participant on a GPU and practical on a CPU."
+  models: "CNN–residual GRU–CNN first-level models; second-level LightGBM, CatBoost and small sequence models on candidate windows."
+  training: "Modest; the first-level model has hidden size 64 and trains on daily chunks."
+  externalData: "None."
+  licences:
+    code: "Public GitHub repository."
+    data: "Healthy Brain Network data provided for the competition; reuse requires the host's terms."
+    weights: "Not stated in the write-up; retrain from the repository."
+  risks:
+    - "The labels mark sleep windows as defined by the annotators, with rules about minimum sleep length; a different definition changes what 'correct' means."
+    - "The metric rewards submitting many candidate times per night. A study that needs one onset and one wake time per night must add a selection rule."
+related:
+  - hms-harmful-brain-activity-classification
+  - birdclef-2024
+  - isic-2024-challenge
+papers:
+  - { label: "Alexander et al. (2017). An open resource for transdiagnostic research in pediatric mental health and learning disorders (Healthy Brain Network). Scientific Data.", url: "https://www.nature.com/articles/sdata2017181" }
+  - { label: "Event detection AP metric notebook (Kaggle)", url: "https://www.kaggle.com/code/metric/event-detection-ap/notebook" }
+dataLinks:
+  - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/child-mind-institute-detect-sleep-states/data" }
+priority: 9
+updated: "2026-09-28"
+---
+
+## The problem in its field
+
+Sleep regulates mood, attention and behaviour, and disturbed sleep is common in children with mental-health and learning difficulties. Studying it at scale is hard. Polysomnography in a sleep laboratory is accurate but expensive and unnatural. Sleep diaries are cheap but unreliable, and cannot separate getting into bed from falling asleep. **Wrist-worn accelerometers** record movement continuously for weeks in a person's normal life and are standard in large studies, but turning their signals into sleep times has relied on hand-made rules that vary between individuals.
+
+The Child Mind Institute provided recordings from the **Healthy Brain Network**, a large New York study of child and adolescent mental health, and asked for models that detect **sleep onset** and **wake-up** events.
+
+<Deep title="What the accelerometer measures" kind="domain">
+
+A three-axis accelerometer on the wrist measures acceleration along three directions, including gravity. Two summary signals were provided at 5-second steps:
+
+- **anglez**: the angle of the arm relative to the horizontal plane, derived from the direction of gravity. It changes when the wrist rotates.
+- **ENMO** (Euclidean norm minus one): $\max\big(0,\ \sqrt{a_x^2 + a_y^2 + a_z^2} - 1\big)$ in units of $g$, the acceleration beyond gravity. It is near zero at rest and rises with movement.
+
+During sleep, both become quiet for long stretches, interrupted by occasional posture changes. The classic heuristic (van Hees et al.) marks sleep when the arm angle stays nearly constant for several minutes. The difficulty is distinguishing lying still awake (reading, watching a screen) from sleeping, and marking the transition minute precisely.
+
+Devices are sometimes taken off. A watch lying on a table produces a perfectly flat signal; in this dataset, periods of non-wear showed an exact daily repetition of values, an artefact of how gaps had been filled.
+</Deep>
+
+## The data
+
+Each training series is one participant's recording over many days, at one sample every 5 seconds (17,280 steps per day), with the two signals and a timestamp. Labels give, for each night, the step of sleep onset and of wake-up. Some nights have no labelled events, for example when the device was not worn. The hidden test set had to be processed in 9 hours.
+
+## The metric
+
+For each event type and each tolerance $\tau$ in $\{1, 3, 5, 7.5, 10, 12.5, 15, 20, 25, 30\}$ minutes (12 to 360 steps), predictions are matched to ground-truth events: each true event is paired with the highest-confidence unmatched prediction within $\tau$. Average precision is computed over all predictions ranked by confidence, then averaged over the ten tolerances and the two event types.
+
+<Foundation id="precision-recall-fbeta" />
+
+<Deep title="What this metric rewards" kind="math">
+
+Three properties drive the solutions:
+
+1. **Unmatched low-confidence predictions cost little.** AP is computed from the ranked list. Extra predictions ranked below all the true matches only add false positives at recall levels already reached, where precision has little weight. It therefore pays to submit many candidate times per night with decreasing confidence.
+2. **Precision at many tolerances.** A prediction 4 minutes from the truth counts at tolerances of 5 minutes and above (7 of 10) but not at 1 or 3. Being exactly right earns credit at all ten.
+3. **One match per event.** Once a prediction is matched to an event at a given tolerance, a second nearby prediction cannot match the same event and becomes a false positive. Two confident predictions 2 minutes apart around one event waste the second one.
+
+The winning post-processing is a direct response to these three properties.
+</Deep>
+
+## How the winning solution works
+
+The team of sakami, kami and shimacos built a first-level network, a second-level model and a submission builder. The first-level network alone would have placed ninth; the rest lifted the private score from 0.829 to 0.852.
+
+<Pipeline steps={[
+  {tag: "Level 1", title: "CNN → residual GRU → CNN", detail: "per-step event scores from anglez, ENMO, time features"},
+  {tag: "Filter", title: "Remove non-wear", detail: "rule-based detection of daily repeated segments"},
+  {tag: "Level 2", title: "Per-minute event probability", detail: "peaks ± 8 min → GBDTs and small sequence models"},
+  {tag: "Submit", title: "Greedy expected-AP selection", detail: "choose times one by one, discounting nearby probability"}
+]} caption="The three parts of the winning solution." />
+
+<Foundation id="models-and-loss" />
+
+### Level 1: the network
+
+The architecture comes from a public notebook by danielphalen:
+
+1. **Input scaling** with a squeeze-and-excitation module over the feature channels (`SEScale`).
+2. **Downsampling convolutions**, reducing the number of time steps.
+3. **A stack of residual bidirectional GRU layers**, reading the whole day in both directions.
+4. **Upsampling convolutions** back to the input resolution.
+5. **A minute embedding concatenated at the output layer.**
+
+<Foundation id="recurrent-networks" />
+
+<Deep title="Code: SEScale and the output-layer minute embedding" kind="code">
+
+```python title="from the 1st-place write-up"
+class SEScale(nn.Module):
+    def __init__(self, ch: int, r: int) -> None:
+        super().__init__()
+        self.fc1 = nn.Linear(ch, r)
+        self.fc2 = nn.Linear(r, ch)
+
+    def forward(self, x: torch.FloatTensor) -> torch.FloatTensor:
+        h = self.fc1(x)
+        h = F.relu(h)
+        h = self.fc2(h).sigmoid()
+        return h * x
+```
+
+`SEScale` computes, for each time step, a weight in $(0, 1)$ for each input channel from all channels together, and multiplies the channels by those weights. It lets the model turn features up or down depending on context (for example, trust ENMO less when the angle is flat).
+
+```python title="forward pass (excerpt)"
+def forward(self, num_x, cat_x):
+    cat_embeddings = [embedding(cat_x[:, :, i]) for i, embedding in enumerate(self.category_embeddings)]
+    num_x = self.numerical_linear(num_x)
+    x = torch.cat([num_x] + cat_embeddings, dim=2)
+    x = self.input_linear(x)
+    x = self.conv(x.transpose(-1, -2)).transpose(-1, -2)
+    for gru in self.gru_layers:
+        x, _ = gru(x)
+    x = self.dconv(x.transpose(-1, -2)).transpose(-1, -2)
+    minute_embedding = self.minute_embedding(cat_x[:, :, 0])
+    x = self.output_linear(torch.cat([x, minute_embedding], dim=2))
+    return x
+```
+
+- Categorical features (hour, minute, weekday, non-wear flag) pass through embedding tables; numerical features through a linear layer; both are concatenated.
+- `self.conv` and `self.dconv` are 1D convolutions over time; `transpose` moves the time axis where `Conv1d` expects it.
+- The GRU layers run on the downsampled sequence, which is cheaper.
+- The **minute embedding** is concatenated again right before the output. Competitors had noticed that ground-truth events were not spread evenly over the minutes of the hour. Feeding the minute directly to the last layer lets the model express that bias without it being washed out by the recurrent layers.
+</Deep>
+
+**Features.** Categorical: hour, minute, weekday, non-wear flag. Numerical: anglez / 45; $\log(1 + \text{ENMO})$ clipped at 1 and divided by 0.1; rolling mean, standard deviation and maximum of anglez and ENMO over 12 steps (1 minute); rolling median over 5 minutes of the absolute change in anglez. Month and day of month were removed (this improved CV).
+
+**Data preparation.** Each series is cut into chunks of about one day, with chunk starts offset by 0.35 days so chunk boundaries fall at different times of day. Each epoch uses half of the chunks. At evaluation, overlapping chunk predictions are averaged and 30 minutes are trimmed from each chunk's ends, where the network lacks context.
+
+### Targets that shrink during training
+
+A single step marked 1 at each event and 0 everywhere else is a hard target to learn. The winners built a **soft target** that is highest at the event and decays with distance, built from the metric's tolerances: for tolerance $i$ with window $w_i$ steps (12, 36, ..., 360), each step within $w_i$ of an event gets value $1 - i/10$, and the target is the maximum over tolerances. Steps within 1 minute get 1.0, within 3 minutes 0.9, and so on, down to 0.1 at 30 minutes.
+
+<Deep title="Code: building the decaying target" kind="code">
+
+```python title="from the 1st-place write-up"
+tolerance_steps = [12, 36, 60, 90, 120, 150, 180, 240, 300, 360]
+target_columns = ["event_onset", "event_wakeup"]
+
+train_df = (
+   train_df.join(train_events_df.select(["series_id", "step", "event"]), on=["series_id", "step"], how="left")
+   .to_dummies(columns=["event"])
+   .with_columns(
+       pl.max_horizontal(
+           pl.col(target_columns)
+           .rolling_max(window_size * 2 - 1, min_periods=1, center=True)
+           .over("series_id")
+           * (1 - i / len(tolerance_steps))
+           for i, window_size in enumerate(tolerance_steps)
+       )
+   )
+)
+```
+
+- The join puts a 1 in `event_onset` or `event_wakeup` at each labelled step.
+- `rolling_max(2w − 1, center=True)` spreads each 1 to all steps within $w - 1$ steps on either side.
+- Each spread version is scaled by $(1 - i/10)$, and `max_horizontal` keeps the largest value at each step: a staircase that falls from 1 to 0.1 over 30 minutes.
+
+Then, every epoch:
+
+```python
+targets = np.where(targets == 1.0, 1.0, (targets - (1.0 / config.n_epochs)).clip(min=0.0))
+```
+
+Every value below 1 is reduced by $1/\text{epochs}$. By the last epoch, only the steps within 1 minute of an event remain positive.
+</Deep>
+
+Early in training the wide target gives the network a strong signal about roughly where events are. As the target narrows, the network is pushed to sharpen its peaks. The authors report that this decay was the largest single improvement to the first-level model (CV 0.7510 to 0.7699).
+
+<Foundation id="soft-labels" />
+
+### Removing non-wear periods
+
+The data had a quirk: when the device was not worn, the filled-in signal repeated exactly with a period of one day. A rule detected those segments and set a flag, used both as an input feature and to zero out predictions in non-wear periods.
+
+### Level-1 improvements, step by step
+
+| Change | CV |
+| --- | --- |
+| Baseline | 0.7510 |
+| Decaying target | 0.7699 |
+| Non-wear filter on outputs | 0.7807 |
+| Non-wear flag as input | 0.7870 |
+| Batch 16 → 4, hidden 128 → 64, GRU layers 2 → 8 | 0.7985 |
+| Normalise scores by daily sum | 0.8044 |
+| Remove month and day features | 0.8117 |
+| Trim 30 minutes from chunk edges | 0.8142 |
+| Minute embedding at the output layer | 0.8206 |
+
+At this point the single model scored 0.768 public and 0.829 private.
+
+### Level 2: a probability per minute
+
+Ground-truth events were always at second 0 of a minute, and the metric cannot distinguish predictions within 30 seconds of the truth. The level-1 network outputs a score every 5 seconds and is trained to be positive in a window around events. The second level converts this into the probability that an event occurs **exactly at a given minute**.
+
+1. Average the level-1 scores per minute.
+2. Find peaks with `scipy.signal.find_peaks` (height 0.001, minimum distance 8).
+3. Around each peak, take a window of 8 minutes before and after (overlapping windows merged). These windows contained 98.45% of true events.
+4. For each candidate minute, aggregate features from the level-1 predictions and the raw signals, and train LightGBM and CatBoost to predict 1 at the exact event minute and 0 elsewhere. Also train small CNN–RNN, CNN and transformer models on the windows as sequences.
+
+The level-2 outputs were well calibrated without further adjustment, and they absorbed the minute bias that the level-1 model only partly captured.
+
+<Foundation id="gradient-boosting" />
+
+### Building the submission to maximise expected AP
+
+With calibrated per-minute probabilities $q_m$, the team chose submission times greedily.
+
+1. **Candidate times.** Any second within a minute scores the same, so consider two candidate times per minute, at 15 and 45 seconds, each able to match events in adjacent minutes at the tightest tolerance.
+2. **Score a candidate.** For candidate time $t$ and each tolerance $w$, sum the level-2 probabilities of events within $w$ steps of $t$: this is the expected number of events that $t$ could match at tolerance $w$. Add up over the ten tolerances.
+3. **Pick the best** candidate in each series and add it to the submission with that score as its confidence.
+4. **Discount.** An event within $w$ of the chosen time will already be matched at tolerance $w$ and cannot match another prediction. For the next round, subtract the probability mass within $w$ of the chosen point from the tolerance-$w$ sums of all other candidates.
+5. **Repeat** until enough points have been submitted.
+
+Daily normalisation of the level-2 probabilities, computing score changes incrementally, and JIT compilation made this fast enough to run on every series.
+
+<Deep title="Why greedy selection with discounting approximates the best submission" kind="math">
+
+Ignoring interactions between tolerances, the contribution of a submitted time $t$ at tolerance $w$ is roughly the probability that an unmatched true event lies within $w$ of $t$. Summing over tolerances gives the expected number of tolerance-level matches $t$ creates, which is what AP rewards when $t$ is ranked high.
+
+Once $t$ is submitted, events near it are likely matched, so the value of another candidate $t'$ near $t$ falls. Subtracting the probability mass within each tolerance window of $t$ updates every candidate's expected value to account for that. Picking the highest remaining value each time and ranking picks in the order chosen places the most valuable predictions at the top of the ranked list, which is where AP gives most weight.
+
+The procedure is a greedy approximation to the combinatorial problem of choosing a set of times and their ranking; it is exact neither in the discounting (which treats tolerances independently) nor in optimality, but it encodes the three properties of the metric listed above.
+</Deep>
+
+This post-processing raised the scores from 0.768 to 0.790 public and from 0.829 to 0.852 private.
+
+## Other top solutions
+
+Most top teams used some combination of a 1D U-Net or GRU over the raw signals and post-processing tuned to the metric: second place (k-mat); third place with a GRU, a U-Net and LightGBM; fourth place with a modified U-Net, a transformer and weighted boxes fusion adapted to events; sixth place with a BiLSTM U-Net; seventh with a WaveNet. Chris Deotte's eleventh-place write-up describes a fast GPU pipeline comparing GRU, CNN and transformer models. The consistent lesson is that the post-processing was worth as much as the network.
+
+## Compute and deployment
+
+| Setting | What the solution needs |
+| --- | --- |
+| Kaggle | 9 hours for the hidden test set; the models are light. |
+| Sleep research study | The level-1 network plus a simple rule (for example, the highest-scoring onset and wake-up per night) gives one sleep window per night. Runs on a laptop. |
+| Clinical tool | Validation against polysomnography, which the competition labels were not. |
+
+<Callout kind="deploy" title="Separate the model from the metric">
+The level-1 network is the transferable part: a small model that turns wrist accelerometry into event scores. The level-2 model and the greedy submission builder optimise a leaderboard metric that rewards many candidate times per night. A research pipeline would keep level 1, possibly level 2, and replace the submission builder with a rule that fits the study's definition of a night's sleep.
+</Callout>
