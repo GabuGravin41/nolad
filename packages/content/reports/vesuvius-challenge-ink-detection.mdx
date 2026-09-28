@@ -1,0 +1,275 @@
+---
+slug: vesuvius-challenge-ink-detection
+title: "Vesuvius Challenge Ink Detection (2023): finding ink in X-ray volumes of carbonised papyrus"
+shortTitle: Vesuvius Challenge Ink Detection
+kaggleSlug: vesuvius-challenge-ink-detection
+kaggleUrl: https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection
+year: 2023
+dates: { start: "2023-03-15", end: "2023-06-14" }
+host: Vesuvius Challenge (with EduceLab, University of Kentucky)
+collection: beyond
+field: Digital humanities and papyrology
+modality: [X-ray micro-CT surface volumes, infrared photographs]
+tasks: [semantic segmentation from a 3D volume to a 2D mask]
+techniques:
+  - semantic-segmentation
+  - 3d-volumes
+  - 2-5d-slices
+  - vision-transformers
+  - cnn-backbones
+  - segmentation-losses
+  - domain-augmentation
+  - weight-averaging
+  - tta
+  - ensembling
+  - threshold-tuning
+metric:
+  name: F0.5 score
+  summary: "Pixel-wise F-beta with beta = 0.5 between the predicted and true ink masks, weighting precision more than recall."
+constraints: { runtime: "Code competition: notebook inference within the Kaggle time limit", hardware: "Kaggle GPU notebook", internet: false }
+summary: "Detect ink on fragments of the Herculaneum papyri, carbonised by the eruption of Vesuvius in 79 CE, from X-ray CT volumes in which carbon ink is barely distinguishable from carbonised papyrus. The winning team encoded a stack of 16 CT layers with a 3D network, took the maximum over depth to make the model insensitive to which layer holds the ink, segmented the result with a SegFormer, and averaged nine models with rotation TTA, which also made the ensemble well calibrated at a threshold of 0.5."
+winningIdea: "Make the model depth-invariant: a 3D encoder followed by a maximum over the depth axis, so the ink can be found whichever layer it sits in, then a strong 2D segmenter on large 1024-pixel crops."
+solutions:
+  - rank: 1
+    team: ryches, Alex Loftus, Aina Tersol, Ted K
+    members:
+      - { name: "ryches" }
+      - { name: "Alex Loftus", handle: "loftuale000" }
+      - { name: "Aina Tersol", handle: "ainatersol" }
+      - { name: "Ted K", handle: "socated" }
+    writeup: https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/writeups/ryches-1st-place-solution
+    code:
+      - { label: "Starting point: tanakar's 2.5D segmentation baseline", url: "https://www.kaggle.com/code/tanakar/2-5d-segmentaion-baseline-training" }
+deployability:
+  score: 4
+  verdict: "The model architecture is compact and was used, in adapted forms, on full scrolls after the competition. Its limitation is the data: training labels come from a few fragments where ink is visible in infrared photographs, and intact scrolls differ in scan resolution and in how their surfaces are extracted."
+  inference: "Sliding 1024 × 1024 windows over each fragment's 16 middle layers with a quarter-window stride and 4 rotations, for each of 9 models; minutes per fragment on a GPU."
+  models: "Nine two-stage models: a 3D encoder (3D CNN, 3D U-Net or UNETR) with max-pooling over depth, followed by SegFormer-B3 or B5."
+  training: "Hours per model on one or a few GPUs; three training fragments."
+  externalData: "None."
+  licences:
+    code: "Kaggle notebooks (Kaggle terms); check the write-up for repositories."
+    data: "Vesuvius Challenge data under the challenge's data licence (see scrollprize.org)."
+    weights: "Not released as a separate artefact."
+  risks:
+    - "With only three training fragments, the model may learn fragment-specific artefacts; validation used one held-out fragment."
+    - "Intact scrolls must first be virtually unwrapped (surface segmentation), and errors there look like missing or false ink."
+    - "A model can hallucinate letter-like shapes; readings need papyrological confirmation."
+related:
+  - czii-cryo-et-object-identification
+  - uw-madison-gi-tract-image-segmentation
+  - hubmap-organ-segmentation
+papers:
+  - { label: "Parsons S., Parker C.S., Chapman C., Hayashida M., Seales W.B. (2023). EduceLab-Scrolls: verifiable recovery of text from Herculaneum papyri using X-ray CT.", url: "https://arxiv.org/search/?query=EduceLab-Scrolls&searchtype=all" }
+  - { label: "Xie E. et al. (2021). SegFormer: simple and efficient design for semantic segmentation with transformers.", url: "https://arxiv.org/abs/2105.15203" }
+  - { label: "Hatamizadeh A. et al. (2022). UNETR: transformers for 3D medical image segmentation.", url: "https://arxiv.org/abs/2103.10504" }
+  - { label: "Izmailov P. et al. (2018). Averaging weights leads to wider optima and better generalization (SWA).", url: "https://arxiv.org/abs/1803.05407" }
+dataLinks:
+  - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/data" }
+  - { label: "Vesuvius Challenge", url: "https://scrollprize.org/" }
+priority: 25
+updated: "2026-09-28"
+---
+
+## The problem in its field
+
+In 79 CE the eruption of Vesuvius buried the Roman town of Herculaneum. In the 18th century, excavators found a villa, now called the Villa of the Papyri, with a library of papyrus scrolls: the only intact library surviving from the classical world. The scrolls were carbonised by the heat. Attempts to unroll them destroyed many; hundreds remain rolled and unreadable.
+
+X-ray computed tomography can image the inside of a scroll without opening it, and the layers of papyrus can be traced and virtually flattened. The difficulty is the ink. Herculaneum scribes used **carbon-based ink**, whose X-ray density is almost the same as that of carbonised papyrus, so the letters are nearly invisible in the scans.
+
+The **Vesuvius Challenge**, launched in 2023 by Nat Friedman and Daniel Gross with Brent Seales's EduceLab at the University of Kentucky, offered prizes for reading the scrolls. The Kaggle competition was its $100,000 ink-detection progress prize: learn to see ink in CT data where the answer is known, so that the method can be applied to the scrolls.
+
+Later developments show that it worked. Using machine-learning ink detection on virtually unwrapped scroll surfaces, Luke Farritor found the first word read from inside an unopened scroll, "πορφύρας" (purple), in 2023, and in February 2024 Youssef Nader, Luke Farritor and Julian Schilliger won the challenge's Grand Prize for reading passages of a scroll.
+
+<Deep title="Why ink is visible at all" kind="domain">
+
+If ink and papyrus have the same density, why can a model detect ink? Several weak cues exist:
+
+- Ink sits **on the surface** of the papyrus, forming a thin layer that slightly changes the surface texture and thickness.
+- Ink can **fill the gaps** between papyrus fibres, altering the fibre pattern locally (the "crackle" pattern later seen by eye in some scans).
+- Ink may contain small amounts of other elements that change X-ray absorption slightly.
+
+None of these is reliable to a human looking at one slice, but a model that sees many layers and a large area can combine them. This is why the input is a volume around the surface, not just the surface itself.
+</Deep>
+
+## The data
+
+The training data were three **detached fragments** of scrolls, which had flaked off during earlier unrolling attempts. For these, ink is visible on the exposed surface in **infrared photographs**, which gave the labels.
+
+- **3D X-ray micro-CT** scans at about 4 µm per voxel, acquired at the Diamond Light Source synchrotron.
+- For each fragment, a **surface volume**: 65 layers sampled parallel to the papyrus surface, from inside the papyrus outwards, flattened into a stack of 2D images.
+- The **infrared photograph**, aligned with the surface volume.
+- A hand-labelled **binary ink mask** derived from the infrared image, and a mask of where the fragment is.
+
+The test fragments were hidden. The labels are 2D (ink or not at each position on the surface), while the input is 3D.
+
+<Foundation id="dicom-and-volumes" />
+
+## The metric
+
+Pixel-wise $F_{0.5}$:
+$$
+F_{0.5} = \frac{(1 + 0.5^2)\,\text{precision}\cdot\text{recall}}{0.5^2\cdot\text{precision} + \text{recall}} = \frac{1.25\,PR}{0.25\,P + R}.
+$$
+With $\beta = 0.5$, precision counts more than recall. The reasoning: for reading, false ink (strokes that are not there) is more misleading than slightly incomplete strokes, which a reader can fill in.
+
+<Foundation id="precision-recall-fbeta" />
+
+<Plot series={[{fn: "fbeta-recall", params: {beta: 0.5, precision: 0.8}, label: "F0.5 at precision 0.8"}, {fn: "fbeta-recall", params: {beta: 1, precision: 0.8}, label: "F1 at precision 0.8"}]} x={[0, 1]} y={[0, 1]} xLabel="recall" yLabel="score" caption="At fixed precision, F0.5 rises quickly with recall and then saturates; F1 keeps rewarding recall. Low recall is penalised less by F0.5." />
+
+## How the winning solution works
+
+The winning team (ryches, Alex Loftus, Aina Tersol and Ted K) began from a public 2.5D segmentation baseline by tanakar. Their write-up lists four keys: larger crops, depth-invariant models, averaging many models for calibration, and validating on one fragment before training on all.
+
+<Pipeline steps={[
+  {tag: "Input", title: "16 middle layers", detail: "1024 × 1024 crops; blank crops skipped"},
+  {tag: "3D", title: "3D encoder", detail: "3D CNN, 3D U-Net or UNETR"},
+  {tag: "Pool", title: "Max over depth", detail: "(B, C, 16, H, W) → (B, C, H, W)"},
+  {tag: "2D", title: "SegFormer-B3/B5", detail: "segments at 1/4 resolution, then upsampled"},
+  {tag: "Ensemble", title: "9 models × 4 rotations", detail: "average; threshold 0.5; remove small components"}
+]} caption="The winning pipeline." />
+
+<Foundation id="models-and-loss" />
+
+### The problem with 2.5D models
+
+The public baseline treated the layers as channels of a 2D network (2.5D). Such a network learns weights tied to channel positions, which means it learns **which layers** contain ink. On the training fragments, ink sits in particular layers; on another fragment, because of different surface extraction or papyrus thickness, it can sit several layers higher or lower. A 2.5D model then looks in the wrong place.
+
+### Depth invariance by 3D encoding and max pooling
+
+The team's solution separates the model into two stages:
+
+1. A **3D encoder** processes the volume $(B, 1, 16, H, W)$ with 3D convolutions (or a 3D U-Net, or UNETR) into a multi-channel volume $(B, C, 16, H, W)$. Its convolutions share weights across depth, so the features it computes do not depend on the layer index.
+2. A **maximum over the depth axis** reduces this to a 2D feature map $(B, C, H, W)$, which a strong 2D segmenter (SegFormer) turns into the ink mask.
+
+<Deep title="Why convolution followed by a max over depth is shift-invariant in depth" kind="math">
+
+Let the input volume be $x(z, u, v)$, with depth $z$ and surface coordinates $(u, v)$, and let $T_\delta$ shift it in depth: $(T_\delta x)(z, u, v) = x(z - \delta, u, v)$.
+
+A convolutional encoder $E$ with weights shared across $z$ (and appropriate padding) is **equivariant** to depth shifts, apart from boundary effects:
+$$
+E(T_\delta x) = T_\delta E(x).
+$$
+The depth maximum $M(h)(c, u, v) = \max_z h(c, z, u, v)$ is **invariant** to shifts, because shifting a sequence does not change its maximum when the maximum stays inside the window:
+$$
+M(T_\delta h) = M(h).
+$$
+Composing them: $M(E(T_\delta x)) = M(T_\delta E(x)) = M(E(x))$. The 2D map fed to the segmenter is the same whether the ink sits in layer 5 or layer 9, which is exactly the property the 2.5D model lacked.
+
+Max is also a natural choice for detection: "is there ink anywhere along this column of layers?" is an existence question. Average pooling would dilute a strong response in one layer with the absence of signal in the others; this is the same argument as for max pooling of small lesions in mammography, applied along depth instead of across space.
+
+The 16 middle layers were used; the outer layers are mostly air or deep papyrus with little signal.
+</Deep>
+
+<Foundation id="convolution" />
+
+A stronger 3D stage worked better: a four-layer 3D CNN, then a 3D U-Net, then UNETR, a transformer-based 3D encoder. Channel dropout between the stages regularised the connection. The best single model, UNETR with 32 channels followed by SegFormer-B5, scored 0.82 public and 0.67 private.
+
+<Deep title="The two-stage model in PyTorch" kind="code">
+
+A Nolad illustration of the structure described in the write-up (a simple 3D CNN as the first stage; the team also used 3D U-Net and UNETR). SegFormer is loaded here through the Hugging Face transformers library.
+
+```python
+import torch, torch.nn as nn, torch.nn.functional as F
+from transformers import SegformerForSemanticSegmentation
+
+class DepthInvariantInk(nn.Module):
+    def __init__(self, c3d=32, segformer="nvidia/mit-b3"):
+        super().__init__()
+        layers, c_in = [], 1
+        for c_out in (c3d // 4, c3d // 2, c3d, c3d):          # four 3D conv layers
+            layers += [nn.Conv3d(c_in, c_out, 3, padding=1), nn.BatchNorm3d(c_out), nn.ReLU(inplace=True)]
+            c_in = c_out
+        self.enc3d = nn.Sequential(*layers)
+        self.drop = nn.Dropout2d(0.1)                          # channel dropout between stages
+        self.seg = SegformerForSemanticSegmentation.from_pretrained(
+            segformer, num_channels=c3d, num_labels=1, ignore_mismatched_sizes=True)
+
+    def forward(self, x):                                      # x: (B, 1, 16, H, W)
+        h = self.enc3d(x)                                      # (B, C, 16, H, W)
+        h = h.amax(dim=2)                                      # max over depth -> (B, C, H, W)
+        logits = self.seg(pixel_values=self.drop(h)).logits    # (B, 1, H/4, W/4)
+        return F.interpolate(logits, size=x.shape[-2:], mode="bilinear", align_corners=False)
+```
+
+The team upsampled with a transposed convolution rather than bilinear interpolation, and noted that SegFormer's coarse quarter-resolution output may itself help, by producing smooth strokes.
+</Deep>
+
+<Foundation id="attention-transformers" />
+
+### Large crops
+
+Crops of 1024 × 1024 worked better than 512, which worked better than 128. The total training time was similar, because fewer large crops cover the same area. Letters are a few hundred pixels across at this resolution, and deciding whether a faint pattern is part of a letter benefits from seeing the neighbouring strokes. Crops without any fragment were skipped.
+
+### Training
+
+- AdamW with gradual warm-up; loss **Dice + BCE**.
+- **Stochastic weight averaging**, because individual checkpoints were inconsistent.
+- Validation on fragment 1, then continued training on all three fragments, which gained about 0.04.
+
+<Foundation id="dice-and-overlap" />
+
+<Foundation id="weight-averaging" />
+
+**Augmentation:** horizontal and vertical flips (50%), 90° rotations (75%), brightness and contrast (50%), dropout of one or two depth channels (25%), and at 10% each shift-scale-rotate, noise or blur, coarse dropout and grid distortion. The team singles out rotations and flips as crucial: writing can appear in any orientation relative to the crop, and there are only three fragments.
+
+<Foundation id="data-augmentation" />
+
+### Inference, calibration and post-processing
+
+**Sliding windows and TTA.** Windows of the training size were moved with a stride of a quarter window, so each pixel is covered by about 16 windows; each window was predicted in 4 rotations. Per model, the logits covering a pixel were averaged, passed through a sigmoid, and the probabilities averaged across models. Halving the stride gained about 0.01, but spending the time on more models was better.
+
+**Threshold.** Individual models were calibrated differently, but the average of many was well calibrated around **0.5**, which was used. A threshold of 0.55 would have been slightly better on the private set; percentile-based thresholds were avoided as fragile.
+
+<Deep title="Why averaging models improves calibration" kind="math">
+
+Suppose model $m$ outputs $p_m = \sigma(z^\ast + \epsilon_m)$, where $z^\ast$ is an ideal logit and $\epsilon_m$ is a model-specific error. Individual models may be systematically over- or under-confident on a new fragment: some $\epsilon_m$ have positive mean there, some negative. The average $\bar p = \frac1M\sum_m p_m$ cancels errors of opposite sign, so its miscalibration is bounded by the average of the members' and is typically smaller.
+
+Formally, for a proper scoring rule such as squared error $(p - y)^2$, the ensemble's expected error satisfies
+$$
+\mathbb{E}(\bar p - y)^2 = \frac1M\sum_m \mathbb{E}(p_m - y)^2 - \frac1M\sum_m \mathbb{E}(p_m - \bar p)^2,
+$$
+the ambiguity decomposition: the ensemble is better than the average member by exactly the members' spread around their mean. A threshold chosen for the ensemble on validation data is therefore more likely to transfer to a new fragment than one chosen for a single model.
+</Deep>
+
+<Foundation id="ensembling-tta" />
+
+**Removing small components.** Connected components of the thresholded mask smaller than 10,000 pixels were removed with `cv2.connectedComponents`, an idea taken from the Understanding Clouds competition. Ink forms letters of substantial size; isolated small blobs are more likely noise, and removing them raises precision, which $F_{0.5}$ rewards.
+
+<Deep title="Removing small connected components" kind="code">
+
+```python
+import cv2, numpy as np
+
+def remove_small(mask: np.ndarray, min_size: int = 10_000) -> np.ndarray:
+    """mask: uint8 binary array (H, W). Keeps only 8-connected components with at least min_size pixels."""
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    keep = np.zeros(n, dtype=bool)
+    keep[1:] = stats[1:, cv2.CC_STAT_AREA] >= min_size       # label 0 is background
+    return keep[labels].astype(np.uint8)
+```
+
+A Nolad illustration; the team used `cv2.connectedComponents` with the same size threshold.
+</Deep>
+
+### The final ensemble
+
+Nine models, all with a 3D stage followed by SegFormer: 3D U-Nets with SegFormer-B3 at 1024 and 512 (and an SWA variant), 3D CNNs with 32 or 64 channels and SegFormer-B3 or B5, a 3D U-Net with 32 channels and B5 at 1024, UNETR with B5 at 512, and a UNETR model with a three-class target (no fragment, fragment without ink, ink). Individual public scores were 0.77–0.82.
+
+## How this compares with other competitions
+
+- **CZII cryo-ET** is the other "beyond medicine" volumetric competition: locate particles in 3D tomograms. There the target is 3D; here a 3D input produces a 2D answer, and the depth reduction is the design problem.
+- **Medical CT competitions** (haemorrhage, cervical spine, trauma) mostly used 2.5D slice stacks with shared 2D backbones and recurrent layers. Ink detection shows the failure mode of fixed-channel 2.5D inputs when the position of the signal in the stack varies, and a simple fix.
+- **The small-component filter and precision-weighted metric** recall the pneumothorax and GI-tract competitions, where false-positive regions were also the most costly error.
+
+## Compute and deployment
+
+| Setting | What the solution needs |
+| --- | --- |
+| Competition | Kaggle GPU notebook for nine models with overlapping windows and rotation TTA. |
+| Research group | One GPU per model; training fragments fit in memory as 16-layer surface volumes. |
+| Reading scrolls | Virtual unwrapping of each scroll into surface volumes, ink detection over square metres of surface, and review by papyrologists. |
+
+<Callout kind="deploy" title="The minimum useful version">
+A small 3D CNN over 16 surface layers, max-pooled over depth, followed by a SegFormer-B3, trained with Dice + BCE, flips and rotations on 1024-pixel crops, with rotation TTA and a small-component filter. Average several such models before choosing a threshold, and treat the output as an image for a papyrologist to read, not as a transcription.
+</Callout>
