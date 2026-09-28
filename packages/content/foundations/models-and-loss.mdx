@@ -1,8 +1,8 @@
 ---
 id: models-and-loss
-title: Models, parameters and loss functions
+title: "Models, parameters and loss functions"
 kind: ml
-summary: A trained network is a function with adjustable numbers inside it. Training chooses those numbers to make a loss function small on the training data.
+summary: "A trained network is a function with adjustable numbers inside it. Training chooses those numbers to make a loss function small on the training data."
 ---
 
 A **model** is a function $f_\theta$ that maps an input $x$ (an image, a signal, a sequence) to an output $\hat y = f_\theta(x)$ (a probability, a mask, a number). The vector $\theta$ collects the model's **parameters**: every weight and bias inside it. A small convolutional network has a few million parameters; the language models in the AIMO report have fourteen billion. Nothing else about the model changes during training.

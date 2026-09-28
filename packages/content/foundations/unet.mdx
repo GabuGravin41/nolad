@@ -1,8 +1,8 @@
 ---
 id: unet
-title: U-Net and encoder–decoder segmentation
+title: "U-Net and encoder–decoder segmentation"
 kind: ml
-summary: A U-Net compresses an image into coarse, meaningful features and then expands them back to full resolution, copying fine detail across through skip connections, so that every pixel gets a label.
+summary: "A U-Net compresses an image into coarse, meaningful features and then expands them back to full resolution, copying fine detail across through skip connections, so that every pixel gets a label."
 ---
 
 Segmentation needs an output the size of the input. A classification backbone throws away spatial resolution on purpose, ending with a small grid of abstract features. Ronneberger et al. (2015) paired such an **encoder** with a mirrored **decoder**:

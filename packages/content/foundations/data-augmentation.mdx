@@ -1,8 +1,8 @@
 ---
 id: data-augmentation
-title: Data augmentation
+title: "Data augmentation"
 kind: ml
-summary: Augmentation trains a model on randomly transformed copies of the data, teaching it which changes should not affect the answer. Good augmentations mirror the variation that real data contain.
+summary: "Augmentation trains a model on randomly transformed copies of the data, teaching it which changes should not affect the answer. Good augmentations mirror the variation that real data contain."
 ---
 
 Each time an image is loaded for training, it is transformed at random: flipped, rotated, scaled, shifted, brightened, blurred, partly masked. The label stays the same (or is transformed consistently, as with a segmentation mask). The model never sees the same input twice and must learn features that survive the transformations.

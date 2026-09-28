@@ -564,7 +564,7 @@ code[data-theme*=" "] span {
 
 .pipeline-step {
   position: relative;
-  flex: 1 1 10rem;
+  flex: 1 1 7.5rem;
   display: flex;
   flex-direction: column;
   gap: 0.25rem;

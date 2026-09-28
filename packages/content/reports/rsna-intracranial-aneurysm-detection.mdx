@@ -1,0 +1,374 @@
+---
+slug: rsna-intracranial-aneurysm-detection
+title: "RSNA Intracranial Aneurysm Detection (2025): vessel-first detection across CT and MR angiography"
+shortTitle: RSNA Intracranial Aneurysm Detection
+kaggleSlug: rsna-intracranial-aneurysm-detection
+kaggleUrl: https://www.kaggle.com/competitions/rsna-intracranial-aneurysm-detection
+year: 2025
+dates: { start: "2025-07-28", end: "2025-10-14" }
+host: RSNA with ASNR, SNIS and ESNR
+collection: medicine
+field: Neuroradiology
+modality: [CT angiography, MR angiography, MRI]
+tasks: [multi-label classification, localisation]
+techniques:
+  - multi-label-classification
+  - localisation-then-classification
+  - semantic-segmentation
+  - 3d-volumes
+  - nnu-net
+  - unet
+  - transformers
+  - auxiliary-losses
+  - segmentation-losses
+  - domain-augmentation
+  - transfer-learning
+  - weight-averaging
+  - coarse-to-fine
+  - tta
+  - model-compression
+  - external-data
+  - grouped-cv
+metric:
+  name: Weighted column-wise AUC
+  summary: "Mean of 14 ROC AUCs; the 'aneurysm present' column carries half the weight and the 13 location columns share the other half."
+constraints: { runtime: "12 h", hardware: "2 × NVIDIA T4 (Kaggle)", internet: false, other: "Code and weights had to be published by the winners." }
+summary: "Find intracranial aneurysms, and name the artery each one sits on, in brain scans from four different imaging techniques and many hospitals. The winning pipeline first segments the brain's arteries with nnU-Net, crops the region that contains them, and then classifies aneurysm presence per artery by pooling features inside each artery's mask. It processes a scan in about 18 seconds on a Kaggle T4 GPU."
+winningIdea: "Segment the arteries first, then ask about each artery separately: features pooled inside each vessel's mask, from a backbone pretrained on vessel segmentation, give location-aware predictions that transfer across CT angiography, MR angiography and ordinary MRI."
+solutions:
+  - rank: 1
+    team: tomoon33
+    members: [{ name: "tomoon33", handle: "tomoon33" }]
+    writeup: https://www.kaggle.com/competitions/rsna-intracranial-aneurysm-detection/writeups/1st-place-solution
+    code:
+      - { label: "Training code", url: "https://github.com/uchiyama33/rsna2025_1st_place" }
+      - { label: "Submission notebook", url: "https://www.kaggle.com/code/tomoon33/rsna2025-submission-1st-place" }
+  - rank: 2
+    team: BraveCowCow
+    members:
+      - { name: "Pengcheng Shi" }
+      - { name: "Kaiyuan Yang" }
+      - { name: "Houjing Huang" }
+      - { name: "Jiawei Chen" }
+      - { name: "Yan Lu" }
+    writeup: https://www.kaggle.com/competitions/rsna-intracranial-aneurysm-detection/writeups/2nd-place-solution
+    code:
+      - { label: "Training and inference", url: "https://github.com/PengchengShi1220/RSNA2025_Intracranial-Aneurysm-Detection" }
+      - { label: "3D Slicer plug-in", url: "https://github.com/murong-xu/SlicerBraveCowCow" }
+      - { label: "Inference Docker", url: "https://github.com/huanghoujing/bravecowcow_inference_docker" }
+    note: "Organisers of the MICCAI TopCoW and TopBrain vessel-segmentation challenges."
+  - rank: 3
+    team: 3rd place
+    writeup: https://www.kaggle.com/competitions/rsna-intracranial-aneurysm-detection/writeups/3rd-place-solution
+  - rank: 4
+    team: 4th place
+    writeup: https://www.kaggle.com/competitions/rsna-intracranial-aneurysm-detection/writeups/4th-place-solution
+  - rank: 5
+    team: 5th place (with code)
+    writeup: https://www.kaggle.com/competitions/rsna-intracranial-aneurysm-detection/writeups/5th-place-solution
+deployability:
+  score: 5
+  verdict: "About 18 seconds per scan on a T4, a fail-safe for unreadable series, public code and weights, and a 3D Slicer plug-in from the runner-up put this within reach of a hospital research group."
+  inference: "≈18 s per series on one Kaggle T4 (4 s preprocessing, 11 s vessel segmentation, 3 s classification), measured by the author over 100 series."
+  models: "Three nnU-Net segmentation models and a 4-fold ensemble of one ROI classifier, with left–right flip test-time augmentation."
+  training: "Single RTX 4090: 14 h for the main nnU-Net (1,000 epochs) and 12 h per classifier fold at full resolution."
+  externalData: "None for the winner. The runner-up added TopCoW and TopBrain vessel annotations."
+  licences:
+    code: "Open-source as required by Kaggle's winner licence (see repository)."
+    data: "RSNA competition data; RSNA challenge datasets are generally released for non-commercial research. Check the data page before reuse."
+    weights: "Published with the code as required by the host."
+  risks:
+    - "The public–private gap of 3–4 AUC points reported by the runner-up suggests the two test splits differ in case mix; performance at a new hospital must be measured, not assumed."
+    - "Labels give aneurysm centres and artery locations, not size. The model does not measure aneurysms, and size drives treatment decisions."
+    - "Detection depends on the vessel segmentation. Scans where segmentation fails fall back to average predictions, which is safe for a leaderboard and useless for a patient; such scans need to be flagged for a human."
+related:
+  - rsna-intracranial-hemorrhage-detection
+  - czii-cryo-et-object-identification
+  - rsna-2022-cervical-spine-fracture-detection
+  - rsna-2023-abdominal-trauma-detection
+papers:
+  - { label: "Isensee et al. (2021). nnU-Net: a self-configuring method for deep learning-based biomedical image segmentation. Nature Methods 18, 203–211.", url: "https://www.nature.com/articles/s41592-020-01008-z" }
+  - { label: "Kirchhoff et al. (2024). Skeleton Recall Loss for connectivity conserving and resource efficient segmentation of thin tubular structures. ECCV.", url: "https://github.com/MIC-DKFZ/Skeleton-Recall" }
+  - { label: "Shi et al. (2026). Intracranial aneurysm classification and segmentation via tri-axial ROI and multi-task learning (2nd place).", url: "https://arxiv.org/abs/2606.26706" }
+dataLinks:
+  - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/rsna-intracranial-aneurysm-detection/data" }
+  - { label: "TopCoW Circle of Willis annotations (Zenodo)", url: "https://zenodo.org/records/15692630" }
+  - { label: "TopBrain vessel annotations (Zenodo)", url: "https://zenodo.org/records/16878417" }
+priority: 1
+updated: "2026-09-28"
+---
+
+## The problem in its field
+
+An **intracranial aneurysm** is a balloon-like bulge in the wall of an artery inside the skull. The host estimates that about 3% of people carry one. Most never cause symptoms. When one ruptures, blood escapes into the space around the brain (subarachnoid haemorrhage), and a large fraction of patients die or are left disabled. The competition description cites roughly 500,000 deaths a year worldwide, half of them in people younger than 50, and notes that up to half of aneurysms are found only after they have ruptured.
+
+An aneurysm found before rupture can be monitored or treated by clipping or by filling it with coils through a catheter. Finding it early therefore saves lives, and most early findings are incidental: the patient was scanned for a headache, a stroke workup or trauma, and a radiologist noticed a small bulge on an artery. Small aneurysms, a few millimetres across, are easy to miss on a busy reporting list. An algorithm that reads every head scan and points to suspicious arteries could act as a second reader.
+
+<Deep title="Where aneurysms form: the Circle of Willis" kind="domain">
+
+The brain's blood arrives through four arteries in the neck: two **internal carotid arteries (ICA)** at the front and two **vertebral arteries** at the back, which join to form the **basilar artery**. At the base of the brain these vessels connect in a ring, the **Circle of Willis**: the carotids branch into the **anterior cerebral arteries (ACA)**, joined by the short **anterior communicating artery (ACom)**, and the **middle cerebral arteries (MCA)**; the **posterior communicating arteries (PCom)** link the carotids to the posterior circulation.
+
+Aneurysms form preferentially at branch points of this ring, where blood flow strikes the vessel wall. The competition's 13 location labels follow this anatomy: left and right infraclinoid ICA (below the bony landmark called the anterior clinoid process), left and right supraclinoid ICA (above it), left and right MCA, ACom, left and right ACA, left and right PCom, the basilar tip, and "other posterior circulation".
+
+Anatomy varies. Parts of the ring are missing or very thin in many people, and one side can differ from the other. A model that relies on the ring always looking the same will fail on those patients.
+</Deep>
+
+### Four ways of imaging arteries
+
+The competition mixed four kinds of scan, which is what made it hard:
+
+- **CT angiography (CTA)**: a CT scan taken while iodinated contrast fills the arteries, which then appear bright (roughly 200–500 Hounsfield units).
+- **MR angiography (MRA)**, usually time-of-flight: MRI in which flowing blood is bright without any injected contrast.
+- **T1-weighted MRI after contrast (T1 post)**: vessels enhance, but so do other structures, and some arteries show a dark "flow void".
+- **T2-weighted MRI**: arteries appear dark against bright fluid.
+
+The same aneurysm looks different in each. Slice thickness, orientation and resolution also vary by hospital and scanner, and several test series arrived as multi-frame DICOM files with missing header fields.
+
+<Foundation id="ct-hounsfield-windowing" />
+
+<Foundation id="mri-basics" />
+
+## The data
+
+Training data consisted of DICOM series with, for each series, 14 binary labels: whether any aneurysm is present, and whether an aneurysm is present at each of the 13 locations. A separate file gave the image coordinates of each annotated aneurysm's centre. For a subset of series the host also provided vessel segmentations labelling the arteries of the Circle of Willis. There were no aneurysm masks and no sizes.
+
+Hidden test series had to be processed by a notebook with no internet access, within 12 hours on Kaggle's GPU machines (two T4s), through an evaluation API that served one series at a time.
+
+<Foundation id="dicom-and-volumes" />
+
+## The metric
+
+For each of the 14 labels the organisers computed the ROC AUC over the test series. The "aneurysm present" column (AP) received weight 13 and each location column weight 1:
+
+$$
+\text{Score} = \frac{13\cdot\mathrm{AUC}_{\text{AP}} + \sum_{i=1}^{13}\mathrm{AUC}_i}{26} = \frac12\left(\mathrm{AUC}_{\text{AP}} + \frac{1}{13}\sum_{i=1}^{13}\mathrm{AUC}_i\right).
+$$
+
+Half the score asks "does this scan contain an aneurysm?", and half asks "on which artery?". AUC depends only on how series are ranked, so outputs need not be calibrated probabilities, and an unreadable series can be given the average prediction without destroying the ranking of the others.
+
+<Foundation id="roc-auc" />
+
+Location AUCs are computed over all series, most of which have no aneurysm at that location. Rare locations have very few positives in a test set of this size, so their AUCs are noisy. Both of the top two write-ups note that public and private scores differed, and the runner-up measured a consistent 3–4 point gap.
+
+## How the winning solution works
+
+The winner, competing alone as tomoon33, describes the design as "vessel-first". The pipeline has three stages.
+
+<Pipeline steps={[
+  {tag: "Stage 0", title: "Standardise", detail: "DICOM → NIfTI, reorient, z-score intensities"},
+  {tag: "Stage 1", title: "Find the vessels, coarsely", detail: "nnU-Net at 1 mm, DBSCAN, 140 mm cube around the largest vessel cluster"},
+  {tag: "Stage 2", title: "Segment the vessels, finely", detail: "two nnU-Nets at 0.8 × 0.45 × 0.44 mm inside the cube"},
+  {tag: "Stage 3", title: "Classify per artery", detail: "3D network, features pooled inside each of 13 vessel masks, transformer across locations"}
+]} caption="The winner's pipeline. Each stage narrows the region the next stage has to process." />
+
+<Foundation id="models-and-loss" />
+
+<Foundation id="convolution" />
+
+### Stage 0: make every series look alike
+
+About 60 training series were excluded for orientation anomalies, corrupted files or implausible slice spacing. For the rest:
+
+1. Within a series, keep only slices whose matrix size and pixel spacing match the majority, and drop slices whose spacing to their neighbours is an outlier.
+2. Convert DICOM to NIfTI with `dcm2niix`; if that fails, rewrite the files with `gdcmconv --raw` and try again.
+3. Reorient every volume to a common anatomical orientation using nnU-Net's reorienting reader.
+4. Normalise intensities per volume to zero mean and unit variance.
+
+Step 4 is what allows one model to read CT (in Hounsfield units) and MRI (in arbitrary units) at all. No CT window is applied; the network learns what matters from standardised intensities.
+
+### Stage 1: find where the vessels are
+
+A 3D nnU-Net trained at an isotropic spacing of 1 mm segments three coarse vessel groups: posterior circulation and basilar artery, middle cerebral arteries, and everything else. It is run with a sliding window over the whole head. The output is binarised and clustered with **DBSCAN**, a density-based clustering algorithm that groups nearby foreground voxels and discards isolated ones, which removes scattered false positives. The centre of the largest cluster defines a fixed cube of 140 mm on each side.
+
+<Foundation id="unet" />
+
+<Deep title="Why a coarse model first" kind="detail">
+
+A head scan at 0.45 mm in-plane resolution can have hundreds of millions of voxels. Running a high-resolution 3D network over all of them would cost far more time than the budget allows, and most of the head contains no arteries of interest. A network at 1 mm processes roughly one-tenth as many voxels per unit volume (the fine spacing is 0.8 × 0.45 × 0.44 mm, so the ratio is about $0.8\times0.45\times0.44 \approx 0.16$ mm³ per fine voxel against 1 mm³ per coarse voxel, a factor of about 6), and it only needs to find the Circle of Willis, not delineate it. The expensive model then runs only inside the 140 mm cube.
+</Deep>
+
+### Stage 2: segment the vessels in detail
+
+Two further nnU-Nets, each using the residual-encoder variant (`nnUNetResEncUNetMPlans`, `3d_fullres`), run inside the cube at a spacing of 0.80 × 0.45 × 0.44 mm:
+
+- **Model 2 (balanced):** Dice + cross-entropy + Skeleton Recall loss with weight 1.
+- **Model 3 (recall-focused):** Tversky + cross-entropy + Skeleton Recall loss with weight 3.
+
+Arteries are thin tubes. An ordinary overlap loss scores a segmentation by how many voxels it gets right, and a thin artery has few voxels, so breaking it into pieces costs little. **Skeleton Recall** (Kirchhoff et al., 2024) computes the centreline ("skeleton") of the ground-truth vessels and penalises the prediction for missing voxels on that centreline, which rewards keeping vessels connected. The **Tversky** loss with more weight on false negatives makes Model 3 prefer to include doubtful vessel voxels. The two models make different errors, and the classifier uses both.
+
+<Foundation id="dice-and-overlap" />
+
+<Deep title="The Skeleton Recall term" kind="math">
+
+Let $G$ be the binary ground-truth mask and $S = \mathrm{skel}(G)$ its skeleton, a one-voxel-thick centreline computed once per training case (the method dilates it slightly for tolerance). With predicted probabilities $p_v$, the skeleton recall is
+
+$$
+\mathrm{SR} = \frac{\sum_{v\in S} p_v}{|S|},
+$$
+
+the average predicted probability on the centreline voxels, and the loss term is $1 - \mathrm{SR}$ (computed per class and averaged). A prediction that covers the vessel's width poorly but follows its centreline keeps SR high; a prediction with a gap in the middle of a vessel loses every centreline voxel in the gap. Because $S$ is precomputed on the labels, the term adds almost no training cost, which is the "resource efficient" part of the paper's title.
+</Deep>
+
+Augmentation for the fine models was stronger than nnU-Net's default, with one deliberate omission: **no left–right mirroring**. Mirroring a brain turns a left MCA into a right MCA; for a model that must name the side, that would corrupt the labels. Low-resolution simulation (downsampling and upsampling training volumes) was added so the models would cope with thick-slice scans.
+
+At inference, Model 2's segmentation defines a tight bounding box around the vessels, which is enlarged by a margin and becomes the classifier's region of interest (ROI). The masks from both fine models are passed on.
+
+### Stage 3: classify each artery
+
+The classifier receives the ROI resampled to 128 × 256 × 256 voxels, together with the vessel masks.
+
+**Backbone.** An nnU-Net that had already been trained for vessel segmentation. This choice mattered more than any other: without it the score in the author's ablation fell from 0.902 to 0.794. The network already knew what arteries look like in every modality; the classifier only had to learn what an aneurysm on an artery looks like. The last, most expensive decoder block was removed with no loss.
+
+**Per-location features: vessel region-masked pooling.** For each of the 13 locations, the decoder's feature map is averaged over the voxels inside that location's vessel mask. The result is 13 feature vectors, each describing one artery. Features pooled with masks from both fine segmentation models are concatenated.
+
+<Deep title="Masked average pooling, in equations" kind="math">
+
+Let $F\in\mathbb{R}^{C\times D\times H\times W}$ be the feature map and $M_k\in[0,1]^{D\times H\times W}$ the mask of location $k$, resized to the feature map's resolution. The pooled vector for location $k$ is
+
+$$
+z_k = \frac{\sum_{v} M_k(v)\,F(\cdot, v)}{\sum_v M_k(v) + \epsilon}\ \in\mathbb{R}^{C},
+$$
+
+a weighted average of the feature vectors at the voxels $v$ that belong to artery $k$. If the mask is empty (the artery was not segmented or is absent in this patient), the numerator and denominator are both zero and $\epsilon$ keeps the result finite. The implementation also supports max pooling and generalised-mean pooling over the same weights.
+</Deep>
+
+<Deep title="Code: the masked pooling operation from the winner's repository" kind="code">
+
+The repository implements this as `RegionMaskedPooling3D`. The core of the mean mode is three lines:
+
+```python title="src/models/components/region_mask_pooling.py (excerpt)"
+def _masked_pool_single(self, mode, feat, weights):
+    feat_expanded = feat.unsqueeze(1)                     # (B, 1, C, D, H, W)
+    if mode == "mean":
+        denom = weights.flatten(2).sum(-1).unsqueeze(-1).clamp_min(self.eps)
+        num = (weights.unsqueeze(2) * feat_expanded).flatten(3).sum(-1)
+        return num / denom
+```
+
+Reading it line by line:
+
+- `feat` has shape `(B, C, D, H, W)`: batch, channels, depth, height, width. `unsqueeze(1)` inserts a new axis so it becomes `(B, 1, C, D, H, W)`, ready to broadcast against $K$ masks.
+- `weights` has shape `(B, K, D, H, W)`: one mask per location. `flatten(2)` merges the three spatial axes, `.sum(-1)` counts mask voxels per location, giving `(B, K)`, and `unsqueeze(-1)` makes it `(B, K, 1)`. `clamp_min(self.eps)` prevents division by zero.
+- `weights.unsqueeze(2)` becomes `(B, K, 1, D, H, W)`. Multiplying by `feat_expanded` broadcasts to `(B, K, C, D, H, W)`: every channel of the feature map, masked by every location's mask. `flatten(3).sum(-1)` sums over space, giving `(B, K, C)`.
+- The division gives, for each location, the mean feature vector inside its mask.
+
+The method is decorated with `@torch.autocast(device_type="cuda", enabled=False)` and casts to float32, because sums over tens of thousands of voxels can overflow half precision.
+</Deep>
+
+<Source href="https://github.com/uchiyama33/rsna2025_1st_place/blob/main/src/models/components/region_mask_pooling.py">uchiyama33/rsna2025_1st_place, region_mask_pooling.py</Source>
+
+**Combining with global context.** Each location's vector is concatenated with a global feature vector from the encoder (global average pooling over the whole ROI).
+
+**Relations between locations: a small transformer.** The 13 location vectors are treated as a sequence of 13 tokens and passed through a transformer encoder (the author calls it a "location-aware transformer") so each artery's representation can take the others into account. Anatomical variation couples locations: a missing ACA segment changes what the ACom region looks like. An MLP head then outputs one logit per location.
+
+<Foundation id="attention-transformers" />
+
+**Aneurysm present.** A separate head pools features over the union of all vessel masks, concatenates the global vector, and predicts the "any aneurysm" logit.
+
+**Auxiliary detection task.** The decoder is also trained to reconstruct, at each annotated aneurysm centre, a small sphere of radius 5 voxels. This dense target tells the network *where* the aneurysm is, a much richer signal than 14 binary labels per scan. In the ablation, removing it lowered the score from 0.902 to 0.876.
+
+### The loss
+
+Each of the 14 outputs is treated as an independent binary problem with binary cross-entropy. The sphere reconstruction uses a combination of balanced binary cross-entropy and a Focal-Tversky++ loss, chosen because the target is extremely sparse (a few small spheres in a 128 × 256 × 256 volume) and because Dice-like losses tend to produce overconfident outputs on such targets. The three terms are weighted:
+
+$$
+\mathcal{L} = 0.1\,\mathcal{L}_{\text{BCE}}^{\text{13 locations}} + 0.05\,\mathcal{L}_{\text{BCE}}^{\text{AP}} + 1.0\,\mathcal{L}_{\text{sphere}} .
+$$
+
+The classification terms are deliberately small. With all weights set to 1, the ablation score fell from 0.902 to 0.884: the classification heads overfit when they dominated training, and the dense localisation task acted as the main teacher.
+
+<Foundation id="binary-cross-entropy" />
+
+<Deep title="Why a dense auxiliary target helps a classifier" kind="math">
+
+A series-level label says only "somewhere in these 8 million voxels there is (or is not) an aneurysm". The gradient of the classification loss with respect to any one voxel's features is correspondingly weak and diffuse: the network must discover by trial and error which voxels explain the label. A sphere target at the annotated centre gives a per-voxel loss, so voxels near the aneurysm receive a large, direct gradient pushing their features to be distinctive, and voxels far away receive a gradient telling them to be quiet. The pooled features that the classification heads read are then already organised around aneurysms. In learning-theory terms, the auxiliary task reduces the effective hypothesis space the classifier has to search, which matters most when labelled positives are few.
+</Deep>
+
+
+### Training details
+
+- Optimiser AdamW, learning rate $10^{-4}$, effective batch size 8 through gradient accumulation, cosine schedule with warm-up.
+- Exponential moving average (EMA) of the weights used for inference.
+- Augmentation: Gaussian noise and smoothing, intensity shifts and scaling, contrast changes, sharpening, intensity inversion; flips along all three axes, rotations up to ±10°, scaling and shearing up to ±10%, mild grid distortion and simulated low resolution.
+- Multilabel-stratified 5-fold cross-validation.
+
+<Foundation id="adam-adamw" />
+
+<Foundation id="weight-averaging" />
+
+### Inference and the fail-safe
+
+The final prediction averages four of the five fold models and a left–right flipped copy of each input. If anything goes wrong in segmentation or ROI extraction (an unreadable file, an empty vessel mask), the pipeline returns, for every label, the mean of its out-of-fold predictions rather than crashing or guessing.
+
+The author also wrote an orientation-correction routine. From the coarse segmentation it finds the three vessel groups and compares their relative positions with where they should be anatomically, which reveals axis permutations in misoriented scans. It fixed every orientation problem in the training set but did not change the leaderboard score, which suggests the test set had no such problems.
+
+### The ablation study
+
+The author retrained variants on three folds at reduced resolution (96 × 192 × 192) to see what mattered. The numbers are the competition score on those folds.
+
+<Bars data={[
+  ["Full model, 128 × 256 × 256", 0.916],
+  ["Final model at 96 × 192 × 192", 0.902],
+  ["Dice instead of Focal-Tversky++", 0.899],
+  ["Without location-aware transformer", 0.896],
+  ["Without segmentation model 3", 0.891],
+  ["All loss weights set to 1.0", 0.884],
+  ["Without auxiliary sphere loss", 0.876],
+  ["Without backbone pretraining", 0.794]
+]} domain={[0.75, 0.92]} highlight="Final model at 96 × 192 × 192" caption="Ablation on folds 0–2 (author's write-up). Rows below the highlighted baseline remove one component from it." />
+
+Three conclusions follow from the table. Pretraining the backbone on the vessel task dominates everything else. The auxiliary localisation loss and the loss weighting are the next largest effects, both about how the network is taught rather than what it is. The transformer and the choice of Focal-Tversky++ help little once everything else is in place, which the author states plainly.
+
+### How the design was reached
+
+The author's first attempt was a single end-to-end 3D classifier with auxiliary heads for vessel segmentation and aneurysm localisation. It learned whether an aneurysm was present but could not assign locations. The turning point was noticing that a standard nnU-Net trained on the host's vessel labels generalised well across all four modalities. Building everything on the vessel segmentation turned a hard, modality-dependent problem (find a small bulge anywhere in a head) into an easier, modality-independent one (decide whether this segmented artery has a bulge). An intermediate design fed the image and one binary vessel mask as two input channels and ran the network once per location; it worked but required 14 forward passes per scan.
+
+## The runner-up: tri-axial ROI and multi-task nnU-Net
+
+The second-place team (BraveCowCow) organise the MICCAI TopCoW and TopBrain challenges on segmenting the Circle of Willis and the brain's vessels, and their solution draws on that work. It shares the winner's central idea, that vessel segmentation should guide aneurysm classification, and differs in almost every detail.
+
+- **ROI extraction in 2D.** Three slices along each axis, at one quarter, one half and three quarters of the volume, give nine 2D images. A 2D nnU-Net segments vessels in them, and the extent of the vessels defines the crop. This is faster than any 3D pass and handled every training case.
+- **One 3D multi-task network.** All volumes are resized to 224 × 224 × 224. An nnU-Net trained from scratch predicts vessel segmentation (26 classes, built by merging the host's labels with TopCoW and TopBrain annotations and manual corrections), an aneurysm segmentation, the 14 labels and the imaging modality. At inference only the encoder and the classification head run.
+- **Aneurysm masks from centre points.** The host gave only centres. The team generated aneurysm masks iteratively: train a model, predict masks, correct them by hand around the given centres, retrain.
+- **Label corrections.** They found and corrected training labels that confused left with right and supraclinoid with infraclinoid ICA.
+- **Left–right flip with label swap.** Flipping a volume and swapping every left label with its right counterpart doubles the data correctly, the step the winner avoided by not mirroring at all.
+- **8-fold test-time augmentation** with the same label swapping.
+
+Their ablation shows how much the data work was worth:
+
+| Configuration | Public | Private |
+| --- | --- | --- |
+| Baseline, first segmentation labels, one fold | 0.844 | 0.813 |
+| + 4-fold TTA | 0.871 | 0.825 |
+| + improved segmentation labels | 0.888 | 0.857 |
+| + left–right augmentation with label swap, 8-fold TTA | 0.898 | 0.862 |
+| + second fold in the ensemble (final) | 0.900 | 0.867 |
+
+Improving the annotations added more than any architectural change. The final model ran in about 9 hours on two T4s, with the ensemble cut to two folds to stay safely inside the limit.
+
+The team also published a 3D Slicer extension and a Docker inference backend, so a radiologist can run the model on a local scan inside a standard viewer. That goes further towards deployment than most competition releases.
+
+## Why this problem suited a vessel-first design
+
+Aneurysm detection resembles haemorrhage detection (both are head scans with "any" and subtype labels) but the successful methods are opposite. In the 2019 haemorrhage competition, 2D slice classifiers followed by a sequence model won; blood is visible on individual slices and its type depends on where it lies relative to the brain surface. An aneurysm is a small 3D structure defined by its relation to a specific artery, and the modalities differ so much in intensity that no fixed window could represent them all. Anchoring the model to the vessel tree solves both problems: the tree gives an anatomical coordinate system for the 13 labels, and a network pretrained to find vessels has already learned modality-independent features.
+
+The approach resembles the cervical spine and abdominal trauma winners, which also segmented anatomy (vertebrae, organs) before classifying. The difference is that here the segmentation is used inside the classifier as a pooling mask, not only to crop.
+
+## Compute and deployment
+
+| Setting | What the solution needs |
+| --- | --- |
+| Kaggle | 12-hour limit on two T4s; the winner's pipeline needs about 18 s per series, far inside the limit. |
+| Hospital research group | One recent GPU. Inference on a T4-class card fits the time a radiologist waits for a scan to arrive in the viewer. Retraining the main nnU-Net takes about 14 hours and a classifier fold about 12 hours on one RTX 4090. |
+| Commercial product | Validation at each new site, regulatory approval as a medical device, integration with the picture archiving system, and a policy for scans the pipeline cannot process. |
+
+<Foundation id="mixed-precision-quantisation" />
+
+The winner's repository includes scripts to export the nnU-Net models to ONNX and TensorRT in FP16, which roughly halves inference time on NVIDIA GPUs.
+
+### What a deployer should check first
+
+1. **Case mix.** The competition data were enriched with aneurysms. In routine practice most scans have none, so the positive predictive value at any threshold will be much lower than the AUC suggests. Choose the operating point on local data.
+2. **Failure handling.** Replace the leaderboard fall-back (average prediction) with an explicit "could not analyse" result.
+3. **Small aneurysms.** Neither write-up reports performance by aneurysm size. Small ones are the clinically valuable finds and the likeliest misses.
+4. **Laterality.** Both finalists took care over left and right. Verify orientation handling on local scanners before trusting location labels.
