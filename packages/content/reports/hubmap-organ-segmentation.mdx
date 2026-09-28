@@ -1,0 +1,250 @@
+---
+slug: hubmap-organ-segmentation
+title: "HuBMAP + HPA Hacking the Human Body (2022): SegFormer across organs and stain shift"
+shortTitle: HuBMAP + HPA Organ Segmentation
+kaggleSlug: hubmap-organ-segmentation
+kaggleUrl: https://www.kaggle.com/competitions/hubmap-organ-segmentation
+year: 2022
+dates: { start: "2022-06-22", end: "2022-09-22" }
+host: Human BioMolecular Atlas Program (HuBMAP, Indiana University) and the Human Protein Atlas (HPA)
+collection: medicine
+field: Tissue biology and digital histology
+modality: [Stained tissue section images from five organs]
+tasks: [semantic segmentation]
+techniques:
+  - semantic-segmentation
+  - vision-transformers
+  - segmentation-losses
+  - domain-augmentation
+  - external-data
+  - pseudo-labelling
+  - threshold-tuning
+  - tta
+  - ensembling
+metric:
+  name: Mean Dice coefficient
+  summary: "Dice between predicted and true masks of functional tissue units, averaged over test images."
+constraints: { runtime: "Code competition: notebook inference within the Kaggle time limit", hardware: "Kaggle GPU notebook", internet: false }
+summary: "Segment the functional tissue units of five organs (kidney glomeruli, colon crypts, lung alveoli, prostate glands and splenic white pulp) in tissue images, training on one laboratory's images and testing mostly on another's, with different stains and pixel sizes. The winner trained SegFormer models end to end in MMSegmentation with heavy stain augmentation, a binary target, a cross-entropy plus Lovász loss, extra hand-made and pseudo-labelled data, and per-organ thresholds. The fourth-place team showed that stain normalisation alone closes much of the gap."
+winningIdea: "Make the model indifferent to staining and scale: re-stain every training image several ways, resize across a wide range, predict one binary 'tissue unit' class for all organs, and choose a threshold per organ."
+solutions:
+  - rank: 1
+    team: opusen
+    members: [{ name: "opusen" }]
+    writeup: https://www.kaggle.com/competitions/hubmap-organ-segmentation/writeups/i-need-segformer-1st-place-solution
+  - rank: 4
+    team: Rock, Archeve, zzh__98, nowandddfuture, YuFu_zju
+    members: [{ name: "Rock" }, { name: "Archeve" }, { name: "zzh__98" }, { name: "nowandddfuture" }, { name: "YuFu_zju" }]
+    writeup: https://www.kaggle.com/competitions/hubmap-organ-segmentation/writeups/rock-4th-place-solution-stain-normalization-is-all
+deployability:
+  score: 3
+  verdict: "Technically light (SegFormer on whole images, trained on Google Colab), but the pretrained SegFormer (MiT) weights used by the winner carry a non-commercial licence, which the hosts allowed for the competition. A commercial deployment would need other pretrained weights, and the training set is small (351 images)."
+  inference: "One SegFormer pass per image at around 1,000 pixels per side, at three scales with flip TTA, per model."
+  models: "Six SegFormer models (MiT-B3, B4 and B5 backbones at 928–1024 px)."
+  training: "Google Colab GPUs; 45,000 steps per model at batch size 1."
+  externalData: "Extra spleen and lung images with labels made by the winner (hand-labelled and pseudo-labelled), and stain-augmented copies of the training images."
+  licences:
+    code: "The write-up describes an MMSegmentation configuration; no repository is linked."
+    data: "Competition data under Kaggle competition terms; HPA images carry their own licence."
+    weights: "SegFormer/MiT pretrained weights are licensed for non-commercial use only (the licence changed from Apache 2.0 during the competition)."
+  risks:
+    - "Only 351 training images, mostly from one laboratory; test images from HuBMAP differ in stain and resolution, and the model's behaviour on a third source is unknown."
+    - "Lung alveoli had inconsistent annotations; the winner re-annotated lung images himself, and the choice of annotation style changed the score."
+    - "A single binary class treats all organs alike; applications needing instance counts (e.g. number of glomeruli) need a further step."
+related:
+  - UBC-OCEAN
+  - prostate-cancer-grade-assessment
+  - uw-madison-gi-tract-image-segmentation
+  - siim-acr-pneumothorax-segmentation
+papers:
+  - { label: "Xie E. et al. (2021). SegFormer: simple and efficient design for semantic segmentation with transformers.", url: "https://arxiv.org/abs/2105.15203" }
+  - { label: "Berman M., Rannen Triki A., Blaschko M.B. (2018). The Lovász-Softmax loss: a tractable surrogate for the optimization of the intersection-over-union measure in neural networks.", url: "https://arxiv.org/abs/1705.08790" }
+  - { label: "Reinhard E. et al. (2001). Color transfer between images. IEEE Computer Graphics and Applications.", url: "https://doi.org/10.1109/38.946629" }
+  - { label: "Vahadane A. et al. (2016). Structure-preserving color normalization and sparse stain separation for histological images. IEEE Transactions on Medical Imaging.", url: "https://doi.org/10.1109/TMI.2016.2529665" }
+  - { label: "Wu Y., He K. (2018). Group normalization.", url: "https://arxiv.org/abs/1803.08494" }
+dataLinks:
+  - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/hubmap-organ-segmentation/data" }
+  - { label: "Human Protein Atlas", url: "https://www.proteinatlas.org/" }
+  - { label: "HuBMAP portal", url: "https://portal.hubmapconsortium.org/" }
+priority: 21
+updated: "2026-09-28"
+---
+
+## The problem in its field
+
+The human body contains around 37 trillion cells. Projects such as the NIH's **Human BioMolecular Atlas Program (HuBMAP)** and Sweden's **Human Protein Atlas (HPA)** aim to map where cells and proteins are in healthy tissue, organ by organ. Such maps are organised around **functional tissue units (FTUs)**: the smallest repeating structures that perform an organ's function, such as the kidney's glomeruli (more than a million per kidney). Locating FTUs automatically in tissue images is a first step for any quantitative atlas.
+
+This competition, a follow-up to two earlier HuBMAP competitions on kidney glomeruli, asked for one model that segments FTUs across **five organs** and generalises across laboratories.
+
+<Deep title="The five functional tissue units" kind="domain">
+
+| Organ | Functional tissue unit | What it does and looks like |
+| --- | --- | --- |
+| Kidney | glomerulus | a ball of capillaries that filters blood; round, about 0.2 mm across |
+| Large intestine | crypt | a tubular gland in the mucosa, producing mucus and new epithelial cells; appears as rows of tubes or rings |
+| Lung | alveolus | an air sac where gas exchange happens; thin-walled, very numerous, with no crisp boundary between neighbours |
+| Prostate | glandular acinus | a gland that secretes prostatic fluid; lined by epithelium around a lumen |
+| Spleen | white pulp | lymphoid tissue around arterioles; dense purple clusters of lymphocytes |
+
+Their appearance and size differ greatly, and some (alveoli) are much harder to delineate consistently than others (glomeruli).
+</Deep>
+
+<Foundation id="digital-pathology" />
+
+## The data
+
+**Training:** 351 images from the HPA, typically a few thousand pixels on each side, with polygon annotations of FTUs. All come from one laboratory's pipeline with one pixel size and staining protocol.
+
+**Test:** the public test set mixes HPA and HuBMAP images; the private test set consists mostly of **HuBMAP** images, from other laboratories, with different stains (H&E and PAS, among others), scanners and pixel sizes. Only one HuBMAP image was visible to participants.
+
+This is a deliberate **domain-generalisation** problem: the model must work on a laboratory it has essentially never seen.
+
+## The metric
+
+Mean Dice coefficient over test images, with all FTUs of an image combined into one binary mask; an image with empty prediction and empty truth scores 1.
+
+<Foundation id="dice-and-overlap" />
+
+## How the winning solution works
+
+The winner, opusen, trained alone on Google Colab. His write-up title ("I need SegFormer") names the architecture.
+
+<Pipeline steps={[
+  {tag: "Data", title: "HPA + re-stained copies + extra data", detail: "stain augmentation, hand labels, pseudo-labels"},
+  {tag: "Model", title: "SegFormer (MiT-B3 to B5)", detail: "binary FTU vs background; GroupNorm decoder"},
+  {tag: "Loss", title: "CE : Lovász = 1 : 3", detail: "45k steps, AdamW, batch size 1"},
+  {tag: "Infer", title: "Whole image, 3 scales, flip", detail: "pixel size ignored"},
+  {tag: "Decide", title: "Per-organ thresholds", detail: "0.2 to 0.6"}
+]} caption="The winning pipeline." />
+
+<Foundation id="models-and-loss" />
+
+### SegFormer
+
+**SegFormer** (Xie et al., 2021) is a transformer for segmentation. Its encoder, the **Mix Transformer (MiT)**, produces features at four scales like a CNN, using self-attention with spatially reduced keys and values to keep the cost manageable at high resolution, and "Mix-FFN" blocks with a 3×3 depthwise convolution that give it positional information without explicit position embeddings. The decoder is a light MLP that fuses the four scales.
+
+<Foundation id="attention-transformers" />
+
+Two properties suit this competition. Attention gives a large receptive field, which helps with large structures such as crypts and white pulp. And the absence of fixed position embeddings lets the model run at resolutions different from training, which is needed when test pixel sizes differ.
+
+The final ensemble had six SegFormers: MiT-B3 at 1024, two MiT-B4 at 960, one MiT-B5 at 928 and two MiT-B5 at 960. The best single model, a MiT-B4, scored 0.828 on the private set.
+
+### Training choices
+
+**Batch size 1 with group normalisation.** High-resolution images limit the batch size on Colab. Batch normalisation with 1–4 images gives noisy statistics; replacing it in the decoder with **GroupNorm** (32 groups), whose statistics are computed per image, worked better than batch size 4 with batch normalisation.
+
+<Deep title="Batch normalisation versus group normalisation" kind="math">
+
+For a feature tensor $x \in \mathbb{R}^{B \times C \times H \times W}$, both methods normalise
+$$
+\hat x = \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}}, \qquad y = \gamma\,\hat x + \beta,
+$$
+and differ in which elements $\mu$ and $\sigma^2$ are averaged over.
+
+- **Batch normalisation:** for each channel $c$, over the batch and spatial positions: $\mu_c = \frac{1}{BHW}\sum_{b,h,w} x_{bchw}$. With $B = 1$ the statistics come from a single image, and at inference fixed running averages replace them, so training and inference behave differently. Small batches make the estimates noisy, which hurts accuracy.
+- **Group normalisation:** channels are split into $G$ groups of $C/G$; for each image $b$ and group $g$, statistics are taken over the group's channels and all positions: $\mu_{bg} = \frac{G}{CHW}\sum_{c \in g,\,h,\,w} x_{bchw}$. No dependence on the batch, and identical behaviour at training and inference.
+
+With batch size 1 on high-resolution images, group normalisation is the natural choice (Wu and He, 2018).
+</Deep>
+
+**One class instead of five.** He predicted "FTU versus background" for all organs rather than a separate class per organ. The six-class version (background plus five organs) made the lung predictions shrink, since each organ class competed with the others; the binary version shares what FTUs have in common and gives each organ's pixels the whole positive class.
+
+**Loss.** Cross-entropy and the **Lovász** loss in the ratio 1:3, AdamW at learning rate $6\times10^{-5}$, 45,000 steps.
+
+
+
+<Deep title="The Lovász loss: optimising IoU through its convex extension" kind="math">
+
+The Jaccard index (IoU) of a prediction is a function of a discrete set: which pixels are predicted positive. The **Jaccard loss** for class $c$, as a function of the set $M$ of mispredicted pixels, is
+$$
+\Delta_J(M) = 1 - \frac{|y^\star \cap \tilde y|}{|y^\star \cup \tilde y|},
+$$
+with $y^\star$ the true set and $\tilde y$ the predicted set. Berman et al. (2018) note that $\Delta_J$ is **submodular** as a set function of $M$, and any submodular set function has a tractable convex extension to real vectors, the **Lovász extension**. For a vector of per-pixel errors $m \in \mathbb{R}_{\ge 0}^{P}$ (for example, hinge or $1 - p$ margins), sort the errors in decreasing order $m_{\pi(1)} \ge \dots \ge m_{\pi(P)}$ and define
+$$
+\overline{\Delta}(m) = \sum_{i=1}^{P} m_{\pi(i)}\, \big[\Delta_J(\{\pi(1),\dots,\pi(i)\}) - \Delta_J(\{\pi(1),\dots,\pi(i-1)\})\big].
+$$
+Each pixel's error is weighted by how much the Jaccard loss increases when that pixel is added to the set of mistakes, in order of decreasing error. On binary error vectors, $\overline{\Delta}$ equals $\Delta_J$; in between, it interpolates linearly and is piecewise linear, so its (sub)gradient is simply those marginal increases.
+
+The result is a loss that directly targets the overlap metric at the image level, unlike cross-entropy, which treats pixels independently. The price is noisier gradients early in training, which is why it is often combined with cross-entropy, as here.
+</Deep>
+
+### Data: re-staining, extra images and pseudo-labels
+
+**Stain augmentation.** Each HPA image was re-stained into four variants (H&E and PAS appearances) with torchstain, so the model saw each tissue in several colour schemes. This directly targets the main difference between HPA and HuBMAP images.
+
+**Extra images.** He cut 39 spleen images from one external slide (plus four stain variants) and 73 lung images from another. He re-annotated the lung images from scratch himself, and reports probing seven annotation variants for lung, since the style of alveolus annotation changed the score substantially.
+
+**Pseudo-labels** for the external spleen images and for HPA prostate and large-intestine images added more training signal.
+
+<Foundation id="pseudo-labelling" />
+
+**Scale augmentation.** Training images were resized to 2000 on the long side (prostate images downscaled further), then MMSegmentation's multi-scale resize (480 to 1600) and random crops; flips, 90° rotations, HSV, gamma and brightness changes.
+
+<Foundation id="data-augmentation" />
+
+### Inference and thresholds
+
+Whole images, **ignoring the pixel size**, with horizontal-flip TTA at scales around 0.8, 1.0 and 1.2. The multi-scale training made the model tolerant to scale, so no rescaling to a common physical resolution was needed.
+
+**Per-organ thresholds** on the probability map: kidney 0.3, large intestine 0.2, lung 0.6, prostate 0.3, spleen 0.5. Lung's high threshold counteracts the tendency to merge thin-walled alveoli; the large intestine's low threshold captures crypts more fully.
+
+<Foundation id="ensembling-tta" />
+
+| Organ | Private contribution | Public contribution |
+| --- | --- | --- |
+| Kidney | 0.1694 | 0.1218 |
+| Large intestine | 0.0901 | 0.0573 |
+| Lung | 0.2159 | 0.1096 |
+| Prostate | 0.1778 | 0.1477 |
+| Spleen | 0.1825 | 0.1752 |
+| **Total** | **0.8356** | **0.8272** |
+
+The contributions add up to the overall mean Dice; they reflect both per-organ accuracy and how many test images each organ had.
+
+## Fourth place: stain normalisation is all you need
+
+The fourth-place team (Rock, Archeve, zzh__98, nowandddfuture and YuFu_zju) started from a public baseline by hengck23 (CoaT encoder; 0.81 public) and used a two-stream model with a separate stream for lung. Encoders were CoaT-Lite-Medium, MiT (SegFormer) and MPViT with DAFormer and U-Net decoders.
+
+Their central step was **stain normalisation** with the staintools library:
+
+- **Training:** HPA images were normalised, randomly with the Reinhard or Vahadane method, towards the colour profile of the one visible HuBMAP test image.
+- **Inference:** each HuBMAP test image was normalised towards a representative HPA training image of the same organ (both methods), and predictions averaged.
+
+They used no pseudo-labels and no external data.
+
+<Deep title="Reinhard and Vahadane stain normalisation" kind="math">
+
+**Reinhard (2001)** is a colour transfer: convert both images to a decorrelated colour space (originally $l\alpha\beta$, in practice often CIELAB), and in each channel shift and scale the source to match the target's mean and standard deviation:
+$$
+x' = \frac{\sigma_{\text{target}}}{\sigma_{\text{source}}}\,(x - \mu_{\text{source}}) + \mu_{\text{target}}.
+$$
+It is fast but treats the image as a single colour distribution, so a slide with more tissue of one kind is normalised differently from one with less.
+
+**Vahadane (2016)** models the physics of staining. By the **Beer–Lambert law**, light transmitted through a stained section is attenuated exponentially with stain concentration. In optical density,
+$$
+\mathrm{OD} = -\log\frac{I}{I_0} = C\,S,
+$$
+where $I_0$ is the background intensity, $S \in \mathbb{R}^{r \times 3}$ holds the RGB absorption vectors of the $r$ stains (haematoxylin, eosin), and $C \in \mathbb{R}^{P \times r}$ the per-pixel stain concentrations. Vahadane factorises the observed OD matrix by sparse non-negative matrix factorisation, finding $S$ and $C$ with $C \ge 0$, $S \ge 0$ and an $\ell_1$ penalty on $C$ (each pixel is dominated by one stain). Normalisation keeps the source concentrations $C_{\text{source}}$, rescaled to match the target's concentration range, and recombines them with the target's stain vectors:
+$$
+\mathrm{OD}' = \tilde C_{\text{source}}\, S_{\text{target}}, \qquad I' = I_0 \exp(-\mathrm{OD}').
+$$
+This changes the colour of each stain without changing where it is, preserving structure.
+</Deep>
+
+## How this compares with other competitions
+
+- **UBC-OCEAN** faced a more extreme multi-centre shift in pathology (more than 20 centres) and was won by a pathology foundation model trained on millions of tiles, which is inherently robust to stain variation. HuBMAP's winners reached robustness with augmentation and normalisation instead, on only 351 images.
+- **PANDA** had two centres and handled their differences implicitly; CycleGAN-based stain transfer did not help its winners, while here stain handling was central, because the test set came from an unseen laboratory.
+- **UW-Madison GI tract** is the other segmentation competition in medicine with Dice; there the key was empty slices, here domain shift.
+
+## Compute and deployment
+
+| Setting | What the solution needs |
+| --- | --- |
+| Competition | Google Colab for training; Kaggle GPU notebook for inference of six SegFormers with TTA. |
+| Atlas project | One GPU; images processed in seconds; stain augmentation or normalisation for each new laboratory. |
+| Commercial use | Replace the non-commercially licensed MiT weights with permissively licensed pretrained weights, and retrain. |
+
+<Callout kind="deploy" title="The minimum useful version">
+One SegFormer (or another encoder with a permissive licence) trained on a binary FTU target with CE plus Lovász loss, heavy stain and scale augmentation, and a threshold per organ tuned on data from the target laboratory. Add stain normalisation towards the training data at inference when a new laboratory's images look different.
+</Callout>
