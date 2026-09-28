@@ -1,0 +1,286 @@
+---
+slug: rsna-2024-lumbar-spine-degenerative-classification
+title: "RSNA Lumbar Spine Degenerative Classification (2024): find the right slice, find the right spot, then grade"
+shortTitle: RSNA Lumbar Spine Degenerative Classification
+kaggleSlug: rsna-2024-lumbar-spine-degenerative-classification
+kaggleUrl: https://www.kaggle.com/competitions/rsna-2024-lumbar-spine-degenerative-classification
+year: 2024
+dates: { start: "2024-05-16", end: "2024-10-08" }
+host: RSNA with ASNR
+collection: medicine
+field: Musculoskeletal and neuroradiology
+modality: [MRI]
+tasks: [ordinal grading, localisation]
+techniques:
+  - ordinal-grading
+  - localisation-then-classification
+  - multiple-instance-learning
+  - 2-5d-slices
+  - 3d-volumes
+  - cnn-backbones
+  - sequence-models
+  - auxiliary-losses
+  - domain-augmentation
+  - label-denoising
+  - imbalance-handling
+  - ensembling
+  - grouped-cv
+metric:
+  name: Sample-weighted log loss with an any-severe term
+  summary: "Three-class log loss per condition and level, weighted 1 / 2 / 4 for normal-mild / moderate / severe, plus a term for whether any spinal-canal level is severe."
+constraints: { runtime: "9 h", hardware: "Kaggle GPU notebook", internet: false }
+summary: "Grade five kinds of spinal narrowing at five disc levels from lumbar MRI, 25 three-way severity judgements per patient. The winner, working alone on Google Colab with a T4, built three small model types: one finds which slice to look at, one finds where on that slice, and one grades a crop around that point, reading five neighbouring slices with an LSTM and attention pooling."
+winningIdea: "Turn a whole-spine grading problem into many small crop-grading problems: predict the slice and the in-plane coordinate of each disc level with dedicated models, jitter those predictions during training by their own measured error rates, and grade each crop with a CNN, a bidirectional LSTM and attention-based multiple-instance pooling."
+solutions:
+  - rank: 1
+    team: NANACHI
+    members: [{ name: "NANACHI" }]
+    writeup: https://www.kaggle.com/competitions/rsna-2024-lumbar-spine-degenerative-classification/writeups/avengers-1st-place-solution
+    note: "All training notebooks linked from the write-up; trained on Google Colab (T4, high-memory)."
+  - rank: 2
+    team: kevin, Bartley, Ian Pan, Yuji Ariyasu
+    members:
+      - { name: "kevin:)" }
+      - { name: "Brendan Artley", handle: "brendanartley" }
+      - { name: "Ian Pan" }
+      - { name: "Yuji Ariyasu" }
+    writeup: https://www.kaggle.com/competitions/rsna-2024-lumbar-spine-degenerative-classification/writeups/ianpan-kevin-yuji-bartley-2nd-place-solution
+    code:
+      - { label: "Inference notebook", url: "https://www.kaggle.com/code/yujiariyasu/rsna-lumbar-spine-2nd-place-solution" }
+      - { label: "Training code (Yuji Ariyasu)", url: "https://github.com/yujiariyasu/rsna_2024_lumbar_spine_degenerative_classification" }
+  - rank: 3
+    team: sonyspine (s-tkmn, moyashii)
+    writeup: https://www.kaggle.com/competitions/rsna-2024-lumbar-spine-degenerative-classification/writeups/sonyspine-s-tkmn-moyashii-3rd-place-solution
+  - rank: 4
+    team: spine-chart
+    writeup: https://www.kaggle.com/competitions/rsna-2024-lumbar-spine-degenerative-classification/writeups/spine-chart-4th-place-solution
+  - rank: 5
+    team: two people
+    writeup: https://www.kaggle.com/competitions/rsna-2024-lumbar-spine-degenerative-classification/writeups/two-people-5th-place-solution
+deployability:
+  score: 4
+  verdict: "Every model is a mid-sized CNN trained on a free-tier-class GPU; the main engineering work is packaging a three-stage pipeline and validating the coordinate models on local scanners."
+  inference: "Three stages per study (slice selection, coordinate regression, grading); fits the 9-hour Kaggle limit for the hidden test set with 5-fold ensembles."
+  models: "3D ConvNeXt slice-index models, ConvNeXt-Base and EfficientNetV2-L coordinate models, ConvNeXt-Small and EfficientNetV2-S graders, each 5-fold."
+  training: "Google Colab with a T4 and high memory, according to the author; 7–14 epochs per grading model."
+  externalData: "A community-built landmark dataset (Brendan Artley) used to pretrain the coordinate models."
+  licences:
+    code: "Training notebooks public on Kaggle/Colab (see write-up)."
+    data: "RSNA challenge data; check the data page for reuse terms."
+    weights: "Available through the author's Kaggle inference notebook datasets."
+  risks:
+    - "Grades depend on radiologists' thresholds between mild, moderate and severe, which vary between institutions; the runner-up found enough label noise to justify removing training samples."
+    - "Errors in the first stage (wrong slice, wrong level) silently corrupt the grade. A deployment should display the chosen slice and point so a reader can check them."
+related:
+  - rsna-2022-cervical-spine-fracture-detection
+  - rsna-intracranial-aneurysm-detection
+  - prostate-cancer-grade-assessment
+papers:
+  - { label: "Ilse, Tomczak and Welling (2018). Attention-based deep multiple instance learning.", url: "https://arxiv.org/abs/1802.04712" }
+dataLinks:
+  - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/rsna-2024-lumbar-spine-degenerative-classification/data" }
+priority: 3
+updated: "2026-09-28"
+---
+
+## The problem in its field
+
+Low back pain is the leading cause of disability worldwide; the competition description cites the World Health Organization's estimate of 619 million people affected in 2020. A large share of chronic back and leg pain comes from **degenerative** changes in the lumbar spine: intervertebral discs lose water and height and bulge, joints enlarge, ligaments thicken. Together these narrow the spaces through which nerves run, and a compressed nerve causes pain, numbness or weakness in the leg.
+
+MRI shows discs, nerves and the spaces around them without radiation. A radiologist reads each of the five lumbar disc levels (L1/L2 down to L5/S1) and reports, for each, whether the spinal canal and the exits for the nerve roots are narrowed, and how badly. Those grades guide physiotherapy, injections and surgery.
+
+<Deep title="Three kinds of narrowing" kind="domain">
+
+- **Spinal canal stenosis (SCS)**: narrowing of the central canal that holds the bundle of nerve roots. Best seen on **sagittal T2** images (side view, fluid bright), where the canal appears as a bright column that pinches at a narrowed level.
+- **Neural foraminal narrowing (NFN)**, left and right: each nerve root leaves the spine through an opening (foramen) between adjacent vertebrae on each side. Best seen on **sagittal T1** images taken off-centre, through the foramina.
+- **Subarticular stenosis (SS)**, left and right: narrowing of the lateral recess, the gutter just before the foramen where the nerve root descends. Best seen on **axial T2** images (horizontal slices) at the disc level.
+
+Each is graded **normal/mild**, **moderate** or **severe**. Five conditions (SCS, left and right NFN, left and right SS) at five levels give 25 grades per study.
+</Deep>
+
+<Foundation id="mri-basics" />
+
+## The data
+
+The host collected studies from eight sites on five continents. Each study had three series: sagittal T1, sagittal T2/STIR and axial T2. Labels were the 25 severity grades. For training studies only, a coordinates file gave, for each labelled condition and level, the series, the slice (DICOM instance number) and the $(x, y)$ pixel where the annotating radiologist looked. Test studies had no coordinates. Any solution therefore had to learn to find the relevant slice and point itself.
+
+## The metric
+
+For each row (study × condition × level), the three predicted probabilities are scored by log loss, weighted by the true class:
+
+| True grade | Weight |
+| --- | --- |
+| Normal/mild | 1 |
+| Moderate | 2 |
+| Severe | 4 |
+
+An extra term, generated by the metric, asks whether any of the five spinal-canal levels is severe: its prediction is taken as the maximum severe probability over the five levels, scored by binary log loss with the same weighting. Its scalar weight was set to 1.
+
+<Foundation id="softmax-cross-entropy" />
+
+<Foundation id="weighted-log-loss" />
+
+Class weighting changes what the metric rewards. From the weighted-log-loss derivation, if a region is truly severe with frequency $\pi_s$, the metric-optimal predicted severe probability is inflated relative to $\pi_s$ because a severe case weighs four times as much as a normal one. This is the reason for the runner-up's post-processing, described below, which multiplied the highest spinal-severe prediction in each study by 1.25.
+
+## How the winning solution works
+
+The winner, NANACHI, credits two community contributions as starting points: hengck23's public notebooks and discussion (including a method for selecting axial slices) and a coordinate dataset by Brendan Artley used to pretrain coordinate models. It was the author's first published write-up, and every model was trained on Google Colab with a T4 GPU and the high-memory runtime.
+
+<Pipeline steps={[
+  {tag: "Stage 1a", title: "Which slice?", detail: "3D ConvNeXt predicts the instance number of each disc level (sagittal); hengck23's method for axial"},
+  {tag: "Stage 1b", title: "Where on the slice?", detail: "2D ConvNeXt-Base / EfficientNetV2-L regress (x, y) per level"},
+  {tag: "Stage 2", title: "Crop", detail: "5 slices around the chosen one, fixed-size window around the point"},
+  {tag: "Stage 3", title: "Grade", detail: "CNN per slice → BiLSTM → attention MIL → 3 severities"}
+]} caption="The winner's pipeline. Stage 1 recreates for test studies the coordinates that radiologists supplied for training studies." />
+
+<Foundation id="models-and-loss" />
+
+<Foundation id="convolution" />
+
+### Stage 1a: predict the slice
+
+For sagittal series the relevant slice differs by condition (mid-line for the canal, lateral for the foramina) and by level. A **3D ConvNeXt** reads the whole series, with slices sorted by DICOM position, intensities scaled to 0–1 and the depth padded to 32. Separate heads, one per level, make two kinds of prediction:
+
+- **Classification**: a 32-way softmax over slice indices, trained with cross-entropy.
+- **Regression**: a 3-vector $(x', y', z') = (x/W,\ y/H,\ z/32)$ normalised to $[0,1]$, trained with L1 loss; only $z'$ is used, and $x', y'$ serve as auxiliary targets.
+
+Accuracy on sagittal T2 for the canal:
+
+| Head | Exact slice | ±1 | ±2 | Worse |
+| --- | --- | --- | --- | --- |
+| Classification | 71.1% | 27.0% | 1.4% | 0.4% |
+| Regression | 67.5% | 30.6% | 1.6% | 0.3% |
+
+About 98% of predictions land within one slice. The two heads, each trained on five folds, are combined by taking the **median** per level, which is robust to one badly wrong estimate.
+
+<Deep title="Why predict one quantity two ways" kind="detail">
+
+A classification head over 32 slices treats slice 12 and slice 13 as unrelated classes; it can be confidently right or confidently wrong but does not know that "off by one" is nearly right. A regression head knows the ordering but tends to average between two plausible slices and land between them. Their errors are therefore different, and the median of several such predictions discards the outliers of each. The same reasoning motivates combining regression and classification heads for ordinal grades in PANDA.
+</Deep>
+
+For axial series the author used hengck23's published method to find the slice for each level.
+
+### Stage 1b: predict the point
+
+A 2D model receives a 3-channel image built around the median predicted slice, resized to 512 × 512, and regresses $(x/W,\ y/H)$ for every level with L1 loss. ConvNeXt-Base and EfficientNetV2-L were used and averaged. Both were first pretrained on Brendan Artley's landmark dataset, which gave slightly better models than ImageNet initialisation alone. The same approach located axial points.
+
+### Stage 2: crop
+
+Around each predicted point, the author crops a fixed window from five consecutive slices centred on the predicted slice, after resizing the slice to 512 × 512. The windows differ by condition and series, chosen to contain the anatomy that decides the grade:
+
+| Condition | Series | Left | Right | Up | Down (pixels) |
+| --- | --- | --- | --- | --- | --- |
+| Canal (SCS) | sagittal T2 | 96 | 32 | 40 | 40 |
+| Canal (SCS) | axial T2 | 96 | 96 | 96 | 96 |
+| Foramen (NFN) | sagittal T1 | 96 | 64 | 32 | 32 |
+| Foramen, right | axial T2 | 144 | 48 | 96 | 96 |
+| Foramen, left | axial T2 | 48 | 144 | 96 | 96 |
+| Subarticular, right / left | axial T2 | 144 / 48 | 48 / 144 | 96 | 96 |
+
+For the axial canal crop, the centre is taken from the left or right subarticular point, chosen at random, shifted by ±20 pixels.
+
+### Augmentation that simulates the first stage's mistakes
+
+Before cropping, training samples are jittered:
+
+- the point by up to ±10 pixels in $x$ and $y$;
+- the slice index by up to ±2, **with the probability of each shift set to the measured error rate of the stage-1 models**.
+
+At test time, the grader receives crops chosen by imperfect stage-1 models, about 30% of which are one slice off. Training on crops that are wrong in the same way and with the same frequency makes the grader robust to those errors. The author singles this out as crucial.
+
+After cropping: random brightness and contrast (p = 0.25) and shift-scale-rotate (shift 0.1, scale ±0.1, rotation 20°, p = 0.5).
+
+<Foundation id="data-augmentation" />
+
+### Stage 3: grade with an LSTM and attention pooling
+
+The five slices of a crop form a small bag. Each slice passes through a CNN encoder (ConvNeXt-Small or EfficientNetV2-S) to give a feature vector. A two-layer bidirectional LSTM reads the five vectors in order, so each slice's representation includes its neighbours. Attention pooling then computes a weight per slice and a weighted sum, which the head turns into three logits.
+
+<Foundation id="recurrent-networks" />
+
+<Foundation id="multiple-instance-learning" />
+
+<Deep title="Code: the LSTM + attention MIL module from the write-up" kind="code">
+
+```python title="LSTMMIL as published in the 1st-place write-up"
+class LSTMMIL(nn.Module):
+    def __init__(self, input_dim):
+        super(LSTMMIL, self).__init__()
+        self.lstm = nn.LSTM(input_dim, input_dim//2, num_layers=2, batch_first=True,
+                            dropout=0.1, bidirectional=True)
+        self.aux_attention = nn.Sequential(nn.Tanh(), nn.Linear(input_dim, 1))
+        self.attention = nn.Sequential(nn.Tanh(), nn.Linear(input_dim, 1))
+
+    def forward(self, bags):
+        batch_size, num_instances, input_dim = bags.size()
+        bags_lstm, _ = self.lstm(bags)
+        attn_scores = self.attention(bags_lstm).squeeze(-1)
+        aux_attn_scores = self.aux_attention(bags_lstm).squeeze(-1)
+        attn_weights = torch.softmax(attn_scores, dim=-1)
+        weighted_instances = torch.bmm(attn_weights.unsqueeze(1), bags_lstm).squeeze(1)
+        return weighted_instances, aux_attn_scores
+```
+
+- `bags` has shape `(batch, 5, d)`: five slice embeddings of dimension $d$.
+- The LSTM has hidden size $d/2$ in each direction, so concatenating both directions returns dimension $d$ again. Two layers, dropout 0.1 between them.
+- `self.attention` applies $\tanh$ and a linear map to one score per slice; `softmax` over the 5 slices gives weights summing to 1.
+- `torch.bmm` multiplies the `(batch, 1, 5)` weights by the `(batch, 5, d)` features: the weighted sum, shape `(batch, d)`.
+- `aux_attn_scores` come from a second, separate attention layer. The author's corrected figure notes that these scores are fed directly into a cross-entropy loss. Its target is the slice position the radiologist annotated, so this auxiliary loss teaches the model which of the five slices is the right one. The write-up lists "aux losses" and "auxdepth" in model names, consistent with this reading.
+</Deep>
+
+<Source href="https://www.kaggle.com/competitions/rsna-2024-lumbar-spine-degenerative-classification/writeups/avengers-1st-place-solution">NANACHI, 1st place write-up</Source>
+
+The progression reported by the author: a plain 2.5D model scored 0.37 on the public leaderboard; attention-based MIL brought it to 0.35; the bidirectional LSTM, auxiliary losses and ensembling brought it to 0.33.
+
+### What did not help
+
+- Mamba or self-attention in place of the BiLSTM.
+- Sharing weights between the auxiliary and main attention layers.
+- Other series choices (for example sagittal T1 for the canal).
+- Longer training: 7 epochs for ConvNeXt-Small and 14 for EfficientNetV2-S were best.
+- Larger models: ConvNeXt-Large was worse than Base, which was worse than Small.
+- Vision transformers, which the author suspects was his own setup rather than the architecture.
+
+The last two points are typical of medical datasets of a few thousand studies: once the crop contains the right anatomy, a small model has enough capacity, and a larger one overfits.
+
+## The runner-up: YOLOX crops, weight sharing across levels and label cleaning
+
+The second-place team blended the members' independent pipelines. Yuji Ariyasu's part illustrates a different set of choices:
+
+- **Weight sharing across levels and sides.** One model grades a crop regardless of whether it comes from L1/L2 or L5/S1, left or right. This multiplies the training data per model by five (levels) or ten (levels × sides). Axial crops for left and right conditions use only the corresponding half of the image, flipped so both look the same.
+- **Detection instead of coordinate regression.** YOLOX detectors, trained on the provided coordinates and on Brendan Artley's data, found the region for each level; sagittal crops were rotated so the disc level was horizontal.
+- **Label noise removal.** Using the team's ensemble OOF predictions (CV 0.3687), they dropped training samples where the label and prediction differed by 0.8 or more (with class-dependent coefficients because moderate and severe are rare) and retrained. This improved both public and private scores by about 1%, and was found two days before the deadline.
+- **Post-processing for the any-severe term.** For each study, the highest spinal-canal severe probability among the five levels was multiplied by 1.25.
+
+<Foundation id="soft-labels" />
+
+<Deep title="Why multiplying the maximum severe probability by 1.25 can help" kind="math">
+
+The any-severe term predicts $q = \max_\ell p_{\text{severe}}(\ell)$ over the five levels. Two effects make the raw maximum too low for this metric.
+
+First, weighting: a severe study carries weight 4 against 1 for a non-severe one, and from the weighted log loss derivation the metric-optimal prediction is $q^\star = 4\pi/(4\pi + (1-\pi))$ where $\pi$ is the true probability. For $\pi = 0.1$, $q^\star = 0.4/1.3 \approx 0.31$, about three times the calibrated probability.
+
+Second, uncertainty about which level is severe: if the model is unsure whether the severe level is L4/L5 or L3/L4, it splits probability between them, and the maximum over levels understates the probability that at least one is severe.
+
+Scaling the maximum by 1.25 is a crude, single-parameter correction for both. The per-level predictions are left unchanged.
+</Deep>
+
+## What this competition shows
+
+Grading lumbar stenosis looks like image classification, but the decisive information sits in a few square centimetres of one or two slices out of hundreds. Every top solution reconstructed, for test studies, the "where to look" information that training labels supplied, and then graded a small crop. The winner's contribution beyond that decomposition was to measure how often the localisation stage fails and to train the grader on those same failures.
+
+The structure matches the cervical spine fracture and aneurysm winners: localise anatomy first (vertebrae, vessels, disc levels), then classify. It differs from the 2019 haemorrhage competition, where findings can appear anywhere and whole-slice classification sufficed.
+
+## Compute and deployment
+
+| Setting | What the solution needs |
+| --- | --- |
+| Kaggle | 9 hours on a GPU notebook for the hidden test set. |
+| Student or small lab | Google Colab (T4, high RAM) was enough for the winner to train every model. |
+| Hospital | A single mid-range GPU for inference; a viewer integration that shows the chosen slice and point next to each grade. |
+
+<Foundation id="transfer-learning" />
+
+<Callout kind="deploy">
+The winner released each model's training notebook, and the pipeline uses standard backbones from the `timm` library. The part most likely to need adaptation at a new site is the slice-selection stage, which depends on how series are acquired and ordered. The grader, which only ever sees crops, should transfer more easily.
+</Callout>

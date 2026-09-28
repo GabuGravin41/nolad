@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
 import GithubSlugger from "github-slugger";
+import { techniqueById } from "@nolad/content/data/techniques";
 import {
   reportFrontmatterSchema,
   foundationFrontmatterSchema,
@@ -85,6 +86,10 @@ export function getAllReports(): Report[] {
     if (!parsed.success) {
       throw new Error(`Invalid frontmatter in ${file}:\n${parsed.error.toString()}`);
     }
+    const unknownTech = parsed.data.techniques.filter((t) => !techniqueById.has(t));
+    if (unknownTech.length) throw new Error(`${file}: unknown technique ids ${unknownTech.join(", ")}`);
+    const missing = foundationRefs(content).filter((id) => !getFoundations().has(id));
+    if (missing.length) throw new Error(`${file}: unknown foundation ids ${missing.join(", ")}`);
     const words = countWords(content);
     return {
       meta: parsed.data,
