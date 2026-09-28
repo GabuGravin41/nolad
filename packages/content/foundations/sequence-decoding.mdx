@@ -1,0 +1,30 @@
+---
+id: sequence-decoding
+title: Decoding sequences: CTC, attention decoders and edit distance
+kind: ml
+summary: When the output is a sequence of characters whose length differs from the input's, a model needs a way to align them. CTC sums over alignments; an attention decoder generates characters one by one while looking at the input.
+---
+
+### The alignment problem
+
+A fingerspelled phrase might span 200 video frames and 12 characters, with no label saying which frames belong to which letter. The model must learn the alignment.
+
+### Connectionist temporal classification (CTC)
+
+CTC (Graves et al., 2006) lets the model output, at every frame, a distribution over characters plus a special **blank**. An output path is collapsed by merging repeated characters and deleting blanks: `hh-e-ll-ll-oo` becomes `hello`. The probability of a target string is the sum over all paths that collapse to it, computed efficiently by dynamic programming, and training maximises its logarithm. CTC assumes the outputs at different frames are conditionally independent given the input.
+
+### Attention encoder–decoder
+
+An encoder turns the input frames into a sequence of vectors. A decoder generates the output one character at a time, each step attending to the encoder vectors (cross-attention) and to the characters already produced (causal self-attention). Training uses teacher forcing: the decoder receives the true previous characters and is trained with cross-entropy on the next one. At inference it feeds back its own predictions (greedy decoding or beam search).
+
+Decoders model dependencies between output characters and usually outperform CTC when enough data exist. The ASL fingerspelling winners found a two-layer transformer decoder better than CTC, and CTC as an auxiliary loss made things worse.
+
+### Edit distance
+
+The **Levenshtein distance** between two strings is the minimum number of single-character insertions, deletions and substitutions that turns one into the other, computed by dynamic programming:
+
+$$
+D[i,j] = \min\begin{cases} D[i-1,j] + 1 \\ D[i,j-1] + 1 \\ D[i-1,j-1] + \mathbb{1}[a_i \ne b_j]\end{cases}
+$$
+
+with $D[i,0] = i$ and $D[0,j] = j$. The ASL metric was $(N-D)/N$, where $N$ is the total number of reference characters and $D$ the total distance. A useful corollary: when the model is unsure, outputting a short "average" string can have lower expected distance than a confident wrong guess, which is the basis of the ASL winners' fallback phrase.

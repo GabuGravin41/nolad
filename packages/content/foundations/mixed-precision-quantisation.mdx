@@ -1,0 +1,36 @@
+---
+id: mixed-precision-quantisation
+title: Mixed precision, quantisation and inference engines
+kind: engineering
+summary: Storing and computing numbers with fewer bits makes models faster and smaller. Inference engines such as TensorRT, OpenVINO and TFLite compile a trained model for specific hardware.
+---
+
+### Number formats
+
+| Format | Bits | Range and precision | Typical use |
+| --- | --- | --- | --- |
+| FP32 | 32 | wide range, ~7 decimal digits | default training |
+| FP16 | 16 | narrower range, ~3 digits | mixed-precision training and inference |
+| BF16 | 16 | FP32's range, ~2 digits | training on recent GPUs |
+| FP8 | 8 | two variants trading range for precision | inference on H100/L4-class GPUs |
+| INT8 | 8 | 256 integer levels with a scale factor | CPU and GPU inference |
+| INT4 | 4 | 16 levels | aggressive LLM compression |
+
+### Mixed-precision training
+
+Automatic mixed precision (AMP) runs most operations in FP16 or BF16 while keeping a master copy of the weights in FP32 and scaling the loss so small gradients do not underflow. Memory roughly halves and speed often doubles on tensor-core GPUs. The ASL winners found that training in FP16 was necessary for FP16 inference to lose no accuracy; training in FP32 and converting afterwards cost 0.01 on their metric.
+
+### Post-training quantisation
+
+A weight $w$ is stored as an integer $q = \mathrm{round}(w/s)$ with scale $s$, and reconstructed as $\hat w = s\,q$. The rounding error per weight is at most $s/2$. With calibration on real inputs, INT8 and FP8 usually lose little accuracy; INT4 often loses more. The NemoSkills AIMO table shows this clearly: INT8 weights matched BF16 on AIME, INT4 dropped from 82.7% to 72.7%, and FP8 was slightly better than BF16 while running about 1.5 times faster.
+
+### Inference engines
+
+- **TensorRT** (NVIDIA GPUs) fuses layers, chooses kernels and runs in FP16/INT8/FP8. The CZII winners reported roughly a 200% speed-up over eager PyTorch, which let them fit more models into the time limit.
+- **OpenVINO** (Intel CPUs) did the same for the BirdCLEF winners, whose submissions had to run on a CPU.
+- **TensorFlow Lite** runs on phones. The ASL competition required a TFLite file under 40 MB, so the model had to be ported from PyTorch to TensorFlow by hand.
+- **ONNX** is an interchange format that most engines can import.
+
+### Speculative decoding
+
+For language models, a small draft model proposes several tokens and the large model verifies them in one forward pass; accepted tokens are kept. The NemoSkills ReDrafter head proposed 3 tokens per step with 65% acceptance, about a 1.8-fold speed-up with no change to the output distribution.

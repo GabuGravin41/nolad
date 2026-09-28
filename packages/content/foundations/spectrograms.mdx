@@ -1,0 +1,38 @@
+---
+id: spectrograms
+title: Spectrograms, mel scales and wavelets
+kind: math
+summary: A spectrogram shows how the frequency content of a signal changes over time. It turns audio or EEG into an image that convolutional networks can read.
+---
+
+### The short-time Fourier transform
+
+A signal $x[n]$ sampled at rate $f_s$ is cut into overlapping frames of length $N$ (the FFT size), spaced by a hop $H$. Each frame is multiplied by a window $w[n]$ (Hann, for example) to reduce edge artefacts, and Fourier-transformed:
+
+$$
+X[m, k] = \sum_{n=0}^{N-1} x[n + mH]\,w[n]\,e^{-2\pi i kn/N}.
+$$
+
+$m$ indexes time frames and $k$ frequency bins, with bin $k$ at frequency $k f_s/N$. The **power spectrogram** is $|X[m,k]|^2$. Taking a logarithm (decibels) compresses its range to something closer to perception and easier for networks.
+
+### Time–frequency trade-off
+
+A long frame resolves nearby frequencies but blurs when they occur; a short frame localises events in time but smears frequency. Frequency resolution is $f_s/N$ and time resolution is about $N/f_s$; their product is fixed. This limitation is why the HMS winners moved from STFT to wavelets and superlets.
+
+### The mel scale
+
+Pitch perception is roughly logarithmic above a few hundred hertz. The **mel scale**
+
+$$
+m = 2595\,\log_{10}\!\left(1 + \frac{f}{700}\right)
+$$
+
+is approximately linear below 1 kHz and logarithmic above. A **mel spectrogram** sums the power spectrum through triangular filters spaced evenly in mels, producing, for example, 128 bands. The BirdCLEF 2024 winners used $n_{\text{fft}}=1024$, hop 500, 128 mel bands between 40 Hz and 15 kHz at 32 kHz sampling, so a 10-second clip became a $128\times640$ image.
+
+### Wavelets and superlets
+
+A **continuous wavelet transform** correlates the signal with scaled copies of a short oscillating wavelet. Scales that match low frequencies use long wavelets (good frequency resolution); scales for high frequencies use short ones (good time resolution). The resulting **scalogram** adapts its resolution to frequency, which suits EEG, where slow rhythmic delta activity and sharp spikes carry different information. **Superlets** (Moca et al., 2021) combine several wavelets of increasing cycle count at each frequency to sharpen resolution further; one HMS team member found them clearly better than STFT.
+
+### From spectrogram to CNN input
+
+A spectrogram is a single-channel image with time on one axis and frequency on the other. It is resized, normalised, sometimes stacked with other channels, and given to an ImageNet-pretrained CNN. Augmentations are adapted: **XY-masking** (SpecAugment) blanks random time columns and frequency rows; horizontal CutMix splices two clips in time.

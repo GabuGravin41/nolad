@@ -1,0 +1,49 @@
+---
+id: softmax-cross-entropy
+title: Softmax and categorical cross-entropy
+kind: math
+summary: When exactly one of K classes is true, a softmax turns K scores into a probability distribution, and the negative log-probability of the true class is the loss.
+---
+
+### Softmax
+
+The network outputs $K$ logits $z_1,\dots,z_K$. The **softmax** converts them into probabilities that are positive and sum to one:
+
+$$
+p_k = \frac{e^{z_k}}{\sum_{j=1}^{K} e^{z_j}} .
+$$
+
+Adding the same constant to every logit leaves the probabilities unchanged, which is why implementations subtract $\max_j z_j$ before exponentiating to avoid overflow. With $K=2$, the softmax reduces to a sigmoid of the logit difference $z_1 - z_2$.
+
+### Categorical cross-entropy
+
+With a one-hot label $y$ ($y_c = 1$ for the true class $c$, zero elsewhere), the likelihood of the observation is $p_c$, and the negative log-likelihood is
+
+$$
+\ell_{\text{CE}} = -\sum_{k=1}^{K} y_k \log p_k = -\log p_c .
+$$
+
+<Deep title="Gradient of softmax cross-entropy with respect to the logits" kind="math">
+
+Write $\log p_c = z_c - \log\sum_j e^{z_j}$. Then
+
+$$
+\ell = -z_c + \log\sum_j e^{z_j}.
+$$
+
+Differentiate with respect to $z_k$:
+
+$$
+\frac{\partial \ell}{\partial z_k} = -\mathbb{1}[k=c] + \frac{e^{z_k}}{\sum_j e^{z_j}} = p_k - y_k .
+$$
+
+As with the sigmoid, the gradient is prediction minus target, now for every class at once. The model raises the true class's logit and lowers the others in proportion to the probability it wrongly assigned to them.
+</Deep>
+
+### Soft targets
+
+Nothing in the derivation requires $y$ to be one-hot. If $y$ is any probability vector (the fraction of experts who voted for each EEG pattern, or a smoothed label), the same formula $-\sum_k y_k\log p_k$ is the cross-entropy between the target distribution and the prediction, and its gradient is still $p - y$. Minimising it pushes $p$ towards $y$.
+
+### Softmax versus independent sigmoids
+
+Softmax assumes the classes are mutually exclusive: raising one probability lowers the others. Independent sigmoids assume nothing about co-occurrence. The BirdCLEF 2024 winners found softmax cross-entropy clearly better than binary cross-entropy for 182 bird species, even though a recording can contain several species, because almost every training clip had one dominant label. At inference they applied sigmoids to the same logits to score each species independently.

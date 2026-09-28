@@ -1,0 +1,38 @@
+---
+id: soft-labels
+title: Soft labels, label smoothing and noisy labels
+kind: math
+summary: Training targets need not be exactly 0 or 1. Softer targets reduce overconfidence, encode disagreement between annotators, and limit the damage done by wrong labels.
+---
+
+### Label smoothing
+
+With $K$ classes and smoothing $\varepsilon$, replace a one-hot target $y$ by
+
+$$
+\tilde y = (1-\varepsilon)\,y + \frac{\varepsilon}{K}\mathbf{1}.
+$$
+
+For binary labels with smoothing $0.1$, the targets become $0.05$ and $0.95$. Because cross-entropy is minimised by predicting the target, the model is never pushed to output exactly 0 or 1, and its logits stay bounded. This reduces overconfidence and helps when the metric is log loss.
+
+### Asymmetric (positive-only) smoothing
+
+The mammography winner softened only the positives: negatives kept target 0, positives got target 0.8 or 0.9. The reason was specific to the data. The label belongs to a breast, but each breast has several images, and the cancer may not be visible in every one. A positive label on a single image is therefore less certain than a negative one, and a soft positive target states that uncertainty.
+
+### Soft targets from annotators
+
+When several experts label the same example, their votes form a distribution. The HMS brain-activity competition supplied vote counts for six EEG patterns and scored predictions by KL divergence against the vote distribution, so training directly on the normalised votes is natural. The winning team added a constant $0.02$ to each vote count before normalising:
+
+$$
+\tilde y_k = \frac{v_k + 0.02}{\sum_j (v_j + 0.02)} .
+$$
+
+For an example with 20 votes, the added mass is negligible; for an example with one vote, it spreads noticeable probability across all classes. The smoothing is therefore strongest where the label is least reliable.
+
+### Soft targets in time and space
+
+The same idea appears in other shapes: the sleep-state winners replaced each event by a triangle-shaped target that decays with distance in time; the abdominal trauma winners weighted each slice's target by how much of the organ was visible in it. In both cases the hard label is known only at a coarser level (a timestamp, a patient) than the prediction (a step, a slice).
+
+### Noisy labels
+
+When some labels are wrong, cross-entropy pushes the model to fit them, which hurts. Three responses appear in these reports: remove examples whose out-of-fold prediction disagrees strongly with the label (PANDA, lumbar spine), soften the targets, or pseudo-label with an ensemble so that the targets reflect what several models agree on.

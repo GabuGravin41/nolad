@@ -1,0 +1,31 @@
+---
+id: transfer-learning
+title: Transfer learning, self-supervised pretraining and foundation models
+kind: ml
+summary: Starting from weights learned on a large dataset, then fine-tuning on the task, needs far less labelled data than training from scratch. Self-supervised methods learn those starting weights without labels.
+---
+
+### Supervised pretraining
+
+A backbone trained to classify ImageNet photographs has learned filters for edges, textures and shapes. Fine-tuning it on medical images starts from those filters instead of random numbers, converges faster and overfits less. This is standard in almost every image solution here.
+
+When the new task looks nothing like the pretraining data, what transfers is mostly low-level. A pretraining task closer to the target helps more:
+
+- The aneurysm winner pretrained his classifier's backbone on **vessel segmentation** in the same scans; removing that pretraining cut his score from 0.902 to 0.794, the largest effect in his ablation.
+- The lumbar spine winner pretrained coordinate models on a community dataset of spine landmarks, which beat ImageNet initialisation.
+
+### Self-supervised pretraining
+
+Labels are expensive; raw data are not. Self-supervised methods invent a task from the data itself:
+
+- **Masked modelling:** hide parts of the input and predict them. BERT hides 15% of tokens and predicts them from context; the BELKA winner did the same with SMILES strings of molecules.
+- **Self-distillation (DINO, iBOT):** train a network so that its output on one augmented view matches a slowly updated copy's output on another view. Owkin's Phikon, used by the UBC-OCEAN winners, is a ViT-Base trained with iBOT on 40 million tiles from The Cancer Genome Atlas.
+- **Predicting a derived quantity:** the BELKA winner's second pretraining stage predicted each molecule's ECFP fingerprint from its SMILES string, a task hard enough to force the encoder to learn chemical structure.
+
+### Foundation models as feature extractors
+
+A **foundation model** is a large pretrained network used for many downstream tasks, often frozen. In UBC-OCEAN, every tile of a whole-slide image was passed through Phikon to produce a 768-dimensional embedding, and only a small multiple-instance model was trained on top. In CAFA 5, protein language models (ESM, ProtT5) turned each amino-acid sequence into an embedding for downstream classifiers. Training costs fall from days of GPU time to minutes, and small labelled datasets become usable.
+
+### Licences travel with weights
+
+Pretrained weights come with licences. SegFormer's weights, Phikon's weights and some ESM models restrict commercial use. A model fine-tuned from them inherits the restriction, which is recorded on the relevant deployability cards.

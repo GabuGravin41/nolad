@@ -1,0 +1,56 @@
+---
+id: recurrent-networks
+title: Recurrent networks: RNN, LSTM and GRU
+kind: ml
+summary: A recurrent network reads a sequence one step at a time and carries a hidden state forward. LSTMs and GRUs add gates that decide what to remember, which lets them use context from far back.
+---
+
+### The simple recurrent network
+
+At each step $t$ the network combines the new input $x_t$ with its previous state $h_{t-1}$:
+
+$$
+h_t = \tanh(W_x x_t + W_h h_{t-1} + b).
+$$
+
+The same weights are applied at every step, so the network handles sequences of any length. Training backpropagates through time, and the repeated multiplication by $W_h$ makes gradients vanish or explode over long sequences.
+
+### LSTM
+
+The long short-term memory cell (Hochreiter and Schmidhuber, 1997) adds a cell state $c_t$ that is updated additively, controlled by three gates with sigmoid outputs in $(0,1)$:
+
+$$
+\begin{aligned}
+f_t &= \sigma(W_f[x_t, h_{t-1}] + b_f) &&\text{forget gate}\\
+i_t &= \sigma(W_i[x_t, h_{t-1}] + b_i) &&\text{input gate}\\
+o_t &= \sigma(W_o[x_t, h_{t-1}] + b_o) &&\text{output gate}\\
+\tilde c_t &= \tanh(W_c[x_t, h_{t-1}] + b_c) &&\text{candidate}\\
+c_t &= f_t\odot c_{t-1} + i_t\odot\tilde c_t\\
+h_t &= o_t\odot\tanh(c_t).
+\end{aligned}
+$$
+
+Because $c_t$ depends on $c_{t-1}$ through multiplication by $f_t$ rather than through a weight matrix, the gradient along the cell state can pass many steps without shrinking when the forget gate stays near 1.
+
+### GRU
+
+The gated recurrent unit (Cho et al., 2014) merges cell and hidden state and uses two gates:
+
+$$
+\begin{aligned}
+z_t &= \sigma(W_z[x_t, h_{t-1}]) &&\text{update gate}\\
+r_t &= \sigma(W_r[x_t, h_{t-1}]) &&\text{reset gate}\\
+\tilde h_t &= \tanh(W[x_t,\; r_t\odot h_{t-1}])\\
+h_t &= (1-z_t)\odot h_{t-1} + z_t\odot\tilde h_t .
+\end{aligned}
+$$
+
+It has fewer parameters than an LSTM and often performs the same.
+
+### Bidirectional networks
+
+A bidirectional RNN runs one recurrence forwards and one backwards and concatenates their states, so every position sees context from both sides. For a CT series or an overnight accelerometer recording, the whole sequence is available at once, and bidirectional models are the norm.
+
+### Where they appear
+
+In these reports RNNs are rarely applied to raw data. They sit on top of a CNN: the CNN turns each slice or frame into an embedding, and a bidirectional LSTM or GRU reads the sequence of embeddings. This pattern won the 2019 haemorrhage competition and recurs in spine fractures, pulmonary embolism, abdominal trauma and lumbar spine grading. In the sleep-state competition, a GRU placed between convolutional downsampling and upsampling layers read multi-day accelerometer signals directly.

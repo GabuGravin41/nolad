@@ -1,0 +1,51 @@
+---
+id: precision-recall-fbeta
+title: Precision, recall, F-beta and average precision
+kind: math
+summary: Precision asks how many flagged cases are real; recall asks how many real cases were flagged. F-beta combines them with a chosen emphasis, and average precision summarises the whole precision–recall trade-off.
+---
+
+### Precision and recall
+
+$$
+P = \frac{TP}{TP+FP}, \qquad R = \frac{TP}{TP+FN}.
+$$
+
+A screening tool wants high recall (few missed cancers); a tool that triggers surgery wants high precision (few unnecessary operations).
+
+### The F-beta score
+
+$$
+F_\beta = \frac{(1+\beta^2)\,P\,R}{\beta^2 P + R}.
+$$
+
+$F_1$ is the harmonic mean of $P$ and $R$. Larger $\beta$ favours recall.
+
+<Deep title="What β means" kind="math">
+
+Rewrite $F_\beta$ with counts:
+
+$$
+F_\beta = \frac{(1+\beta^2)\,TP}{(1+\beta^2)\,TP + \beta^2 FN + FP}.
+$$
+
+A false negative costs $\beta^2$ times as much as a false positive. With $\beta=4$ (CZII cryo-ET), missing a particle costs sixteen times as much as a spurious detection, so a good submission predicts generously. With $\beta = 0.5$ (Vesuvius ink detection), a false positive costs four times as much as a missed pixel, because spurious ink blurs letters into illegibility.
+</Deep>
+
+<Plot series={[{fn: "fbeta-recall", params: {beta: 0.5, precision: 0.6}, label: "β = 0.5"}, {fn: "fbeta-recall", params: {beta: 1, precision: 0.6}, label: "β = 1"}, {fn: "fbeta-recall", params: {beta: 4, precision: 0.6}, label: "β = 4"}]} x={[0, 1]} y={[0, 1]} xLabel="recall (precision fixed at 0.6)" yLabel="F-beta" caption="With precision held at 0.6, F-beta for β = 4 keeps rising with recall almost linearly; for β = 0.5 it saturates near precision." />
+
+### Probabilistic F1
+
+The RSNA mammography competition used a probabilistic F1 in which a prediction $p$ counts as $p$ of a true positive and $p$ of a false positive: $pTP = \sum_{y=1} p_i$, $pFP = \sum_{y=0} p_i$. Soft predictions on the many negatives accumulate false-positive mass, so binarising predictions at a well-chosen threshold usually scored higher than submitting probabilities. The winner's final choice among thresholds 0.31 and 0.34 moved his private score by 0.02, about the gap between first and fourth place.
+
+### Average precision
+
+Sweep the threshold, record precision at each recall level, and average:
+
+$$
+\mathrm{AP} = \sum_k (R_k - R_{k-1})\,P_k ,
+$$
+
+the area under the precision–recall curve. Unlike AUC, AP depends heavily on prevalence and rewards models whose top-ranked predictions are correct. It is the metric of Leash BELKA (per protein and split) and, averaged over time tolerances, of the sleep-state competition. For detection tasks, mean average precision (mAP) averages AP over classes, with a prediction counted as correct only if it overlaps a true object sufficiently.
+
+A property exploited by several winners: under AP, adding extra low-confidence predictions after all confident ones never lowers the precision at recall levels already reached, so it cannot hurt and may add recall.

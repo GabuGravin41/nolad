@@ -1,0 +1,29 @@
+---
+id: quadratic-weighted-kappa
+title: Quadratic weighted kappa
+kind: math
+summary: Quadratic weighted kappa measures agreement between two graders on an ordered scale, correcting for chance and penalising disagreements by the square of their distance.
+---
+
+For ordered grades $0,\dots,N-1$ (diabetic retinopathy 0–4, ISUP grade 0–5), let:
+
+- $O_{ij}$ be the number of cases the reference graded $i$ and the model graded $j$ (the confusion matrix);
+- $E_{ij}$ be the count expected if the two graders were independent: the outer product of the two marginal histograms, scaled so that $\sum E = \sum O$;
+- $w_{ij} = \dfrac{(i-j)^2}{(N-1)^2}$ be the disagreement weight.
+
+Then
+
+$$
+\kappa = 1 - \frac{\sum_{i,j} w_{ij}\,O_{ij}}{\sum_{i,j} w_{ij}\,E_{ij}} .
+$$
+
+$\kappa = 1$ is perfect agreement, $\kappa = 0$ is chance agreement, and negative values are worse than chance.
+
+<Plot series={[{fn: "qwk-weight", params: {n: 5}, label: "N = 5 grades"}, {fn: "qwk-weight", params: {n: 6}, label: "N = 6 grades"}]} x={[0, 5]} y={[0, 1]} xLabel="distance between the two grades |i − j|" yLabel="weight w" caption="A two-grade error costs four times a one-grade error." />
+
+### Consequences for modelling
+
+- **Regression beats classification.** Because the penalty grows with distance, predicting a continuous grade and rounding it is natural. The APTOS winner trained with a smooth L1 regression loss; PANDA solutions combined regression heads with classification heads.
+- **Thresholds are tunable.** Continuous predictions are converted to grades by thresholds, initially $0.5, 1.5, 2.5, \dots$. Moving them changes the confusion matrix and can raise $\kappa$. The APTOS winner moved the first threshold from 0.5 to 0.7 hours before the deadline.
+- **Small test sets make kappa noisy.** The denominator depends on the marginal distribution of grades. In PANDA, with about 500 images in each of the public and private test sets, the Kaggle leaderboard moved by 0.005 when only the random seed changed.
+- **A differentiable version can be trained directly.** Replacing counts by expected counts under the model's predicted probabilities gives a "kappa loss", which the PANDA 11th-place solution found better than cross-entropy, mean squared error or binning losses.

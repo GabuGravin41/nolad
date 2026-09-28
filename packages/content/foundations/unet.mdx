@@ -1,0 +1,28 @@
+---
+id: unet
+title: U-Net and encoder–decoder segmentation
+kind: ml
+summary: A U-Net compresses an image into coarse, meaningful features and then expands them back to full resolution, copying fine detail across through skip connections, so that every pixel gets a label.
+---
+
+Segmentation needs an output the size of the input. A classification backbone throws away spatial resolution on purpose, ending with a small grid of abstract features. Ronneberger et al. (2015) paired such an **encoder** with a mirrored **decoder**:
+
+1. The encoder applies convolutions and downsampling, halving resolution and increasing channels at each stage. Deep stages know *what* is in the image but only roughly *where*.
+2. The decoder upsamples step by step (by interpolation or transposed convolution), halving channels.
+3. **Skip connections** concatenate each encoder stage's feature map with the decoder stage of the same resolution. The decoder receives both the coarse semantic signal and the fine spatial detail it needs to draw boundaries.
+4. A final $1\times1$ convolution maps each pixel's feature vector to class logits.
+
+<Pipeline steps={[{title: "Encoder stage 1", detail: "full resolution, few channels"}, {title: "Encoder stages 2–5", detail: "resolution ÷2 each, channels ×2"}, {title: "Bottleneck", detail: "coarse, semantic"}, {title: "Decoder stages", detail: "upsample ×2, concatenate skip features"}, {title: "1×1 conv head", detail: "per-pixel logits"}]} caption="Data flow in a U-Net. Skip connections link each encoder stage to the decoder stage of equal resolution." />
+
+In practice the encoder is any pretrained backbone (ResNet34, EfficientNet-B3, ConvNeXt) and libraries such as `segmentation_models_pytorch` or MONAI supply the decoder. The same shape works in 3D with 3D convolutions.
+
+### Variants in these reports
+
+- **UNet++, FPN, UPerNet, DeepLabV3** change how multi-scale features are combined.
+- **nnU-Net** (Isensee et al., 2021) is a U-Net framework that configures patch size, spacing, normalisation, augmentation and training schedule automatically from the dataset's properties. It won the aneurysm competition's segmentation stages and is the strongest default for 3D medical segmentation.
+- **Auxiliary segmentation heads** attached to a classifier's encoder (abdominal trauma, aneurysm) do not produce the final answer; they force the encoder to learn where organs or lesions are, which improves the classification.
+- **Partial decoders**: the CZII winners found the penultimate decoder output (half resolution) more accurate for locating particle centres than the full-resolution output, and dropped the last stage.
+
+### Losses
+
+Segmentation is usually trained with per-pixel cross-entropy, an overlap loss such as Dice, or their sum. See the Dice foundation for why overlap losses help with small structures.

@@ -1,0 +1,32 @@
+---
+id: ensembling-tta
+title: Ensembles and test-time augmentation
+kind: math
+summary: Averaging the predictions of several models, or of one model on several transformed copies of the input, reduces the variance of the errors. The gain depends on how correlated the models' errors are.
+---
+
+### Why averaging helps
+
+Suppose $M$ models each predict $\hat y_m = y + \varepsilon_m$, with errors of variance $\sigma^2$ and pairwise correlation $\rho$. The average has error $\bar\varepsilon = \frac1M\sum_m\varepsilon_m$ with variance
+
+$$
+\mathrm{Var}(\bar\varepsilon) = \frac{1}{M^2}\Big(M\sigma^2 + M(M-1)\rho\sigma^2\Big) = \rho\,\sigma^2 + \frac{1-\rho}{M}\,\sigma^2 .
+$$
+
+As $M$ grows, the second term vanishes but the first does not. Ten copies of the same model trained with different seeds ($\rho$ high) give less than ten different architectures or input representations ($\rho$ lower). This is why winners assemble models that differ in backbone, resolution, input representation or training data, and why the HMS winners emphasised diversity.
+
+### Averaging on different scales
+
+Models trained with different losses or samplers output scores on different scales. Three normalisations appear in these reports:
+
+- **Rank averaging** replaces each model's scores by their ranks before averaging. Suitable for AUC.
+- **Quantile matching** (CZII): sort the values of model A and model B, then replace each value of B by the value of A at the same rank, so both have A's distribution before averaging voxel maps.
+- **Stacking**: a second-stage model (a linear regression, a GBDT, a small neural network) learns how to combine OOF predictions. The HMS winners used non-negative least squares per target.
+
+### Test-time augmentation
+
+**TTA** predicts on several transformed copies of each input (flips, rotations, small shifts) and averages, which ensembles the model with itself. It helps when the transformations are ones the model was trained to be invariant to. For anatomy with left–right meaning, flipping requires swapping the left and right labels of the outputs, as in the aneurysm runner-up's 8-fold TTA.
+
+### The cost
+
+Every ensemble member and every TTA copy multiplies inference time. Under a fixed budget, a smaller single model at higher resolution can beat an ensemble at lower resolution; the mammography runner-up chose exactly that. The deployability card on each report records how large the winning ensemble was and whether a smaller configuration came close.

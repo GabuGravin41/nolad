@@ -1,0 +1,63 @@
+---
+id: attention-transformers
+title: Attention and transformers
+kind: ml
+summary: Self-attention lets every element of a sequence gather information from every other element, weighted by learned relevance. Transformers stack attention with small feed-forward networks; how positions are encoded decides whether they generalise to longer inputs.
+---
+
+### Scaled dot-product attention
+
+Take a sequence of $n$ vectors, stacked as rows of $X\in\mathbb{R}^{n\times d}$ (slice embeddings, frames, nucleotides, word pieces). Three learned matrices produce queries, keys and values:
+
+$$
+Q = XW_Q,\qquad K = XW_K,\qquad V = XW_V .
+$$
+
+Element $i$ scores its relevance to element $j$ by the dot product $q_i\cdot k_j$. The scores are scaled, turned into weights by a softmax over $j$, and used to average the values:
+
+$$
+\mathrm{Attention}(Q,K,V) = \mathrm{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)V .
+$$
+
+Each output row is a weighted average of all value vectors, with weights chosen by content. A slice in a CT series can attend to the slices that show the same vessel; a nucleotide can attend to the nucleotide it pairs with.
+
+<Deep title="Why divide by √dₖ" kind="math">
+
+Suppose the components of $q$ and $k$ are independent with mean 0 and variance 1. Then
+
+$$
+q\cdot k = \sum_{m=1}^{d_k} q_m k_m, \qquad \mathbb{E}[q\cdot k] = 0, \qquad \mathrm{Var}(q\cdot k) = \sum_{m} \mathrm{Var}(q_mk_m) = d_k .
+$$
+
+With $d_k = 64$, raw scores have standard deviation 8. A softmax over scores that large puts nearly all weight on one element, and its gradient with respect to the other scores is close to zero. Dividing by $\sqrt{d_k}$ restores unit variance and keeps the softmax in a range where it learns.
+</Deep>
+
+### Multi-head attention
+
+Instead of one attention with $d$-dimensional vectors, use $h$ heads with $d/h$ dimensions each, computed in parallel and concatenated. Different heads can track different relations. In the Ribonanza winners' model, 6 heads of size 32 each also received a separate channel of base-pair information added to their scores.
+
+### The transformer block
+
+A block applies attention and then a two-layer feed-forward network to each position, each wrapped with a residual connection and layer normalisation:
+
+$$
+X' = X + \mathrm{Attn}(\mathrm{LN}(X)),\qquad X'' = X' + \mathrm{FFN}(\mathrm{LN}(X')).
+$$
+
+Stacking 4 to 24 such blocks gives an encoder. A **decoder** additionally masks attention so each position sees only earlier positions (for generating text one token at a time) and attends to the encoder's outputs (cross-attention), as in the ASL fingerspelling winner.
+
+### Positions
+
+Attention treats its input as a set: permuting the rows permutes the outputs identically. Order must be injected.
+
+- **Absolute encodings** add a vector for position $i$ to $x_i$. They cannot represent positions longer than any seen in training.
+- **Relative biases** add a learned term $b_{i-j}$ to the score between $i$ and $j$, depending only on distance.
+- **ALiBi** adds a fixed penalty proportional to distance, $-m_h\,|i-j|$, with a different slope $m_h$ per head. It extrapolates to longer sequences.
+- **Rotary embeddings (RoPE)** rotate each query and key by an angle proportional to its position, so that $q_i\cdot k_j$ depends on $i-j$.
+- **Dynamic position bias** computes the relative bias with a small network from $i-j$, so it can produce values for unseen distances.
+
+In Ribonanza the test sequences were longer than the training sequences, and the choice among these schemes was one of the decisive modelling decisions.
+
+### Cost
+
+Attention compares every pair of positions, so its cost grows as $n^2$. For a 206-nucleotide RNA or a 384-frame sign sequence this is affordable. For a 512×512 image split into 16×16 patches it is 1,024 tokens; vision transformers such as SegFormer and MaxViT use local or downsampled attention to keep cost manageable.

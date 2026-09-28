@@ -1,0 +1,30 @@
+---
+id: data-augmentation
+title: Data augmentation
+kind: ml
+summary: Augmentation trains a model on randomly transformed copies of the data, teaching it which changes should not affect the answer. Good augmentations mirror the variation that real data contain.
+---
+
+Each time an image is loaded for training, it is transformed at random: flipped, rotated, scaled, shifted, brightened, blurred, partly masked. The label stays the same (or is transformed consistently, as with a segmentation mask). The model never sees the same input twice and must learn features that survive the transformations.
+
+### Common families
+
+- **Geometric:** flips, 90° rotations, small rotations, scaling, shearing, elastic and grid distortions.
+- **Photometric:** brightness, contrast, gamma, hue and saturation changes, CLAHE, blur, noise.
+- **Erasing:** Cutout, CoarseDropout, XY-masking of spectrograms: hide a region so the model cannot rely on one cue.
+- **Mixing:** Mixup blends two images and their labels, $\tilde x = \lambda x_a + (1-\lambda)x_b$, $\tilde y = \lambda y_a + (1-\lambda)y_b$; CutMix pastes a region of one onto the other and mixes labels by area.
+
+### Domain-specific augmentation
+
+The most effective augmentations in these reports come from understanding how the data are produced:
+
+- **Stain variation** in pathology (HuBMAP): tissue from different laboratories is stained differently; recolouring training images to other stain profiles narrows the gap.
+- **Finger dropout** in sign language (ASL): MediaPipe sometimes loses fingers; zeroing random fingers teaches robustness to exactly that failure.
+- **Left–right flip with label swap** (aneurysm, EEG): flipping a brain swaps left and right arteries or hemispheres, so the labels must be swapped too. Done correctly, this doubles the data.
+- **Simulated low resolution** (aneurysm): some scans have thick slices; downsampling training volumes teaches the model to handle them.
+- **Coordinate and slice jitter** (lumbar spine): the second stage receives crops located by a first-stage model that is sometimes off by one slice; jittering the training crops by the first stage's measured error rate prepares the second stage for those errors.
+- **Time-wise CutMix within the same signer** (ASL): cut two sequences at the same fraction and join them, joining their phrases at the same point.
+
+### Where augmentation hurts
+
+Augmentations that change the answer teach the wrong thing. Vertical flips of a chest X-ray produce anatomy that never occurs; strong colour changes can erase the cue that distinguishes two skin lesions. Several write-ups list augmentations that were tried and removed, and those lists are as informative as the kept ones.

@@ -1,0 +1,50 @@
+---
+id: ct-hounsfield-windowing
+title: CT scans, Hounsfield units and windowing
+kind: domain
+summary: A CT scanner measures how strongly each small volume of tissue absorbs X-rays and reports it on the Hounsfield scale. Radiologists view that scale through windows chosen for the tissue they are examining, and winning models do the same.
+---
+
+### What a CT scanner measures
+
+Computed tomography sends X-rays through the body from many angles and reconstructs, for every voxel, the linear attenuation coefficient $\mu$: how much the tissue in that voxel weakens the beam. The result is a stack of axial slices, typically 0.5 to 5 mm thick, each a 512×512 grid.
+
+### The Hounsfield scale
+
+Attenuation is reported relative to water and air:
+
+$$
+\mathrm{HU} = 1000\times\frac{\mu - \mu_{\text{water}}}{\mu_{\text{water}} - \mu_{\text{air}}} .
+$$
+
+By construction water is 0 HU and air is −1000 HU. Approximate values for other tissues:
+
+| Tissue | HU |
+| --- | --- |
+| Air | −1000 |
+| Fat | −100 to −50 |
+| Water, cerebrospinal fluid | 0 to 15 |
+| Brain (grey and white matter) | 20 to 45 |
+| Fresh blood, acute haemorrhage | 50 to 90 |
+| Contrast-filled vessels (CT angiography) | 200 to 500 |
+| Cortical bone | 700 to 3000 |
+
+Scanners store raw integers; the DICOM header fields `RescaleSlope` and `RescaleIntercept` convert them: $\mathrm{HU} = \text{slope}\times\text{stored} + \text{intercept}$. Forgetting this step silently corrupts every downstream intensity, and it is the first line of most competition preprocessing code.
+
+### Windowing
+
+The scale spans about 4,000 HU; a display, or a network's 8-bit input channel, shows perhaps 256 levels. A **window** with centre (level) $c$ and width $w$ maps HU linearly to $[0,1]$ over the interval $[c-w/2,\ c+w/2]$ and clips outside it:
+
+$$
+I = \mathrm{clip}\!\left(\frac{\mathrm{HU} - (c - w/2)}{w},\ 0,\ 1\right).
+$$
+
+<Plot series={[{fn: "window", params: {c: 40, w: 80}, label: "brain window (40, 80)"}, {fn: "window", params: {c: 80, w: 200}, label: "subdural window (80, 200)"}, {fn: "window", params: {c: 600, w: 2800}, label: "bone window (600, 2800)"}]} x={[-200, 1000]} y={[0, 1]} xLabel="Hounsfield units" yLabel="displayed intensity" caption="Three windows used by the 2019 haemorrhage winners. A narrow window spreads a small HU range across the whole intensity scale, making small density differences visible." />
+
+A narrow brain window (centre 40, width 80) spreads the 0–80 HU range of brain and blood across the full intensity scale, so a 30 HU difference between blood and brain becomes a large contrast. A wide bone window compresses soft tissue to grey and shows fractures. Radiologists switch windows constantly. Feeding a network several windows as separate channels gives it the same views, and the 2019 RSNA solutions established brain, subdural and bone windows as a standard three-channel input for head CT.
+
+Other standard windows in these reports: soft tissue or abdomen (centre ~40–50, width ~350–400), mediastinum (50, 350), lung (−600, 1500), and a pulmonary-embolism window (100, 700) that shows contrast-filled arteries and the darker clots within them.
+
+### Slices, series and orientation
+
+A CT **study** contains one or more **series** (reconstructions with different kernels or slice thicknesses). Slices must be ordered by the z-component of `ImagePositionPatient`, not by file name or instance number, and slice thickness can vary between series and scanners. The 2019 haemorrhage winner fed the difference between consecutive z-positions to his sequence model as a feature, because thin and thick slices differ in noise.

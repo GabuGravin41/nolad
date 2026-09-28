@@ -1,0 +1,61 @@
+---
+id: roc-auc
+title: ROC curves, AUC and partial AUC
+kind: math
+summary: AUC measures how well a model ranks positives above negatives, independent of any threshold. Partial AUC restricts the measurement to the high-sensitivity region that matters for screening.
+---
+
+### The ROC curve
+
+A model outputs a score $s$ per example. Choosing a threshold $\tau$ and calling everything with $s>\tau$ positive gives
+
+$$
+\mathrm{TPR}(\tau) = \frac{TP}{TP+FN}\ \ (\text{sensitivity, recall}),\qquad \mathrm{FPR}(\tau) = \frac{FP}{FP+TN}\ \ (1 - \text{specificity}).
+$$
+
+Sweeping $\tau$ from $+\infty$ to $-\infty$ traces the **ROC curve** from $(0,0)$ to $(1,1)$. A useless model follows the diagonal; a perfect one jumps to $(0,1)$.
+
+### AUC as a probability
+
+The area under the ROC curve has a direct meaning:
+
+$$
+\mathrm{AUC} = P\big(s(X^+) > s(X^-)\big),
+$$
+
+the probability that a randomly chosen positive gets a higher score than a randomly chosen negative (ties count one half).
+
+<Deep title="Why the area equals the ranking probability" kind="math">
+
+Let $F_+$ and $F_-$ be the score distributions of positives and negatives. At threshold $\tau$, $\mathrm{TPR}(\tau) = P(s^+>\tau)$ and $\mathrm{FPR}(\tau) = P(s^->\tau)$. As $\tau$ decreases, FPR increases by $dF_-$ at each negative score. The area is
+
+$$
+\int_0^1 \mathrm{TPR}\;d\,\mathrm{FPR} = \int P(s^+ > \tau)\; dF_-(\tau) = \mathbb{E}_{s^-}\big[P(s^+ > s^-)\big] = P(s^+ > s^-).
+$$
+
+With finite samples of $n_+$ positives and $n_-$ negatives, the same argument gives the Mann–Whitney statistic
+
+$$
+\widehat{\mathrm{AUC}} = \frac{1}{n_+ n_-}\sum_{i\in +}\sum_{j\in -}\Big(\mathbb{1}[s_i > s_j] + \tfrac12\mathbb{1}[s_i = s_j]\Big).
+$$
+</Deep>
+
+Consequences used throughout these reports:
+
+- AUC depends only on the **order** of scores. Any strictly increasing transformation of the outputs leaves it unchanged, so calibration does not matter.
+- Averaging ranks rather than raw probabilities is a natural way to ensemble models whose outputs sit on different scales (`rank(pct=True)` in the melanoma and ISIC 2024 winners).
+- AUC does not depend on class prevalence, which makes it stable when positives are rare, but it can look high for a model that is useless at the threshold a clinic would use.
+
+### Partial AUC above a sensitivity floor
+
+A screening tool that misses 30% of cancers is unacceptable however well it ranks. ISIC 2024 scored only the part of the ROC curve where $\mathrm{TPR}\ge 0.8$:
+
+$$
+\mathrm{pAUC}_{\mathrm{TPR}\ge0.8} = \int_{0}^{1}\max\big(\mathrm{TPR}(f) - 0.8,\ 0\big)\,df ,
+$$
+
+the area between the curve and the horizontal line at 0.8. Its maximum is $1\times0.2 = 0.2$, which is why ISIC 2024 scores lie between 0 and 0.2. Two models with equal AUC can differ greatly in pAUC: what counts is how few false positives a model needs before it has found 80% of the cancers.
+
+### Column-weighted AUC
+
+When there are several labels, AUC is computed per label and averaged, possibly with weights. The aneurysm competition gave the "aneurysm present" column weight 13 and each of the 13 location columns weight 1, so that the overall question and the 13 location questions each contribute half of the score.

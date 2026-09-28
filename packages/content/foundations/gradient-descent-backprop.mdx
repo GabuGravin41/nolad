@@ -1,0 +1,99 @@
+---
+id: gradient-descent-backprop
+title: Gradient descent and backpropagation
+kind: math
+summary: Training moves every parameter a small step against the slope of the loss. Backpropagation is the chain rule applied in reverse order to compute all those slopes at once.
+---
+
+### The gradient
+
+For a loss $L(\theta)$ that depends on parameters $\theta = (\theta_1, \dots, \theta_P)$, the **gradient** is the vector of partial derivatives
+
+$$
+\nabla_\theta L = \left(\frac{\partial L}{\partial \theta_1}, \dots, \frac{\partial L}{\partial \theta_P}\right).
+$$
+
+Each component says how fast the loss changes when that one parameter is nudged. By Taylor's theorem, for a small step $\Delta\theta$,
+
+$$
+L(\theta + \Delta\theta) \approx L(\theta) + \nabla_\theta L \cdot \Delta\theta .
+$$
+
+The dot product is most negative, for a step of fixed length, when $\Delta\theta$ points opposite to the gradient (Cauchy–Schwarz inequality). This gives the update
+
+$$
+\theta_{t+1} = \theta_t - \eta \, \nabla_\theta L(\theta_t),
+$$
+
+with **learning rate** $\eta > 0$. Too large an $\eta$ overshoots and diverges; too small an $\eta$ makes no progress.
+
+### Stochastic gradients
+
+The full loss is an average over $N$ training examples, and computing its gradient means touching every example. **Stochastic gradient descent (SGD)** instead samples a **mini-batch** $B$ of $b$ examples and uses
+
+$$
+g_t = \frac{1}{b}\sum_{i \in B} \nabla_\theta \, \ell\big(f_\theta(x_i), y_i\big).
+$$
+
+Because the batch is sampled at random, $\mathbb{E}[g_t]$ equals the full gradient: the estimate is unbiased. Its variance shrinks as $1/b$. One pass through the whole training set is an **epoch**.
+
+### Backpropagation
+
+A network is a composition of simple functions (layers):
+
+$$
+x \xrightarrow{h_1} a_1 \xrightarrow{h_2} a_2 \cdots \xrightarrow{h_K} a_K = \hat y \xrightarrow{\ell} L .
+$$
+
+The chain rule gives the derivative of $L$ with respect to any intermediate quantity:
+
+$$
+\frac{\partial L}{\partial a_{k-1}} = \frac{\partial L}{\partial a_k}\,\frac{\partial a_k}{\partial a_{k-1}} .
+$$
+
+Backpropagation starts from $\partial L / \partial \hat y$ and walks backwards, multiplying by each layer's local derivative (its Jacobian). At layer $k$ with parameters $\theta_k$,
+
+$$
+\frac{\partial L}{\partial \theta_k} = \frac{\partial L}{\partial a_k}\,\frac{\partial a_k}{\partial \theta_k}.
+$$
+
+Every parameter's gradient is obtained in one backward pass that costs about as much as the forward pass. Frameworks such as PyTorch record the forward computation and perform this backward walk automatically (automatic differentiation).
+
+<Deep title="Worked example: one neuron with a sigmoid and binary cross-entropy" kind="math">
+
+Take one input vector $x$, weights $w$, bias $b$:
+
+$$
+z = w^\top x + b, \qquad p = \sigma(z) = \frac{1}{1+e^{-z}}, \qquad L = -\big[y\log p + (1-y)\log(1-p)\big].
+$$
+
+Step 1, derivative of the loss with respect to $p$:
+
+$$
+\frac{\partial L}{\partial p} = -\frac{y}{p} + \frac{1-y}{1-p} = \frac{p - y}{p(1-p)}.
+$$
+
+Step 2, derivative of the sigmoid. Since $\sigma(z) = (1+e^{-z})^{-1}$,
+
+$$
+\sigma'(z) = \frac{e^{-z}}{(1+e^{-z})^2} = \sigma(z)\big(1-\sigma(z)\big) = p(1-p).
+$$
+
+Step 3, chain them:
+
+$$
+\frac{\partial L}{\partial z} = \frac{p-y}{p(1-p)}\cdot p(1-p) = p - y .
+$$
+
+Step 4, since $\partial z / \partial w = x$ and $\partial z/\partial b = 1$,
+
+$$
+\nabla_w L = (p-y)\,x, \qquad \frac{\partial L}{\partial b} = p - y .
+$$
+
+The error signal is simply the prediction minus the label. A confident wrong prediction ($p$ near 1 when $y=0$) produces the largest correction.
+</Deep>
+
+### Vanishing and exploding gradients
+
+The backward pass multiplies many Jacobians. If their typical size is below one, gradients shrink exponentially with depth; above one, they explode. Residual connections, normalisation layers, careful initialisation and activations such as ReLU exist largely to keep this product near one, which is why networks with hundreds of layers can be trained.

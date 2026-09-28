@@ -1,0 +1,61 @@
+---
+id: gradient-boosting
+title: Gradient-boosted decision trees
+kind: ml
+summary: A boosted model adds many small decision trees one after another, each fitted to correct the errors of the ones before. LightGBM, XGBoost and CatBoost are the standard implementations and remain the strongest tools for tabular data.
+---
+
+### Decision trees
+
+A regression tree splits the data by questions of the form "is feature $j$ below $t$?" until each leaf holds a small group, and predicts a constant per leaf. A single tree is easy to overfit and piecewise constant.
+
+### Boosting as gradient descent in function space
+
+Start from a constant prediction $F_0$. At each round $m$, fit a small tree $h_m$ and add it with a learning rate $\nu$:
+
+$$
+F_m(x) = F_{m-1}(x) + \nu\, h_m(x).
+$$
+
+Which tree? For a loss $\ell(y, F)$, compute for each example the negative gradient with respect to the current prediction,
+
+$$
+r_i = -\left.\frac{\partial\,\ell(y_i, F)}{\partial F}\right|_{F = F_{m-1}(x_i)},
+$$
+
+and fit $h_m$ to the $r_i$. For squared error, $r_i$ is the residual $y_i - F_{m-1}(x_i)$. For log loss with $F$ the logit, $r_i = y_i - p_i$. Each tree is a step of gradient descent taken in the space of functions.
+
+<Deep title="Second-order boosting: how XGBoost and LightGBM choose leaf values" kind="math">
+
+Expand the loss to second order around the current prediction, with $g_i = \partial\ell/\partial F$ and $h_i = \partial^2\ell/\partial F^2$:
+
+$$
+\ell(y_i, F + f) \approx \ell(y_i, F) + g_i f + \tfrac12 h_i f^2 .
+$$
+
+A tree assigns the same value $w_j$ to all examples in leaf $j$. With an L2 penalty $\tfrac12\lambda w_j^2$, the part of the objective that depends on $w_j$ is
+
+$$
+\Big(\sum_{i\in j} g_i\Big) w_j + \tfrac12\Big(\sum_{i\in j} h_i + \lambda\Big) w_j^2,
+$$
+
+minimised at
+
+$$
+w_j^\star = -\frac{G_j}{H_j + \lambda}, \qquad G_j = \sum_{i\in j} g_i,\ H_j = \sum_{i\in j} h_i,
+$$
+
+with objective reduction $\tfrac12 G_j^2/(H_j+\lambda)$. A candidate split is scored by how much it increases the total $\sum_j G_j^2/(H_j+\lambda)$. For log loss, $g_i = p_i - y_i$ and $h_i = p_i(1-p_i)$.
+</Deep>
+
+### The three libraries
+
+- **XGBoost** introduced the regularised second-order formulation above.
+- **LightGBM** grows trees leaf-wise and bins features into histograms, which makes it very fast on large data.
+- **CatBoost** handles categorical features with ordered target statistics and uses symmetric trees; it tends to need less tuning.
+
+All three run on GPUs. The ISIC 2024 winner trained 150 GBDT models in under 20 minutes. **py-boost**, used by the CAFA 5 runner-up, is a GPU implementation designed for thousands of outputs at once.
+
+### Why trees still win on tables
+
+Tabular features are heterogeneous (age, a colour index, a count, a category), their scales mean nothing to each other, and many interactions are threshold-like. Trees are invariant to monotone rescaling, handle missing values and mixed types natively, and need no normalisation. In ISIC 2024, the image models' outputs were fed as additional columns into gradient-boosted trees, which combined them with lesion colour, shape and patient-level context.

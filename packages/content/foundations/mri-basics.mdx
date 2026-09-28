@@ -1,0 +1,33 @@
+---
+id: mri-basics
+title: MRI sequences and what they show
+kind: domain
+summary: MRI images the behaviour of hydrogen nuclei in a magnetic field. Different pulse sequences weight the signal by different tissue properties, so the same anatomy looks different in T1, T2 and other series.
+---
+
+### The signal
+
+Hydrogen nuclei (mostly in water and fat) align with a strong magnetic field. A radio-frequency pulse tips them; as they relax back, they emit a signal. Two relaxation times characterise each tissue:
+
+- **T1**, the recovery of alignment along the field, is short in fat and long in water.
+- **T2**, the decay of the transverse signal, is long in water and fluid and shorter in most solid tissue.
+
+A pulse sequence chooses timing parameters (repetition time TR, echo time TE) that make the image intensity depend mostly on one of these.
+
+| Sequence | Bright | Dark | Typical use in these reports |
+| --- | --- | --- | --- |
+| T1-weighted | fat, contrast agent | fluid | spine anatomy, foramina (sagittal T1) |
+| T2-weighted | fluid (CSF, oedema) | — | spinal canal, discs (sagittal and axial T2) |
+| STIR | fluid, oedema (fat suppressed) | fat | spine |
+| T1 post-contrast | enhancing tissue, vessels | — | aneurysm detection |
+| MR angiography (time of flight) | flowing blood | static tissue | aneurysm detection |
+
+Unlike CT, MRI intensities have no absolute scale. The same tissue can have different values on different scanners, or in different parts of one image. Solutions therefore normalise each volume (for example to zero mean and unit variance, or to the 0–1 range) rather than use fixed windows.
+
+### Planes and series
+
+Studies contain several series acquired in different planes: **sagittal** (side view, splitting left from right), **axial** (horizontal slices) and **coronal** (front view). In the lumbar spine competition, canal stenosis is best seen on sagittal T2, foraminal narrowing on sagittal T1, and subarticular stenosis on axial T2. A model must know which slice of which series to look at, which is why the winners built dedicated localisation stages.
+
+### Practical difficulties
+
+Slice spacing, orientation and field of view vary between scanners; some series are stored as multi-frame DICOM files; slices can be missing. The aneurysm finalists spent much of their effort making every test series load correctly, and the winner's pipeline fell back to average predictions whenever a series could not be processed.

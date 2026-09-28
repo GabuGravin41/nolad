@@ -1,0 +1,30 @@
+---
+id: digital-pathology
+title: Digital pathology and whole-slide images
+kind: domain
+summary: A pathology slide is a thin section of tissue stained with dyes and scanned at microscope resolution into an image of billions of pixels. Models work on small tiles and then combine the tiles' evidence.
+---
+
+### From tissue to image
+
+A tissue sample (a biopsy core, a resection) is fixed, embedded in paraffin, cut into sections a few micrometres thick and stained. **Haematoxylin** colours nuclei blue-purple; **eosin** colours cytoplasm and extracellular matrix pink. The H&E slide is scanned at 20× or 40× magnification, roughly 0.5 or 0.25 µm per pixel. A single slide can be 100,000 × 100,000 pixels.
+
+Scanners store **whole-slide images (WSIs)** as pyramids (SVS, NDPI, TIFF): the full resolution plus successively downsampled levels, so software can read any region at any zoom without loading the whole file. When competitions release slides as flat PNGs, as UBC-OCEAN did, loading one can exhaust memory; the winners wrote C code that reads a PNG row by row.
+
+**Tissue microarrays (TMAs)** are small cores from many patients arranged on one slide, often scanned at 40×.
+
+### Tiling
+
+1. Detect tissue on a low-resolution thumbnail, typically by Otsu thresholding the saturation channel, which separates stained tissue from white background.
+2. Cut the tissue region into tiles (for example 224 or 256 pixels) at a fixed magnification.
+3. Keep a subset (the top-$k$ by tissue content, or a random sample) to fit the compute budget.
+
+Magnification must be consistent: a 20× tile and a 40× tile of the same size show different amounts of tissue and different cell sizes. The UBC-OCEAN winners resized 40× TMA tiles to match 20× WSI tiles and called magnification "key information".
+
+### Stain variation
+
+The same tissue stained in two laboratories can differ markedly in colour. Remedies include colour augmentation during training and stain normalisation (Reinhard, Macenko, Vahadane methods) that maps images to a reference stain. Results vary: the HuBMAP fourth-place team called stain normalisation decisive; the UBC-OCEAN winners saw no gain from it on top of a foundation model.
+
+### Grading and subtyping
+
+Pathologists grade by architecture and cell morphology. In prostate cancer, Gleason patterns 3, 4 and 5 describe increasingly disordered glands; the two most common patterns form the Gleason score (e.g. 3+4) and map to an ISUP grade group from 1 to 5. Agreement between pathologists is imperfect, so training labels are noisy, a central theme of the PANDA report.

@@ -1,0 +1,38 @@
+---
+id: weighted-log-loss
+title: Weighted log loss and what it rewards
+kind: math
+summary: Competitions often weight some labels or classes more heavily in the log loss. The weights change which mistakes matter and shift the prediction that minimises the metric.
+---
+
+A weighted log loss multiplies each term by a weight $w$ that depends on the label or the row:
+
+$$
+L = \frac{\sum_i w_i\,\ell_i}{\sum_i w_i}, \qquad \ell_i = -\big[y_i \log p_i + (1-y_i)\log(1-p_i)\big].
+$$
+
+In RSNA competitions, the weight typically depends on which label a row refers to (the "any haemorrhage" row counts more than a subtype row) or on the true class (a severe finding counts more than a normal one).
+
+### When the weight depends on the true class
+
+Suppose a positive example carries weight $w_1$ and a negative example weight $w_0$. For a group of indistinguishable examples with positive fraction $\pi$, predicting $q$ costs, in expectation,
+
+$$
+L(q) \propto -\big[w_1\pi\log q + w_0(1-\pi)\log(1-q)\big].
+$$
+
+Setting the derivative to zero:
+
+$$
+\frac{w_1\pi}{q} = \frac{w_0(1-\pi)}{1-q} \;\Longrightarrow\; q^\star = \frac{w_1\pi}{w_1\pi + w_0(1-\pi)} .
+$$
+
+With $w_1 = w_0$ this gives back $q^\star = \pi$. With $w_1 = 4$, $w_0 = 1$ and $\pi = 0.05$, the metric-optimal prediction is $q^\star = 0.2/(0.2+0.95) \approx 0.174$, more than three times the true frequency. A model trained with ordinary log loss is calibrated to $\pi$ and will be scored as underconfident. Winning solutions either train with the same weights as the metric or rescale predictions afterwards. The lumbar spine runner-up's multiplication of the highest severe-stenosis prediction by 1.25 is an example of the second approach.
+
+### When the weight depends on the row type
+
+If the weight depends only on which label the row describes, it does not change that label's optimal prediction; it changes how much that label's errors count in the average. Improving the heavily weighted label pays more. Solutions respond by spending more modelling effort on it, as the aneurysm and trauma winners did with dedicated heads and pooling for the "any" label.
+
+### Clipping
+
+Most competition implementations clip predictions to $[\epsilon, 1-\epsilon]$ (for example $10^{-15}$) before taking logarithms so a single prediction of exactly 0 or 1 cannot give an infinite loss. The clip does not protect against confident errors in any practical sense: $-\log(10^{-15}) \approx 34.5$.

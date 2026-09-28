@@ -1,0 +1,50 @@
+---
+id: convolution
+title: Convolutions in two and three dimensions
+kind: ml
+summary: A convolutional layer slides a small learned filter across an image or volume and records how strongly each location matches it. Stacking such layers builds detectors for edges, textures, shapes and eventually whole structures.
+---
+
+### One filter on one channel
+
+An image is a grid of numbers $X[i,j]$. A $3\times3$ **filter** (kernel) $K$ has nine weights. The output at position $(i,j)$ is the weighted sum of the $3\times3$ neighbourhood around it:
+
+$$
+Y[i,j] = \sum_{u=-1}^{1}\sum_{v=-1}^{1} K[u,v]\,X[i+u,\,j+v] + b .
+$$
+
+(Strictly this is cross-correlation; deep-learning libraries call it convolution.) The same nine weights are used at every position, so a filter that responds to a vertical edge responds to it anywhere in the image. This **weight sharing** is why convolutional networks need far fewer parameters than fully connected ones and why they tolerate objects appearing in different places.
+
+### Many channels in, many channels out
+
+Real inputs have channels: three for RGB, or three CT windows, or three neighbouring slices. A layer with $C_{\text{in}}$ input channels and $C_{\text{out}}$ output channels has $C_{\text{out}}$ filters, each of shape $C_{\text{in}}\times k\times k$:
+
+$$
+Y_c[i,j] = \sum_{c'=1}^{C_{\text{in}}}\sum_{u,v} K_{c,c'}[u,v]\,X_{c'}[i+u, j+v] + b_c .
+$$
+
+Parameter count: $C_{\text{out}}\,(C_{\text{in}}k^2 + 1)$. A layer from 64 to 128 channels with $3\times3$ kernels has $128\times(64\times9+1) = 73{,}856$ parameters, whatever the image size.
+
+The first layer of an ImageNet-pretrained network expects exactly three channels. That constraint is the practical reason so many medical solutions pack three CT windows or three adjacent slices into the three "colour" channels: it lets them reuse pretrained weights unchanged.
+
+### Stride, padding and pooling
+
+- **Padding** adds a border of zeros so the output keeps the input's size.
+- **Stride** $s$ moves the filter $s$ pixels at a time, dividing the output size by $s$.
+- **Pooling** replaces each small window by its maximum or mean, also downsampling.
+
+A typical backbone halves the resolution five times, so a $512\times512$ input becomes a $16\times16$ grid of feature vectors.
+
+### Receptive field
+
+Each output of a $3\times3$ layer sees a $3\times3$ patch. Two stacked layers see $5\times5$, three see $7\times7$, and every stride-2 step doubles the growth rate. Deep layers therefore respond to large regions: whole vertebrae, whole lesions. When an object is larger than the receptive field, the network cannot see it whole, which is one reason input resolution and crop size matter so much in the Vesuvius and mammography reports.
+
+### Three-dimensional convolution
+
+For a CT or MRI volume, filters become $k\times k\times k$ cubes and slide in three directions:
+
+$$
+Y[d,i,j] = \sum_{t,u,v} K[t,u,v]\,X[d+t,\,i+u,\,j+v] + b .
+$$
+
+A 3D layer from 64 to 128 channels with $3\times3\times3$ kernels has $128\times(64\times27+1) \approx 221{,}000$ parameters, three times the 2D count, and its activations occupy memory proportional to the volume. 3D networks see true 3D shape but are expensive, have few pretrained weights available, and need more data. The recurring compromise in these reports, the **2.5D** approach, stacks neighbouring slices as channels of a 2D network.

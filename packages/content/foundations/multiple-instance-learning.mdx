@@ -1,0 +1,31 @@
+---
+id: multiple-instance-learning
+title: Multiple instance learning and attention pooling
+kind: ml
+summary: When a label belongs to a collection of items (a slide, a scan, a stack of slices) but the model processes items one at a time, multiple instance learning decides how item-level evidence combines into the collection's prediction.
+---
+
+### The setting
+
+A **bag** $B = \{x_1,\dots,x_n\}$ of **instances** has one label $y$. A pathology slide is a bag of tiles; a lumbar MRI crop is a bag of five slices; a CT series is a bag of images. The standard assumption: the bag is positive if at least one instance is positive. Instance labels are unknown.
+
+A MIL model encodes each instance to an embedding $h_i = f(x_i)$, pools the embeddings into one bag vector $z$, and classifies $z$. The choice of pooling is the design decision.
+
+### Pooling operators
+
+- **Max pooling**, $z = \max_i h_i$ (per dimension): matches the "one positive instance suffices" assumption but passes gradient to only one instance.
+- **Mean pooling**, $z = \frac1n\sum_i h_i$: stable, but a small lesion is diluted by many normal tiles.
+- **Generalised mean (GeM)**, $z = \left(\frac1n\sum_i h_i^{\,p}\right)^{1/p}$: interpolates between mean ($p=1$) and max ($p\to\infty$), with $p$ learned.
+- **Attention pooling** (Ilse et al., 2018):
+
+$$
+a_i = \frac{\exp\big(w^\top\tanh(Vh_i)\big)}{\sum_j\exp\big(w^\top\tanh(Vh_j)\big)}, \qquad z = \sum_i a_i h_i .
+$$
+
+A small network scores each instance; the softmax turns scores into weights; the bag vector is the weighted average. The weights show which instances drove the prediction, which makes the model partly interpretable.
+
+- **Top-$k$ and bottom-$k$ selection (CHOWDER)** (Courtiol et al., 2018): score every tile with a linear layer, keep the $k$ highest and $k$ lowest scores, and classify from those $2k$ numbers. The UBC-OCEAN winners used CHOWDER with $k=10$ on foundation-model embeddings and found it as good as newer MIL architectures.
+
+### Adding order
+
+When instances are ordered (slices through a vertebra, frames in time), a bidirectional LSTM or GRU can process the sequence before pooling, so each instance's embedding reflects its neighbours. The lumbar spine winner's "LSTM-MIL" did exactly this: CNN per slice, BiLSTM across slices, attention pooling, with an auxiliary loss asking the attention to peak at the correct slice.

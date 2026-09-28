@@ -1,0 +1,61 @@
+---
+id: dice-and-overlap
+title: Dice, IoU and overlap-based losses
+kind: math
+summary: The Dice coefficient scores a segmentation by its overlap with the truth. It equals the F1 score over pixels, ignores the true-negative background, and can be made differentiable to use as a loss.
+---
+
+### Definitions
+
+For a predicted set of pixels $X$ and a true set $Y$:
+
+$$
+\mathrm{Dice}(X,Y) = \frac{2\,|X\cap Y|}{|X| + |Y|}, \qquad \mathrm{IoU}(X,Y) = \frac{|X\cap Y|}{|X\cup Y|}.
+$$
+
+Both range from 0 (no overlap) to 1 (identical). They are monotonically related: $\mathrm{Dice} = 2\,\mathrm{IoU}/(1+\mathrm{IoU})$.
+
+<Deep title="Dice is the F1 score over pixels" kind="math">
+
+Count pixels as true positives $TP = |X\cap Y|$, false positives $FP = |X\setminus Y|$ and false negatives $FN = |Y\setminus X|$. Then $|X| = TP+FP$ and $|Y| = TP+FN$, so
+
+$$
+\mathrm{Dice} = \frac{2TP}{2TP+FP+FN}.
+$$
+
+Precision is $P = TP/(TP+FP)$ and recall is $R = TP/(TP+FN)$. The harmonic mean $F_1 = 2PR/(P+R)$ simplifies:
+
+$$
+F_1 = \frac{2\cdot\frac{TP}{TP+FP}\cdot\frac{TP}{TP+FN}}{\frac{TP}{TP+FP}+\frac{TP}{TP+FN}} = \frac{2TP}{(TP+FN)+(TP+FP)} = \mathrm{Dice}.
+$$
+
+True negatives do not appear. A tumour occupying 0.1% of an image is scored on how well that 0.1% is found, not on the 99.9% of background correctly left empty.
+</Deep>
+
+### Empty masks
+
+When both $X$ and $Y$ are empty the formula is $0/0$. Competitions must choose: the SIIM pneumothorax and HuBMAP metrics define Dice as 1 in that case, so correctly predicting "nothing here" on a negative image earns a perfect score for that image. Because roughly 78% of pneumothorax test images were negative, the decision of whether to output any mask at all drove most of the score, and the winner designed his thresholds around it.
+
+### Soft Dice as a loss
+
+Dice counts pixels, so it is not differentiable. Replacing the binary prediction by probabilities $p_i\in[0,1]$ and the truth by $g_i\in\{0,1\}$ gives the soft Dice loss
+
+$$
+\mathcal{L}_{\text{Dice}} = 1 - \frac{2\sum_i p_i g_i + \epsilon}{\sum_i p_i + \sum_i g_i + \epsilon},
+$$
+
+where $\epsilon$ avoids division by zero. Its gradient depends on the whole image, not only on each pixel, so small structures receive as much attention as large ones. Pixel-wise cross-entropy, by contrast, is dominated by the abundant background. Many winners use the sum of the two.
+
+### Tversky and focal Tversky
+
+The **Tversky index** weights the two kinds of error separately:
+
+$$
+T = \frac{TP}{TP + \alpha\,FN + \beta\,FP}.
+$$
+
+With $\alpha=\beta=0.5$ it is Dice. Setting $\alpha > \beta$ penalises missed pixels more, favouring recall. The aneurysm winner used a Tversky loss for his recall-focused vessel model so thin vessels were not missed. **Focal Tversky** raises $(1-T)$ to a power to emphasise hard cases.
+
+### Lovász loss
+
+The Lovász hinge (Berman et al., 2018) is a convex surrogate that directly optimises IoU for binary segmentation. The third-place pneumothorax solution trained with it and needed no threshold search.

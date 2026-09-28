@@ -1,0 +1,32 @@
+---
+id: dicom-and-volumes
+title: DICOM files and building volumes
+kind: engineering
+summary: Medical images arrive as DICOM files, one per slice, with metadata describing position, spacing and intensity scaling. Turning them into a correctly ordered, correctly scaled 3D array is the first and most error-prone step of every imaging pipeline.
+---
+
+A DICOM file holds pixel data and a header of tagged fields. The fields used in these reports:
+
+| Field | Meaning |
+| --- | --- |
+| `StudyInstanceUID`, `SeriesInstanceUID`, `SOPInstanceUID` | identifiers of the study, the series and the individual image |
+| `ImagePositionPatient` | $(x,y,z)$ of the image's first pixel in millimetres, patient coordinates |
+| `ImageOrientationPatient` | direction cosines of the image rows and columns |
+| `PixelSpacing`, `SliceThickness` | in-plane spacing and nominal thickness, mm |
+| `RescaleSlope`, `RescaleIntercept` | convert stored integers to physical units (HU for CT) |
+| `WindowCenter`, `WindowWidth` | the display window chosen by the scanner |
+| `PhotometricInterpretation` | whether high values are bright (MONOCHROME2) or dark (MONOCHROME1) |
+
+### Building a volume
+
+1. Group files by series.
+2. Sort slices by the projection of `ImagePositionPatient` onto the slice normal (the cross product of the two orientation vectors); for axial scans this is the z-coordinate.
+3. Apply slope and intercept.
+4. Stack, and record the voxel spacing from `PixelSpacing` and the gaps between consecutive positions.
+5. Optionally resample to a fixed spacing, and reorient to a standard anatomical orientation.
+
+Common failures: slices with different sizes inside one series, duplicate positions, missing slices, multi-frame files that hold a whole series in one file, and inverted photometric interpretation in mammograms. Tools used by the winners include `pydicom`, `dicomsdl` (fast decoding), NVIDIA DALI (GPU decoding), `dcm2niix` (conversion to NIfTI) and `SimpleITK`.
+
+### Speed matters
+
+Decoding thousands of compressed DICOM files can take longer than running the model. Several solutions moved decoding to the GPU or cached preprocessed arrays, and the mammography winner described GPU preprocessing as necessary to fit the 9-hour limit.

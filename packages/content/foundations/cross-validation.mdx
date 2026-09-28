@@ -1,0 +1,29 @@
+---
+id: cross-validation
+title: Cross-validation, leakage and the public leaderboard
+kind: ml
+summary: Validation estimates how a model will do on data it has not seen. It only works if the validation data are as different from the training data as real new cases will be, which usually means splitting by patient or subject.
+---
+
+### K-fold cross-validation
+
+Split the training data into $K$ folds (commonly 4 or 5). Train on $K-1$ folds, evaluate on the remaining one, and rotate. Every example receives exactly one **out-of-fold (OOF)** prediction from a model that never saw it. The mean OOF score estimates generalisation, and the OOF predictions themselves can train second-stage models (stacking), tune thresholds, or flag noisy labels.
+
+### Grouped splits
+
+If a patient contributes several images, placing some in training and others in validation lets the model recognise the patient rather than the disease. Validation scores become optimistic and useless for model selection. Every medical solution in these reports splits by patient (`GroupKFold`), and the same logic applies elsewhere: by signer for sign language, by experiment for tomograms, by building block for chemistry, by sequence cluster for RNA.
+
+**Stratification** additionally keeps the class balance equal across folds, which matters when positives are rare. The "triple stratified leak-free" folds used in both ISIC competitions group by patient and stratify by both the target and the number of images per patient.
+
+### Duplicates
+
+Datasets assembled from several sources contain near-duplicates. PANDA solutions used perceptual image hashes to find duplicate biopsies and forced each duplicate group into one fold; the winners noted their label-denoising method would fail otherwise, because a duplicate in another fold would confirm its own wrong label.
+
+### The public leaderboard
+
+Kaggle scores submissions on a public subset of the test set during the competition and on a private subset at the end. When the public subset is small, choosing models by public score overfits it. Signs of trouble in these reports:
+
+- **Tiny test sets:** 50 problems in AIMO, about 500 slides in each PANDA split, around 10,000 skin lesions with a few dozen melanomas in SIIM-ISIC 2020.
+- **Large shake-ups:** teams that tuned to the public leaderboard drop hundreds of places.
+
+Winners' defences: trust cross-validation when it is stable; evaluate models in pairs of seeds; restrict how many settings are tried on the leaderboard; use paired statistical tests across repeated CV runs (the ISIC 2024 winner accepted a change only if a paired t-test over 10 seeds supported it); and zero out test rows that duplicate training data before comparing submissions (Ribonanza).

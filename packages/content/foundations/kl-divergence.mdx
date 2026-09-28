@@ -1,0 +1,29 @@
+---
+id: kl-divergence
+title: Entropy, cross-entropy and KL divergence
+kind: math
+summary: KL divergence measures how much a predicted distribution differs from a target distribution. Minimising it is the same as minimising cross-entropy against that target.
+---
+
+For two probability distributions $P$ (the target) and $Q$ (the prediction) over classes $k = 1,\dots,K$:
+
+$$
+\text{Entropy: } H(P) = -\sum_k P_k\log P_k, \qquad \text{Cross-entropy: } H(P,Q) = -\sum_k P_k\log Q_k .
+$$
+
+The **Kullback–Leibler divergence** is their difference:
+
+$$
+D_{\text{KL}}(P\,\Vert\,Q) = \sum_k P_k\log\frac{P_k}{Q_k} = H(P,Q) - H(P).
+$$
+
+Two properties matter in practice.
+
+1. $D_{\text{KL}}(P\Vert Q) \ge 0$, with equality only when $Q = P$. (This follows from Jensen's inequality applied to the concave logarithm: $-D_{\text{KL}} = \sum_k P_k \log(Q_k/P_k) \le \log\sum_k P_k (Q_k/P_k) = \log 1 = 0$.)
+2. $H(P)$ does not depend on the prediction. Minimising KL divergence over $Q$ is therefore the same as minimising cross-entropy $H(P,Q)$, and the gradient with respect to the logits is again $Q - P$.
+
+### Asymmetry and extreme predictions
+
+$D_{\text{KL}}(P\Vert Q)$ is not symmetric. A class with target mass $P_k > 0$ and predicted mass $Q_k \to 0$ contributes $P_k\log(P_k/Q_k) \to \infty$. Predicting near-zero probability for any class that even a minority of experts chose is expensive. The HMS winners noted that the metric is "sensitive to errors for extreme predictions", which is why diverse ensembles and slightly softened outputs (entmax with α close to 1, label smoothing) helped them.
+
+Terms with $P_k = 0$ contribute nothing, by the convention $0\log 0 = 0$.

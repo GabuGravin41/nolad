@@ -1,0 +1,26 @@
+---
+id: learning-rate-schedules
+title: Learning-rate schedules, warm-up and cosine decay
+kind: ml
+summary: The learning rate is usually varied during training, rising briefly at the start and falling towards zero at the end. The shape of that curve affects final accuracy.
+---
+
+A constant learning rate is rarely best. Large steps early make fast progress; small steps late let the parameters settle into a good region instead of bouncing around it. Three shapes recur in the winning solutions.
+
+**Linear warm-up.** Start from a tiny rate and increase linearly to the peak over the first few hundred steps or epochs. At initialisation, Adam's second-moment estimates are unreliable and gradients can be large; warm-up avoids early steps that wreck pretrained weights.
+
+**Cosine decay.** After warm-up, follow half a cosine from the peak $\eta_{\max}$ to a floor $\eta_{\min}$:
+
+$$
+\eta(t) = \eta_{\min} + \tfrac{1}{2}(\eta_{\max}-\eta_{\min})\left(1+\cos\frac{\pi\,(t - t_w)}{T - t_w}\right), \qquad t_w \le t \le T.
+$$
+
+The curve is flat near the peak, falls fastest in the middle, and flattens again near the end.
+
+<Plot series={[{fn: "cosine-warmup", params: {warmup: 0.05, min: 0.02}, label: "5% warm-up, cosine to 2% of peak"}, {fn: "cosine-warmup", params: {warmup: 0.2, min: 0}, label: "20% warm-up, cosine to zero"}]} x={[0, 1]} y={[0, 1.05]} xLabel="fraction of training" yLabel="learning rate / peak" caption="Two warm-up plus cosine schedules." />
+
+**One-cycle.** Rise to the peak over a fixed fraction of training (for example the first 5%) and then anneal to nearly zero. The Ribonanza winners used this with a peak of $2.5\times10^{-3}$.
+
+Reduce-on-plateau schedules, which lower the rate when the validation score stops improving, appear in older solutions such as the 2019 pneumothorax winner.
+
+The peak learning rate interacts with batch size: larger batches give less noisy gradients and usually tolerate larger rates. When a report quotes "lr = 1e-3 with an effective batch of 32", both numbers matter for reproducing the result.

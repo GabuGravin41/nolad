@@ -1,0 +1,36 @@
+---
+id: detection-basics
+title: Object and point detection: IoU, NMS and heatmaps
+kind: ml
+summary: Detectors predict many candidate locations with confidences, then suppress duplicates. Point detectors do the same for object centres, using a distance-based similarity in place of box overlap.
+---
+
+### Boxes and IoU
+
+A box detector outputs, for many candidate positions, a class probability and box coordinates. A prediction matches a true box if their **intersection over union** exceeds a threshold, typically 0.5.
+
+### Non-maximum suppression
+
+Neighbouring positions detect the same object. **Non-maximum suppression (NMS)** sorts predictions by confidence, keeps the most confident, deletes every remaining prediction that overlaps it by more than a threshold, and repeats. **Weighted box fusion (WBF)** instead averages overlapping boxes, weighting by confidence, which suits ensembles: boxes that several models agree on become one confident box.
+
+### Heatmap-based point detection
+
+When objects of a class share a size (protein complexes in a tomogram, aneurysms reduced to a centre point), boxes carry no information. The model can instead predict, at every voxel, the probability that an object centre lies there. Training targets are either single voxels or Gaussian blobs around each centre,
+
+$$
+H(\mathbf{x}) = \exp\!\left(-\frac{\lVert \mathbf{x}-\mathbf{c}\rVert^2}{2\sigma^2}\right),
+$$
+
+and inference takes local maxima of the predicted map (a max-pooling comparison acts as NMS).
+
+### Offsets and point "IoU"
+
+A detector that predicts at stride 2 (half resolution) can still localise precisely by also predicting, at each output cell, a 3D offset from the cell to the object centre. Matching predictions to ground truth needs a similarity between two points in place of box IoU. The CZII winners used the keypoint similarity from human-pose estimation,
+
+$$
+\mathrm{OKS}(\mathbf{p},\mathbf{g}) = \exp\!\left(-\frac{\lVert\mathbf{p}-\mathbf{g}\rVert^2}{2r^2}\right),
+$$
+
+where $r$ is the particle radius. It is 1 at the centre and falls to $e^{-1/8}\approx 0.88$ at half a radius, which is exactly the competition's correctness radius.
+
+<Plot series={[{fn: "oks", params: {r: 1}, label: "OKS with radius r = 1"}]} x={[0, 3]} y={[0, 1]} xLabel="distance from the true centre, in radii" yLabel="similarity" markers={[{x: 0.5, label: "scoring radius 0.5 r"}]} />

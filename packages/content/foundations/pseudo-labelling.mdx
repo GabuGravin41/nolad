@@ -1,0 +1,34 @@
+---
+id: pseudo-labelling
+title: Pseudo-labelling and knowledge distillation
+kind: ml
+summary: A trained model labels unlabelled data, and a new model trains on those labels. When done carefully this transfers what an ensemble knows into more data and into smaller models.
+---
+
+### The procedure
+
+1. Train a model (usually an ensemble) on the labelled data.
+2. Predict on unlabelled data: the test set, extra public data, or unlabelled recordings from the same source.
+3. Add those examples to training with the predictions as targets, often as soft probabilities rather than hard labels.
+4. Train a new model on the enlarged set, and optionally repeat.
+
+### Why it works
+
+The new model sees inputs from the target distribution (test-time scanners, test-time recording sites) that the labelled data lacked. The soft targets also carry information about which classes are confusable. In BirdCLEF 2024, pseudo-labelling the unlabelled soundscapes, recorded at the same sites as the test data, gave the winners one of their largest single gains (private AUC 0.615 to 0.640).
+
+### Why it can fail
+
+The model learns its own mistakes. Safeguards used by winners:
+
+- Use an **ensemble** to generate labels, so individual models' errors average out.
+- Keep only **confident** pseudo-labels, or give pseudo-labelled data a lower weight.
+- Mix pseudo-labels with the original labels: Chris Deotte's HMS model used $0.1\times$ the original vote distribution plus $0.3\times$ each of three models' predictions.
+- Never validate on pseudo-labelled data.
+
+### Label correction on external data
+
+External datasets often use different label definitions. The APTOS winner trained on IDRiD and Messidor after averaging their labels with his own model's predictions, which aligned their grading conventions with the competition's. The pneumothorax third-place solution kept only CheXpert positives that his model also predicted positive.
+
+### Distillation
+
+**Knowledge distillation** trains a small "student" model on the outputs of a large "teacher". It is pseudo-labelling on the training data itself, with the aim of compressing an ensemble into one model that fits a deployment budget. The fifth-place ASL fingerspelling solution used it for that reason.

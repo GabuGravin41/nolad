@@ -1,0 +1,24 @@
+---
+id: weight-averaging
+title: Exponential moving averages and stochastic weight averaging
+kind: ml
+summary: Averaging a model's weights over the course of training gives a model that generalises better and is less sensitive to the exact stopping point.
+---
+
+### EMA
+
+Keep a second copy of the weights that trails the training weights:
+
+$$
+\theta^{\text{EMA}}_t = \alpha\,\theta^{\text{EMA}}_{t-1} + (1-\alpha)\,\theta_t, \qquad \alpha \approx 0.999 .
+$$
+
+Use $\theta^{\text{EMA}}$ for validation and inference. Because SGD bounces around a minimum, the average of recent iterates usually sits nearer its centre than any single iterate, and it changes smoothly, so validation curves are less noisy.
+
+### SWA
+
+**Stochastic weight averaging** (Izmailov et al., 2018) averages checkpoints taken at intervals late in training, often with a constant or cyclic learning rate. The average tends to lie in a wide, flat region of the loss surface, and flat minima generalise better than sharp ones. The Vesuvius winners adopted SWA because their checkpoints were inconsistent from epoch to epoch and picking one was a gamble.
+
+### Checkpoint averaging and merging
+
+The same idea at larger scale: the pneumothorax winner averaged the predictions of the top three checkpoints per fold; the NemoSkills team averaged the weights of checkpoints from different stages of fine-tuning and then linearly merged a chain-of-thought model with a tool-use model. Linear interpolation of weights works when the models share an initialisation, because their solutions lie in a connected low-loss region.

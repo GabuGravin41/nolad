@@ -1,0 +1,40 @@
+---
+id: models-and-loss
+title: Models, parameters and loss functions
+kind: ml
+summary: A trained network is a function with adjustable numbers inside it. Training chooses those numbers to make a loss function small on the training data.
+---
+
+A **model** is a function $f_\theta$ that maps an input $x$ (an image, a signal, a sequence) to an output $\hat y = f_\theta(x)$ (a probability, a mask, a number). The vector $\theta$ collects the model's **parameters**: every weight and bias inside it. A small convolutional network has a few million parameters; the language models in the AIMO report have fourteen billion. Nothing else about the model changes during training.
+
+A **loss function** $\ell(\hat y, y)$ measures how far a prediction $\hat y$ is from the correct answer $y$. It is small when the prediction is good and large when it is bad. Given a training set $\{(x_i, y_i)\}_{i=1}^{N}$, training searches for
+
+$$
+\theta^\star = \arg\min_{\theta} \; \frac{1}{N}\sum_{i=1}^{N} \ell\big(f_\theta(x_i), y_i\big).
+$$
+
+The average on the right is the **empirical risk**. Minimising it is called empirical risk minimisation. The quantity we care about is the loss on data the model has never seen, the **expected risk**
+
+$$
+R(\theta) = \mathbb{E}_{(x,y)\sim \mathcal{D}}\,\ell\big(f_\theta(x), y\big),
+$$
+
+where $\mathcal{D}$ is the distribution that produces real cases. The empirical risk estimates $R(\theta)$, and the estimate is only good when the training data resemble the cases the model will meet. A model that drives the empirical risk far below $R(\theta)$ has **overfitted**: it has memorised features of the training set that do not recur.
+
+### Three things that are easy to confuse
+
+- The **loss** is what the optimiser minimises. It must be differentiable in $\theta$ almost everywhere, because training uses gradients.
+- The **metric** is what the competition, or the clinic, scores. It is often not differentiable (accuracy, AUC, F-score, kappa), so it cannot be optimised directly. Much of the craft in these reports is choosing a loss whose minimum sits close to the metric's maximum.
+- The **decision rule** turns a model output into an action, such as "flag this scan if $\hat p > 0.3$". The threshold is chosen after training and can matter as much as the model.
+
+### Why probabilities
+
+Most models in these reports output probabilities rather than hard labels. A probability can be ranked (for AUC), thresholded later (for F-scores), averaged with other models (for ensembles) and calibrated. Losses built from the likelihood of the data, such as binary cross-entropy, train models whose outputs behave like probabilities when the model is well specified.
+
+### Generalisation in practice
+
+Three habits recur in every winning solution:
+
+1. **Hold out data that the model never trains on** and measure the metric there (validation). Split by patient, subject or experiment, never by image, so that near-duplicates cannot leak.
+2. **Regularise**: augmentation, dropout, weight decay and early stopping all make memorisation harder.
+3. **Average**: ensembles of models trained differently make errors that partly cancel.

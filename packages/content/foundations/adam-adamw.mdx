@@ -1,0 +1,66 @@
+---
+id: adam-adamw
+title: Momentum, Adam and AdamW
+kind: ml
+summary: Adam keeps running averages of each parameter's gradient and squared gradient, so every parameter gets its own step size. AdamW applies weight decay separately from that scaling.
+---
+
+### Momentum
+
+Plain SGD follows the current mini-batch gradient, which is noisy. **Momentum** keeps an exponentially weighted average of past gradients and steps along it:
+
+$$
+m_t = \beta\, m_{t-1} + (1-\beta)\, g_t, \qquad \theta_{t+1} = \theta_t - \eta\, m_t .
+$$
+
+With $\beta = 0.9$, $m_t$ averages roughly the last $1/(1-\beta) = 10$ gradients. Components that keep the same sign accumulate; components that flip sign cancel. The optimiser moves faster along consistent directions and damps oscillation across steep valleys.
+
+### Adam
+
+Parameters differ in scale. A bias in the last layer and a weight in the first convolution can have gradients that differ by orders of magnitude, and one global learning rate suits neither. **Adam** (Kingma and Ba, 2015) keeps two averages per parameter:
+
+$$
+m_t = \beta_1 m_{t-1} + (1-\beta_1)\, g_t, \qquad
+v_t = \beta_2 v_{t-1} + (1-\beta_2)\, g_t^2 ,
+$$
+
+where $g_t^2$ is squared element by element. $m_t$ estimates the mean gradient and $v_t$ its uncentred second moment.
+
+<Deep title="Why Adam divides by 1 − βᵗ (bias correction)" kind="math">
+
+Both averages start at zero. Unrolling the recursion for $m_t$,
+
+$$
+m_t = (1-\beta_1)\sum_{s=1}^{t}\beta_1^{\,t-s} g_s .
+$$
+
+If the gradients have a stationary mean $\mathbb{E}[g_s] = \mu$, then
+
+$$
+\mathbb{E}[m_t] = (1-\beta_1)\,\mu \sum_{s=1}^{t}\beta_1^{\,t-s} = (1-\beta_1)\,\mu\,\frac{1-\beta_1^{\,t}}{1-\beta_1} = \mu\,(1-\beta_1^{\,t}).
+$$
+
+Early in training $\beta_1^t$ is not small, so $m_t$ underestimates $\mu$. Dividing by $1-\beta_1^t$ removes the bias:
+
+$$
+\hat m_t = \frac{m_t}{1-\beta_1^{\,t}}, \qquad \hat v_t = \frac{v_t}{1-\beta_2^{\,t}} .
+$$
+</Deep>
+
+The update is
+
+$$
+\theta_{t+1} = \theta_t - \eta\,\frac{\hat m_t}{\sqrt{\hat v_t} + \epsilon}.
+$$
+
+The ratio $\hat m_t / \sqrt{\hat v_t}$ is roughly scale-free: multiplying a parameter's gradients by 100 changes both numerator and denominator by 100. Each parameter therefore takes steps of size about $\eta$ when its gradient is consistent, and smaller steps when it is noisy. Typical values are $\beta_1 = 0.9$, $\beta_2 = 0.999$, $\epsilon = 10^{-8}$.
+
+### Weight decay and AdamW
+
+**Weight decay** shrinks weights towards zero each step, $\theta \leftarrow \theta - \eta\lambda\theta$, which discourages large weights and reduces overfitting. For plain SGD this is identical to adding $\tfrac{\lambda}{2}\lVert\theta\rVert^2$ to the loss. For Adam it is not: if the penalty's gradient $\lambda\theta$ is added to $g_t$, it is then divided by $\sqrt{\hat v_t}$, so parameters with large gradients are barely regularised. **AdamW** (Loshchilov and Hutter, 2019) applies the decay directly to the weights, outside the adaptive scaling:
+
+$$
+\theta_{t+1} = \theta_t - \eta\left(\frac{\hat m_t}{\sqrt{\hat v_t}+\epsilon} + \lambda\,\theta_t\right).
+$$
+
+Almost every solution in these reports trains with AdamW. Variants such as Ranger, RAdam, Adan and Lion appear occasionally; they change how the step is scaled or stabilised, not the principle.

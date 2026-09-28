@@ -1,0 +1,60 @@
+---
+id: binary-cross-entropy
+title: Sigmoid outputs and binary cross-entropy
+kind: math
+summary: For a yes/no label, the model outputs a probability through a sigmoid and is trained by maximising the likelihood of the observed labels. The resulting loss is binary cross-entropy, also called log loss.
+---
+
+### From a score to a probability
+
+A network's last layer produces an unbounded real number $z$, the **logit**. The **sigmoid** maps it into $(0,1)$:
+
+$$
+p = \sigma(z) = \frac{1}{1+e^{-z}} .
+$$
+
+Its inverse is the log-odds, $z = \log\frac{p}{1-p}$, so the logit is literally the logarithm of the odds that the label is positive.
+
+<Plot series={[{fn: "sigmoid", label: "σ(z)"}]} x={[-8, 8]} y={[0, 1]} xLabel="logit z" yLabel="probability p" markers={[{x: 0, label: "p = 0.5"}]} />
+
+### From likelihood to loss
+
+Model the label $y \in \{0,1\}$ as a Bernoulli random variable with success probability $p$. The probability of observing $y$ is
+
+$$
+P(y \mid p) = p^{\,y}(1-p)^{1-y},
+$$
+
+which equals $p$ when $y=1$ and $1-p$ when $y=0$. For $N$ independent examples, the likelihood of all labels is the product $\prod_i p_i^{y_i}(1-p_i)^{1-y_i}$. Maximising a product is awkward; its logarithm turns it into a sum and has the same maximiser. Maximising the log-likelihood is the same as minimising its negative, averaged over examples:
+
+$$
+\mathcal{L}_{\text{BCE}} = -\frac{1}{N}\sum_{i=1}^{N}\Big[\,y_i\log p_i + (1-y_i)\log(1-p_i)\Big].
+$$
+
+This is **binary cross-entropy (BCE)**, or **log loss**. Several RSNA competitions use it, weighted, as the leaderboard metric.
+
+<Plot series={[{fn: "bce-pos", label: "loss when y = 1: −log p"}, {fn: "bce-neg", label: "loss when y = 0: −log(1 − p)"}]} x={[0.001, 0.999]} y={[0, 5]} xLabel="predicted probability p" yLabel="loss" caption="Log loss is small for confident correct predictions and grows without bound for confident wrong ones." />
+
+### What the loss rewards
+
+Consider many examples that look identical to the model, of which a fraction $\pi$ are positive. If the model predicts the same $q$ for all of them, the expected loss is
+
+$$
+L(q) = -\big[\pi\log q + (1-\pi)\log(1-q)\big].
+$$
+
+Setting $\frac{dL}{dq} = -\frac{\pi}{q} + \frac{1-\pi}{1-q} = 0$ gives $q = \pi$. Log loss is minimised by predicting the true frequency: it is a **proper scoring rule**, and it trains outputs that are calibrated probabilities. It also punishes overconfidence severely. Predicting $q = 0.001$ for an example that turns out positive costs $-\log 0.001 \approx 6.9$, as much as about ten confident correct predictions earn back. This is why competitions scored by log loss reward averaging, label smoothing and clipping predictions away from 0 and 1.
+
+### The gradient
+
+With respect to the logit, the gradient is (see the worked example under gradient descent)
+
+$$
+\frac{\partial \ell}{\partial z} = p - y .
+$$
+
+In PyTorch, `BCEWithLogitsLoss` takes $z$ rather than $p$ and computes the loss in a numerically stable way, which is why solutions pass raw logits to the loss.
+
+### Multi-label problems
+
+When several labels can be true at once (a CT slice can show both subdural and subarachnoid haemorrhage), each label gets its own logit and its own sigmoid, and the losses are summed. This differs from softmax classification, where exactly one class is true.
