@@ -1,0 +1,67 @@
+---
+slug: test-report
+title: Test report
+shortTitle: Test
+kaggleSlug: test
+kaggleUrl: https://www.kaggle.com/competitions/test
+year: 2024
+dates: { start: "2024-01-01", end: "2024-02-01" }
+host: Test host
+collection: medicine
+field: Radiology
+modality: [CT]
+tasks: [classification]
+techniques: [ct-windowing, 2-5d-slices]
+metric: { name: "Log loss", summary: "x" }
+constraints: { runtime: "9 h", hardware: "2 × T4", internet: false }
+summary: A test.
+winningIdea: An idea.
+solutions:
+  - rank: 1
+    team: Team
+    writeup: https://www.kaggle.com/x
+deployability:
+  score: 4
+  verdict: Fine.
+  inference: fast
+  models: one
+  training: small
+  externalData: none
+  licences: { code: MIT, data: "Competition use", weights: "n/a" }
+priority: 99
+updated: "2026-09-28"
+---
+
+## Heading one
+
+Inline math $a^2+b^2=c^2$ and $\frac{a}{b}$ and $x<y$ and $\{1,2\}$ and display:
+
+$$
+\sum_{i=1}^{N} w_i \frac{1}{N} \quad a < b
+$$
+
+
+$$
+\mathcal{L}(p) = -\left[y \log p + (1-y)\log(1-p)\right]
+$$
+
+<Deep title="Why" kind="math">
+Derivation with $\sigma(z)$.
+</Deep>
+
+<Pipeline steps={[{title: "Load", detail: "DICOM"}, {title: "Window", tag: "prep"}]} caption="Pipeline" />
+
+<Plot series={[{fn: "window", params: {c: 40, w: 80}, label: "brain"}]} x={[-100, 200]} y={[0, 1]} xLabel="HU" yLabel="intensity" />
+
+<Bars data={[["a", 0.9], ["b", 0.8]]} domain={[0.7, 1]} highlight="a" />
+
+```python title="train.py"
+def f(x):
+    return x + 1
+```
+
+<Foundation id="missing" />
+
+| a | b |
+|---|---|
+| 1 | 2 |

@@ -1,0 +1,11 @@
+{
+  "name": "@nolad/content",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reports, foundations and structured metadata for Nolad. Plain MDX + TypeScript, no build step.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "scripts": {
+    "check": "node scripts/check-content.mjs"
+  }
+}

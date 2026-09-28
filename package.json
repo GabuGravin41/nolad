@@ -1,0 +1,19 @@
+{
+  "name": "nolad",
+  "private": true,
+  "description": "Nolad — Nothing Lost After Deadline. Documented, deployable machine learning solutions from Kaggle competitions. A Hausdorff Space project.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w web",
+    "build": "npm run build -w web",
+    "start": "npm run start -w web",
+    "lint": "npm run lint -w web",
+    "check:content": "npm run check -w @nolad/content"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  }
+}
