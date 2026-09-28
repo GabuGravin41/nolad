@@ -1,0 +1,285 @@
+---
+slug: rsna-2023-abdominal-trauma-detection
+title: "RSNA 2023 Abdominal Trauma Detection: organ crops, soft slice labels and metric-aware scaling"
+shortTitle: RSNA Abdominal Trauma
+kaggleSlug: rsna-2023-abdominal-trauma-detection
+kaggleUrl: https://www.kaggle.com/competitions/rsna-2023-abdominal-trauma-detection
+year: 2023
+dates: { start: "2023-07-26", end: "2023-10-15" }
+host: RSNA with the American Society of Emergency Radiology (ASER) and the Society of Abdominal Radiology (SAR)
+collection: medicine
+field: Emergency and trauma radiology
+modality: [Contrast-enhanced abdominal CT]
+tasks: [multi-class classification per organ]
+techniques:
+  - localisation-then-classification
+  - semantic-segmentation
+  - ct-windowing
+  - 2-5d-slices
+  - 3d-volumes
+  - cnn-backbones
+  - vision-transformers
+  - sequence-models
+  - auxiliary-losses
+  - hierarchical-labels
+  - soft-labels
+  - imbalance-handling
+  - grouped-cv
+  - ensembling
+metric:
+  name: Weighted log loss over injury types
+  summary: "Mean of sample-weighted log losses for bowel injury, active extravasation, kidney, liver and spleen injury (healthy, low or high grade), and a derived 'any injury' label; injured classes carry weights from 2 to 6."
+constraints: { runtime: "Code competition: notebook inference in at most 9 hours", hardware: "Kaggle CPU or GPU notebook", internet: false }
+summary: "Detect and grade injuries to the liver, spleen, kidneys and bowel, and active bleeding, in abdominal CT scans of trauma patients. The winning team segmented the organs in 3D, cropped each organ, and trained 2.5D CNN-GRU models whose slice labels were weighted by how much of the organ each slice shows, with an auxiliary segmentation loss; the ensemble's probabilities were then rescaled per class to match the metric's weights."
+winningIdea: "Crop each organ from a 3D segmentation, give every slice a soft label proportional to how much of the organ it contains, train a 2.5D CNN with a GRU and an auxiliary Dice loss, take the maximum over slices, and rescale class probabilities to the metric's weights."
+solutions:
+  - rank: 1
+    team: Team Oxygen
+    members:
+      - { name: "Nischay Dhankhar" }
+      - { name: "Harshit Sheoran" }
+      - { name: "Qishen Ha" }
+    writeup: https://www.kaggle.com/competitions/rsna-2023-abdominal-trauma-detection/writeups/team-oxygen-1st-place-solution-team-oxygen
+    note: "GitHub repository and inference notebook linked from the write-up."
+  - rank: 2
+    team: Theo Viel
+    members: [{ name: "Theo Viel", handle: "theoviel" }]
+    writeup: https://www.kaggle.com/competitions/rsna-2023-abdominal-trauma-detection/writeups/on-strike-2nd-place-solution
+    code:
+      - { label: "Training code", url: "https://github.com/TheoViel/kaggle_rsna_abdominal_trauma" }
+      - { label: "Inference notebook", url: "https://www.kaggle.com/code/theoviel/rsna-abdominal-inf" }
+deployability:
+  score: 4
+  verdict: "The second-place solution runs without ensembling in under four hours for the whole test set, and its best private score came from a single pipeline. All components are standard (3D ResNet-18 for cropping, 2D CNNs and transformers, a small recurrent aggregator), and the outputs map onto the organ injury grades a trauma radiologist reports."
+  inference: "Per study: a 3D segmentation or cropping model, 2.5D slice models over each organ crop, and a recurrent aggregator; seconds to tens of seconds per study on a GPU."
+  models: "Winner: CoaT-Lite Medium, CoaT-Lite Small and EfficientNetV2-S, each with a GRU, over 4 folds, plus 3D segmentation. Runner-up: MaxViT, ConvNeXt-V2 and CoAtNet slice models, a 3D ResNet-18 cropper and an LSTM aggregator."
+  training: "Several GPU-days for the ensembles; single models train on one GPU."
+  externalData: "None; organ masks for part of the training set were provided by the organisers (derived with TotalSegmentator)."
+  licences:
+    code: "Public repositories for both top solutions (see each repository's licence)."
+    data: "RSNA competition data terms (non-commercial research)."
+    weights: "See the repositories."
+  risks:
+    - "Bowel injury and active extravasation are rare, small and variable in location; their predictions are the least reliable."
+    - "Trauma CT protocols vary (arterial and portal venous phases, delayed scans); a new site's protocol must be validated."
+    - "High-grade injuries are rare in training; the model's calibration for them is uncertain."
+related:
+  - rsna-2022-cervical-spine-fracture-detection
+  - rsna-str-pulmonary-embolism-detection
+  - rsna-intracranial-hemorrhage-detection
+  - uw-madison-gi-tract-image-segmentation
+papers:
+  - { label: "Wasserthal J. et al. (2023). TotalSegmentator: robust segmentation of 104 anatomic structures in CT images. Radiology: Artificial Intelligence.", url: "https://doi.org/10.1148/ryai.230024" }
+  - { label: "Xu W. et al. (2021). Co-Scale Conv-Attentional Image Transformers (CoaT).", url: "https://arxiv.org/abs/2104.06399" }
+  - { label: "Tu Z. et al. (2022). MaxViT: Multi-Axis Vision Transformer.", url: "https://arxiv.org/abs/2204.01697" }
+dataLinks:
+  - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/rsna-2023-abdominal-trauma-detection/data" }
+priority: 17
+updated: "2026-09-28"
+---
+
+## The problem in its field
+
+Traumatic injury causes more than five million deaths worldwide each year. Blunt abdominal trauma, most often from road traffic accidents, can injure solid organs (liver, spleen, kidneys) and the bowel without any visible wound, and the clinical examination is often unreliable, especially in unconscious or intoxicated patients. **Contrast-enhanced CT** is therefore the standard test for stable trauma patients.
+
+The radiologist must find and grade each organ injury quickly, because the grade guides treatment: many solid-organ injuries are managed by observation, while high-grade injuries and active bleeding need angiographic embolisation or surgery.
+
+<Deep title="What the labels mean clinically" kind="domain">
+
+- **Liver, spleen, kidney: healthy, low grade or high grade.** Injury grading follows the AAST (American Association for the Surgery of Trauma) organ injury scales, which describe lacerations (tears), haematomas (collections of blood) and vascular injury by size and depth. The competition collapses the scale into low and high grade.
+- **Bowel injury.** Perforation or wall injury of the intestine or its mesentery. It is subtle on CT (free fluid, wall thickening, small amounts of free air) and dangerous when missed because it leads to peritonitis.
+- **Active extravasation.** Contrast leaking out of a vessel into surrounding tissue: a sign of ongoing bleeding. On CT it appears as a bright blush or jet with density similar to that of contrast in the arteries, often growing on delayed images. It may occur anywhere in the abdomen and pelvis, not only in the labelled organs.
+
+A single patient can have several injuries. "Any injury" is positive if at least one is present.
+</Deep>
+
+<Foundation id="ct-hounsfield-windowing" />
+
+## The data
+
+The RSNA collected abdominal CT studies from trauma centres, annotated by radiologists from ASER and SAR. Each patient may have one or two CT series. Labels are per patient:
+
+- `bowel`: healthy or injury
+- `extravasation`: healthy or injury
+- `kidney`, `liver`, `spleen`: healthy, low or high
+
+Additional annotations for subsets: organ **segmentation masks** (derived with TotalSegmentator), **image-level labels** marking which slices show bowel injury or extravasation for some series, and bounding boxes for extravasation contributed by Ian Pan.
+
+<Foundation id="dicom-and-volumes" />
+
+## The metric
+
+For each injury type, a sample-weighted log loss is computed, and the final score is the mean over types, including an **any injury** label derived from the submitted probabilities. The weights for the true class are:
+
+| Label | Weight |
+| --- | --- |
+| Any healthy class | 1 |
+| Low-grade solid organ | 2 |
+| High-grade solid organ | 4 |
+| Bowel injury | 2 |
+| Extravasation | 6 |
+| Any injury | 6 |
+
+The metric notebook derives the "any injury" probability from the submission itself, from the injury probabilities of the individual types; it is not submitted separately. Predictions for each organ are normalised to sum to one across its classes before scoring.
+
+<Foundation id="weighted-log-loss" />
+
+<Foundation id="softmax-cross-entropy" />
+
+<Deep title="The optimal submission under class weights" kind="math">
+
+For one organ with classes $k = 1..K$ (healthy, low, high), let $q_k$ be the true probability of class $k$ given the image and $w_k$ the weight when class $k$ is true. Sample-weighted log loss over many patients converges to
+$$
+\frac{\sum_k w_k\, q_k\,(-\log p_k)}{\sum_k w_k\, q_k}
+$$
+in expectation over patients with the same $q$ (up to a normalisation that, over a dataset, does not depend on $p$). Minimise the numerator $R(p) = -\sum_k w_k q_k \log p_k$ subject to $\sum_k p_k = 1$. With a Lagrange multiplier $\mu$:
+$$
+\frac{\partial}{\partial p_k}\Big[-\textstyle\sum_j w_j q_j \log p_j + \mu\big(\sum_j p_j - 1\big)\Big] = -\frac{w_k q_k}{p_k} + \mu = 0
+\;\Rightarrow\; p_k = \frac{w_k q_k}{\mu}.
+$$
+Summing over $k$ gives $\mu = \sum_j w_j q_j$, so
+$$
+p_k^* = \frac{w_k\, q_k}{\sum_j w_j\, q_j}.
+$$
+The optimal submission multiplies each calibrated class probability by its weight and renormalises. For the liver, with $w = (1, 2, 4)$, a model that believes $q = (0.9, 0.07, 0.03)$ should submit $p \propto (0.9, 0.14, 0.12)$, that is $(0.776, 0.121, 0.103)$: the injured classes are inflated.
+
+A model trained with unweighted cross-entropy learns $q$. The winners tuned **per-class scaling factors** on out-of-fold predictions, which estimates the $w_k$ empirically and also corrects for imperfect calibration. The result is the same as the derivation predicts: injured-class probabilities go up.
+</Deep>
+
+## How the winning solution works
+
+Team Oxygen (Nischay Dhankhar, Harshit Sheoran and Qishen Ha; Qishen Ha had won the 2022 cervical spine competition) built a three-part system. Validation used 4-fold group K-fold by patient.
+
+<Pipeline steps={[
+  {tag: "Segment", title: "3D organ segmentation", detail: "masks for liver, spleen, kidneys, bowel"},
+  {tag: "Crop", title: "Crop each organ", detail: "96 slices resampled across the organ"},
+  {tag: "2.5D", title: "32 × 3-slice stacks", detail: "adjacent slices as channels; 384 × 384"},
+  {tag: "Model", title: "CNN/transformer + GRU", detail: "soft slice labels; auxiliary Dice loss"},
+  {tag: "Aggregate", title: "Max over slices", detail: "then per-class scaling"}
+]} caption="The winning pipeline for the solid organs." />
+
+<Foundation id="models-and-loss" />
+
+### Part 1: segmentation and cropping
+
+A 3D segmentation model trained on the provided masks predicts the organs for every study. The bounding box of each organ defines a crop. Within the crop, **96 equally spaced slices** are sampled and grouped into 32 stacks of three adjacent slices: a $32 \times 3 \times 384 \times 384$ tensor per organ. Images use a soft-tissue window. The team also used the preprocessed data that Theo Viel published during the competition.
+
+<Foundation id="unet" />
+
+### Part 2: soft slice labels
+
+The labels are per patient: "the liver has a high-grade injury". The model predicts per slice. Which slices should be positive? The winners assigned each slice a **soft label** proportional to how much of the organ it shows:
+$$
+\tilde y_s = y_{\text{patient}} \cdot \frac{a_s}{\max_{s'} a_{s'}},
+$$
+where $a_s$ is the number of organ pixels on slice $s$ in the segmentation mask. A slice through the middle of the liver, where the organ is largest, gets the full patient label; a slice through its tip gets a small fraction; a slice without liver gets 0.
+
+<Foundation id="soft-labels" />
+
+<Deep title="Why weight slice labels by organ area" kind="math">
+
+Suppose a patient has a liver laceration somewhere in the organ, location unknown. If injury location were uniform over the organ's volume, the probability that slice $s$ contains injury is proportional to the organ's area on that slice, $P(\text{injury on } s) \propto a_s$. The soft label $\tilde y_s = a_s/\max a$ is this probability rescaled so the largest slice has probability 1. It is a crude but principled prior: it avoids telling the model that a slice without any liver shows a liver injury, which a "copy the patient label to every slice" scheme does.
+
+Binary cross-entropy with a soft target $t \in [0,1]$ is minimised at $p = t$ (see the breast-cancer report for the derivation), so the slice model learns to output values that reflect both the evidence on the slice and how much of the organ it shows.
+
+**Aggregation by maximum.** The patient probability is $\max_s \sigma(z_s)$, the most confident slice. If any slice shows the injury, the maximum picks it up; slices without injury do not dilute it, which averaging would.
+</Deep>
+
+### Part 3: the model
+
+The backbone (CoaT-Lite Medium, CoaT-Lite Small or EfficientNetV2-S) encodes each of the 32 stacks; a **GRU** reads the sequence of 32 embeddings and outputs per-slice predictions. The CoaT (Co-Scale Conv-Attentional Transformer) models combine convolution and attention; CoaT-Lite Medium was the best single architecture, with an out-of-fold score of 0.326 over four folds.
+
+<Foundation id="attention-transformers" />
+
+<Foundation id="recurrent-networks" />
+
+**Auxiliary segmentation.** Two small mask heads, on the outputs of the last and second-last encoder blocks, predict the organ masks and are trained with a Dice loss:
+$$
+\mathcal{L} = \mathcal{L}_{\text{BCE}}(\text{slice labels}) + 0.125\,\big(\mathcal{L}_{\text{Dice}}^{(1)} + \mathcal{L}_{\text{Dice}}^{(2)}\big).
+$$
+Each head is Conv3×3(128)–BN–ReLU–Conv3×3(128)–BN–ReLU–Conv1×1(4). The team reports that the auxiliary loss improved the score by 0.01–0.03. Forcing the encoder to delineate the organs makes its features attend to the organ rather than to unrelated anatomy, which matters when the classification label is weak and patient-level.
+
+<Foundation id="dice-and-overlap" />
+
+<Deep title="The multi-task head" kind="code">
+
+A Nolad illustration of the auxiliary mask head and the combined loss as described in the write-up.
+
+```python
+import torch, torch.nn as nn
+
+def mask_head(c_in, n_masks=4):
+    return nn.Sequential(
+        nn.Conv2d(c_in, 128, 3, padding=1), nn.BatchNorm2d(128), nn.ReLU(inplace=True),
+        nn.Conv2d(128, 128, 3, padding=1),  nn.BatchNorm2d(128), nn.ReLU(inplace=True),
+        nn.Conv2d(128, n_masks, 1),
+    )
+
+def soft_dice_loss(logits, target, eps=1.0):
+    p = logits.sigmoid()
+    inter = (p * target).sum((-2, -1))
+    denom = p.sum((-2, -1)) + target.sum((-2, -1))
+    return 1 - ((2 * inter + eps) / (denom + eps)).mean()
+
+def total_loss(slice_logits, slice_soft_labels, m1, m2, masks):
+    bce = nn.functional.binary_cross_entropy_with_logits(slice_logits, slice_soft_labels)
+    return bce + 0.125 * (soft_dice_loss(m1, masks) + soft_dice_loss(m2, masks))
+```
+</Deep>
+
+Training: AdamW with learning rates between $10^{-4}$ and $4\times10^{-4}$, cosine decay with warm-up; augmentation with perspective transforms, horizontal and vertical flips and rotation up to 25°.
+
+### Bowel and extravasation
+
+A separate 2D CNN-GRU model handles bowel injury and extravasation, using the slice-level labels available for some series. Extravasation is not confined to one organ, so it cannot be cropped the same way.
+
+### Ensembling and scaling
+
+Slice-level predictions were averaged within folds for each architecture; patient probabilities came from the maximum over slices; architectures were then combined. Finally, per-class **scaling factors** tuned on out-of-fold predictions adjusted the probabilities to the metric's weights, as derived above. The best ensemble reached an out-of-fold score of about 0.31.
+
+<Foundation id="ensembling-tta" />
+
+## Second place: a strong single pipeline
+
+Theo Viel, working alone, reached second place, and his best private score came from a single pipeline rather than an ensemble.
+
+**Preprocessing and speed.** Images resized so the longest edge is 512, centre-cropped to 384; every second slice kept, up to 600 slices; DICOM decoding with dicomsdl and processing on the GPU. Without ensembling, the whole test set runs in under four hours.
+
+**Stage 1: 2D slice models.** An organ-presence model (EfficientNetV2) finds which slices contain which organ. Slice classifiers on three adjacent slices predict 11 outputs (bowel and extravasation with binary cross-entropy; liver, spleen and kidney as three-class cross-entropy). Slices are sampled carefully: for an organ label, a random slice inside that organ; for positive bowel and extravasation, a slice marked positive; for negative extravasation, any slice. MaxViT-tiny at 512 worked best, with heavy augmentation and CutMix.
+
+<Foundation id="data-augmentation" />
+
+**Crop models.** A 3D ResNet-18 locates each organ; a 2D CNN with a recurrent layer reads 11 slices of the crop. CoAtNet-1 was the best backbone.
+
+**Stage 2: the aggregator.** A separate recurrent network is trained to optimise the metric directly. Its input, per slice (sequences resized to 200), is the concatenation of the segmentation probabilities (5), the classification probabilities of all first-stage models, and their products. A dense layer and a bidirectional LSTM process the sequence; **organ-conditioned pooling** weights slices by the organ's segmentation probability, so the liver output only pools over liver slices; mean and max pooling are concatenated; each organ's logits are computed only from its relevant features.
+
+| Configuration | Public | Private |
+| --- | --- | --- |
+| 2D + RNN (ConvNeXt-V2) | 0.41 | 0.39 |
+| + crop models (MaxViT 2D; CoAtNet-RNN) | 0.37 | **0.35** |
+| Ensemble (3 × 2D + 8 × 2.5D) | 0.35 | 0.35 |
+
+What did not help: YOLOX detection with the extravasation boxes, a sequence head in stage 1 once the crop models were strong, and ensembling for the private score.
+
+## How this compares with the other RSNA CT competitions
+
+| Competition | Localisation | Slice-level supervision | Aggregation |
+| --- | --- | --- | --- |
+| Haemorrhage (2019) | none | slice labels given | GRU/LSTM over slices |
+| Pulmonary embolism (2020) | lung box | slice labels given | GRU with attention and max pooling |
+| Cervical spine (2022) | vertebra segmentation | vertebra labels; slices unlabelled | LSTM over 15 slices |
+| **Abdominal trauma (2023)** | organ segmentation | soft labels from organ area | GRU, then max over slices; learned aggregator |
+
+Trauma is the hardest of the four in its labels: patient-level only for most targets, several organs per study, three grades per organ, and extravasation that can occur anywhere. The soft area-weighted slice labels and organ-conditioned pooling are the new ideas that address this.
+
+## Compute and deployment
+
+| Setting | What the solution needs |
+| --- | --- |
+| Competition | 9-hour notebook; the runner-up's single pipeline takes under 4 hours for the test set. |
+| Hospital research group | One GPU; segmentation can use the public TotalSegmentator model. |
+| Trauma centre product | Multi-phase protocol support, sensitivity-focused thresholds for bleeding, and regulatory approval. |
+
+<Callout kind="deploy" title="The minimum useful version">
+TotalSegmentator (or a small 3D U-Net) to crop the liver, spleen and kidneys; one 2.5D CNN-GRU per organ with area-weighted soft slice labels and an auxiliary Dice head; max aggregation. Keep a separate whole-abdomen model for extravasation, and set its threshold for sensitivity, since missed active bleeding is the most dangerous error.
+</Callout>
