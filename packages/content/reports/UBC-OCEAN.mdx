@@ -1,0 +1,293 @@
+---
+slug: UBC-OCEAN
+title: "UBC-OCEAN (2023–24): ovarian cancer subtypes from a pathology foundation model and a simple MIL head"
+shortTitle: UBC-OCEAN Ovarian Cancer Subtyping
+kaggleSlug: UBC-OCEAN
+kaggleUrl: https://www.kaggle.com/competitions/UBC-OCEAN
+year: 2024
+dates: { start: "2023-10-06", end: "2024-01-03" }
+host: University of British Columbia, BC Cancer (OVCARE) and the OTTA consortium
+collection: medicine
+field: Gynaecological pathology
+modality: [Whole-slide images, Tissue microarrays]
+tasks: [multi-class classification, outlier detection]
+techniques:
+  - image-classification
+  - multiple-instance-learning
+  - wsi-tiling
+  - pretrained-embeddings
+  - self-supervised-pretraining
+  - vision-transformers
+  - imbalance-handling
+  - ensembling
+  - threshold-tuning
+  - grouped-cv
+metric:
+  name: Balanced accuracy
+  summary: "Mean recall over six classes: five subtypes plus 'Other' for rare subtypes that appear only in the test set."
+constraints: { runtime: "12 h", hardware: "Kaggle GPU notebook (P100)", internet: false }
+summary: "Classify ovarian carcinomas into five common subtypes, and flag rare 'other' subtypes never seen in training, from gigapixel pathology slides collected at more than 20 centres. Owkin's winning team extracted tile embeddings with their open pathology foundation model, Phikon, trained an ensemble of small CHOWDER multiple-instance models on top, and marked uncertain slides as 'Other' by the entropy of the prediction."
+winningIdea: "Let a pathology foundation model do the seeing and train only a tiny, interpretable multiple-instance head: 200 tiles per slide, 768-dimensional Phikon embeddings, CHOWDER top-and-bottom tile selection, 50 random initialisations per model, and an entropy threshold for outliers."
+solutions:
+  - rank: 1
+    team: Owkin
+    members:
+      - { name: "Jean-Baptiste Schiratti", handle: "jbschiratti" }
+      - { name: "Etienne Andrier", handle: "ea18o4" }
+      - { name: "ChristieRed", handle: "christiered" }
+      - { name: "Simon Jégou", handle: "simjeg" }
+    writeup: https://www.kaggle.com/competitions/UBC-OCEAN/writeups/owkin-1st-place-solution-owkin
+    code:
+      - { label: "Winning submission notebook", url: "https://www.kaggle.com/code/jbschiratti/winning-submission" }
+      - { label: "HistoSSLscaling (Chowder implementation)", url: "https://github.com/owkin/HistoSSLscaling" }
+      - { label: "Phikon model card", url: "https://huggingface.co/owkin/phikon" }
+  - rank: 2
+    team: zznznb
+    writeup: https://www.kaggle.com/competitions/UBC-OCEAN/writeups/zznznb-2nd-place-solution-ubc-ocean
+  - rank: 6
+    team: xdu-yyds
+    writeup: https://www.kaggle.com/competitions/UBC-OCEAN/writeups/xdu-yyds-3th-on-public-and-6th-on-private-a-very-s
+    note: "3rd public, 6th private: a large pretrained model with a simple head."
+  - rank: 7
+    team: m1dsolo
+    writeup: https://www.kaggle.com/competitions/UBC-OCEAN/writeups/m1dsolo-7th-place-solution
+  - rank: 8
+    team: forcewithme
+    writeup: https://www.kaggle.com/competitions/UBC-OCEAN/writeups/forcewithme-8th-place-solution-understanding-data-
+deployability:
+  score: 4
+  verdict: "Runs on one P100 in about 6 hours for the whole test set and trains in minutes once embeddings exist, but Phikon and the CHOWDER code carry Owkin's non-commercial licence, and cross-centre generalisation was visibly weaker than cross-validation suggested."
+  inference: "Tissue detection, tiling (≤200 tiles per WSI) and Phikon feature extraction dominate; the full hidden test set ran in under 7 hours on one P100, two slides at a time."
+  models: "Phikon ViT-Base as a frozen feature extractor; 65 CHOWDER heads averaged; logistic-regression calibration; an entropy threshold for 'Other'."
+  training: "CHOWDER heads train in minutes on precomputed embeddings; optional continued self-supervised pretraining of Phikon took 2.5 days on 2 P100s per epoch."
+  externalData: "None beyond Phikon's own pretraining on public TCGA slides."
+  licences:
+    code: "HistoSSLscaling under Owkin's non-commercial licence."
+    data: "UBC-OCEAN data; see the competition's citation and usage guidance."
+    weights: "Phikon released by Owkin for research use under a non-commercial licence."
+  risks:
+    - "Cross-validation balanced accuracy of 0.8–0.9 fell to about 0.66 on the private test set; the authors attribute part of the gap to new centres, staining and scanners."
+    - "The 'Other' threshold was tuned on the public leaderboard because no outliers were available for training."
+    - "Commercial use requires replacing the foundation model or obtaining a licence."
+related:
+  - prostate-cancer-grade-assessment
+  - hubmap-organ-segmentation
+  - isic-2024-challenge
+papers:
+  - { label: "Filiot et al. (2023). Scaling self-supervised learning for histopathology with masked image modeling (Phikon). medRxiv.", url: "https://www.medrxiv.org/content/10.1101/2023.07.21.23292757v1" }
+  - { label: "Courtiol et al. (2018). Classification and disease localization in histopathology using only global labels: a weakly-supervised approach (CHOWDER).", url: "https://arxiv.org/abs/1802.02212" }
+  - { label: "Zhou et al. (2021). iBOT: image BERT pre-training with online tokenizer.", url: "https://github.com/bytedance/ibot" }
+dataLinks:
+  - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/UBC-OCEAN/data" }
+priority: 8
+updated: "2026-09-28"
+---
+
+## The problem in its field
+
+Ovarian carcinoma is the most lethal cancer of the female reproductive system. It is not one disease: five common histological subtypes differ in their cells of origin, genetics, response to chemotherapy and prognosis.
+
+<Deep title="The five subtypes" kind="domain">
+
+| Code | Subtype | Notes |
+| --- | --- | --- |
+| HGSC | High-grade serous carcinoma | The most common and most lethal; often diagnosed late; strongly associated with TP53 mutations and, in some patients, BRCA1/2. |
+| CC | Clear-cell carcinoma | Cells with clear cytoplasm; associated with endometriosis; relatively resistant to standard chemotherapy. |
+| EC | Endometrioid carcinoma | Resembles endometrial tissue; associated with endometriosis. |
+| LGSC | Low-grade serous carcinoma | Slow-growing, often in younger patients, less responsive to chemotherapy. |
+| MC | Mucinous carcinoma | Mucin-producing cells; must be distinguished from metastases from the gut. |
+
+Subtype-specific treatment is becoming more common, so correct subtyping is increasingly important. Pathologists disagree on a substantial minority of cases, and underserved regions often lack a gynaecological pathologist altogether. The competition also held out **rare subtypes** ("Other"), which appear only in the test set.
+</Deep>
+
+<Foundation id="digital-pathology" />
+
+## The data
+
+The organisers assembled what they describe as the most extensive and diverse ovarian cancer histopathology dataset available, from more than 20 centres on four continents. Two image types:
+
+- **Whole-slide images (WSIs)**, mostly scanned at 20×, often tens of thousands of pixels on a side.
+- **Tissue microarrays (TMAs)**, small cores scanned at 40×; only 25 in the training set, but a large share of the test set.
+
+Each image carries one label. For some training images, rough tumour annotations were provided. All images were released as large **PNG** files, without the pyramid structure of standard slide formats and without the microns-per-pixel metadata. Loading one with ordinary libraries could exhaust a notebook's memory.
+
+## The metric
+
+**Balanced accuracy** is the average of per-class recall:
+
+$$
+\mathrm{BA} = \frac{1}{C}\sum_{c=1}^{C}\frac{TP_c}{TP_c + FN_c},
+$$
+
+with $C = 6$ (five subtypes plus Other). Every class counts equally regardless of its frequency, so correctly identifying the rare "Other" class is worth one sixth of the score, 16.7 points, although no example of it exists in training.
+
+## How the winning solution works
+
+Owkin, a company that builds AI for pathology, entered to test **Phikon**, the pathology foundation model it had released publicly in November 2023. The team states their approach as deliberately simple, and their best submissions ran in about 6 hours.
+
+<Pipeline steps={[
+  {tag: "Tissue", title: "Find tissue", detail: "Otsu threshold on the thumbnail's HSV image"},
+  {tag: "Tiles", title: "Cut tiles at 20×", detail: "224 px (WSI) or 448 px resized to 224 (TMA); ≤200 per WSI"},
+  {tag: "Features", title: "Phikon embeddings", detail: "frozen ViT-Base → 768 numbers per tile"},
+  {tag: "MIL", title: "CHOWDER × 65", detail: "top-10 and bottom-10 tile scores → 5 subtype logits"},
+  {tag: "Outliers", title: "Entropy threshold", detail: "uncertain slides → 'Other'"}
+]} caption="The winning pipeline. Only the CHOWDER heads are trained on competition data." />
+
+<Foundation id="models-and-loss" />
+
+### Tissue detection and tiling
+
+Tissue is detected by **Otsu thresholding** on a thumbnail, in the HSV colour space: stained tissue is saturated, glass background is not, and Otsu's method picks the threshold that best separates the two modes of the saturation histogram.
+
+<Deep title="Otsu's threshold" kind="math">
+
+Given a histogram of pixel values, choose the threshold $t$ that splits pixels into two classes with probabilities $\omega_0(t), \omega_1(t)$ and means $\mu_0(t), \mu_1(t)$ so as to maximise the **between-class variance**
+
+$$
+\sigma_B^2(t) = \omega_0(t)\,\omega_1(t)\,\big(\mu_0(t) - \mu_1(t)\big)^2 .
+$$
+
+Maximising between-class variance is equivalent to minimising the total within-class variance, because the two add up to the fixed total variance. The search runs over all 256 possible thresholds and takes microseconds.
+</Deep>
+
+**Standardising magnification.** Most WSIs are 20×, but the TMAs are 40×. Rather than let the model learn two scales from only 25 TMAs, the team cut TMAs into 448-pixel tiles and resized them to 224 pixels, so a tile covers the same physical area and cells appear the same size as in a 224-pixel WSI tile. A small logistic regression on ResNet-18 features of the thumbnail decided, at test time, whether an image was a TMA.
+
+**Reading PNGs without running out of memory.** The team wrote C code using libpng's `png_read_row` to read a large PNG one row at a time and write tiles to disk, compiled inside the Kaggle notebook. They estimate its speed as similar to `pyvips`.
+
+**Budget.** A WSI has on average more than 10,000 tissue tiles at 224 pixels; processing all of them was impossible in 12 hours. The team kept at most **200 tiles per WSI** (TMAs rarely exceeded 50 tiles). Using Ray, they processed two images at a time on one P100 GPU, each process with half the GPU and two CPU cores, which brought the run below 7 hours. Memory, not GPU speed, was the limit.
+
+### Feature extraction with Phikon
+
+**Phikon** is a ViT-Base (86 million parameters) pretrained with **iBOT**, a self-supervised method, on 40 million tiles from The Cancer Genome Atlas (TCGA). It was never trained on labels. For each 224 × 224 tile it outputs a 768-dimensional embedding, so each slide becomes a matrix of shape (number of tiles, 768).
+
+The team benchmarked Phikon against other pathology feature extractors (CTransPath, Lunit's models) and DINOv2; Phikon was best in their cross-validation, and combining extractors did not help.
+
+<Foundation id="transfer-learning" />
+
+<Deep title="What iBOT learns" kind="detail">
+
+iBOT combines two self-supervised objectives on a student network and a teacher network (an exponential moving average of the student):
+
+1. **Self-distillation of the whole image**, as in DINO: the student sees one augmented crop, the teacher another, and the student's output distribution over a set of learned prototypes is trained to match the teacher's.
+2. **Masked image modelling**: some patches of the student's input are masked, and for those patches the student must predict the teacher's output tokens, computed on the unmasked image.
+
+The first objective teaches global features that are invariant to augmentation (colour jitter, crops); the second teaches local structure. For histology, the result is an embedding in which tiles with similar tissue architecture and cell types lie close together, whatever the lab-specific stain.
+</Deep>
+
+### CHOWDER: a small, interpretable multiple-instance model
+
+The label belongs to the slide, not to any tile, so the classifier must turn 200 tile embeddings into one prediction. The team compared several multiple-instance learning (MIL) models from Owkin's public HistoSSLscaling repository: CHOWDER, DeepMIL (attention pooling), DSMIL, TransMIL and mean pooling. **CHOWDER** (Courtiol et al., 2018) was best.
+
+<Foundation id="multiple-instance-learning" />
+
+<Deep title="CHOWDER in equations" kind="math">
+
+Let $h_1,\dots,h_n \in\mathbb{R}^{768}$ be the tile embeddings. For each output class $c$ (here 5):
+
+1. **Tile MLP.** A shared small network maps each tile to a score: $s_{i,c} = g_c(h_i)$. In the winning configuration, a hidden layer of width 192.
+2. **Extreme layer.** Sort the $n$ scores for class $c$ and keep the $R = 10$ highest and $R = 10$ lowest:
+$$
+e_c = \big[s^{(1)}_c, \dots, s^{(10)}_c,\ s^{(n-9)}_c, \dots, s^{(n)}_c\big] \in\mathbb{R}^{20}.
+$$
+3. **Head.** An MLP (hidden width 96, dropout 0.3, sigmoid activation) maps the extreme scores to a logit for class $c$.
+
+The top scores capture the most tumour-like evidence; the bottom scores capture evidence against the class, and together they are robust to the many tiles that show only stroma, blood or background. The model is interpretable: the tiles that produced the top and bottom scores can be shown to a pathologist.
+
+The operation is permutation-invariant (the order of tiles does not matter) and works for any number of tiles $n \ge 2R$.
+</Deep>
+
+**Training.** Stratified 5-fold cross-validation repeated 3 times with different seeds, designed so that each test fold contained at least 60% of the TMAs; each fold's training part was split 75/25 into training and validation. Up to 30 epochs with early stopping (patience 4) on validation balanced accuracy; AdamW, constant learning rate $10^{-4}$, weight decay $10^{-3}$; cross-entropy. Class imbalance was handled twice over: weighted sampling for balanced batches, and class weights in the loss.
+
+<Foundation id="softmax-cross-entropy" />
+
+<Foundation id="focal-loss" />
+
+### The ensembling trick: 50 initialisations per model
+
+CHOWDER is sensitive to its random initialisation. Rather than train one model, the team trained **50 CHOWDER models that differ only in their initial weights**, as one ensemble module, and averaged them. This was more stable during training and more accurate than any single model.
+
+<Deep title="Code: the ensemble wrapper from the winning submission" kind="code">
+
+```python title="winning-submission notebook (excerpt quoted in the write-up)"
+class ModelEnsemble(nn.ModuleList):
+
+    def __init__(self, models: List[nn.Module]) -> None:
+        super().__init__(modules=models)
+
+    def forward(self, x: torch.Tensor, mask: Optional[torch.BoolTensor] = None) -> torch.Tensor:
+        """Forward pass."""
+        predictions, scores = [], []
+        for model in self:
+            logits_, scores_ = model(x, mask)
+            predictions.append(logits_.unsqueeze(-1))
+            scores.append(torch.mean(scores_, dim=1, keepdim=True).unsqueeze(-1))
+        predictions = torch.cat(predictions, dim=2)
+        scores = torch.cat(scores, dim=2)
+        return predictions, scores
+
+chowder_models = [Chowder(**chowder_kwargs) for _ in range(50)]
+model = ModelEnsemble(chowder_models)
+```
+
+- `nn.ModuleList` registers all 50 models so a single optimiser trains them together, each on the same batches.
+- `x` has shape `(batch, n_tiles, 768)`; `mask` marks padded tiles when slides have different tile counts.
+- Each model returns class logits and its per-tile scores. `unsqueeze(-1)` adds a model axis, and `torch.cat(..., dim=2)` stacks the 50 models' outputs, giving `(batch, n_classes, 50)`.
+- The loss is computed on each model's logits; at inference the model axis is averaged.
+</Deep>
+
+<Source href="https://www.kaggle.com/code/jbschiratti/winning-submission">jbschiratti/winning-submission (Kaggle)</Source>
+
+Repeated CV with 50-model ensembles produced 3 × 5 × 50 = 750 models. Submitting all of them was not best. The winning submission averaged **65 CHOWDER models** from selected repetitions and folds, calibrated each with a logistic regression on its internal validation set, and kept only the models whose calibrated performance on their internal test fold was good ("model filtering").
+
+<Foundation id="ensembling-tta" />
+
+### Detecting "Other" by entropy
+
+No training slides were labelled "Other", so the model cannot learn that class. The team predicted it when the model was uncertain, measured by the **entropy** of the five-class prediction:
+
+$$
+H(p) = -\sum_{c=1}^{5} p_c \log p_c .
+$$
+
+$H = 0$ when all probability is on one class and $H = \log 5 \approx 1.61$ when it is spread evenly. Slides above a threshold were labelled "Other". The threshold was tuned on the public leaderboard, since no outliers existed for local validation. This raised the public score from 0.59 to 0.64.
+
+An alternative that also worked, but was not among the final selections: using the **variance of predictions across the ensemble members** as the uncertainty measure, together with entropy (public 0.59, private 0.67).
+
+### Results and generalisation
+
+- Winning submission: 0.64 public, 0.66 private.
+- Their best submission (not selected): 0.62 public, 0.68 private.
+
+Cross-validation balanced accuracy was between 0.8 and 0.9, at least 20 points above the leaderboard. Part of the gap is the "Other" class, which cross-validation could not include. The team also attributes part of it to new centres: differences in tissue preparation, staining, scanners and magnification that a foundation model reduces but does not remove. The gap is the most important number in this report for anyone considering deployment.
+
+### What did and did not help
+
+**Did not help:**
+
+- Stain normalisation (Vahadane, Reinhard), consistent with recent studies that find little benefit on top of strong features.
+- More TMA tiles by overlapping sliding windows (timeouts, no gain).
+- Detecting normal slides via a tumour-fraction classifier trained on the provided annotations.
+- Hyperparameter tuning with Ray Tune: local CV rose and the leaderboard fell, a textbook sign of overfitting the validation folds.
+
+**Helped but not selected:**
+
+- **Continued pretraining of Phikon on the competition's own images.** The team extracted 6.5 million tiles from the training slides and continued iBOT pretraining from Phikon's weights for one epoch, adding four register tokens (a recent ViT refinement). One epoch took 2.5 days on two P100 GPUs. Combining CHOWDER models on original and adapted features scored 0.62 public and 0.67 private.
+
+
+## Why this approach suits pathology
+
+Pathology slides are huge, labels are per slide, and labelled data are scarce and expensive. A foundation model pretrained on millions of unlabelled tiles, frozen and used as a feature extractor, turns each slide into a few hundred vectors. Training on those vectors takes minutes and needs few labels. The competition shows the approach working with no competition-specific image training at all. It also shows its limit: the foundation model does not remove the shift between centres, and the entropy trick for unseen classes depends on a threshold that could not be validated properly.
+
+The PANDA prostate competition, run four years earlier before pathology foundation models existed, was won by training CNNs on tiles end to end with heavy label cleaning. The contrast shows how quickly the default approach to computational pathology changed.
+
+## Compute and deployment
+
+| Setting | What the solution needs |
+| --- | --- |
+| Kaggle | 12 hours on a P100; the solution used under 7. |
+| Hospital pathology department | A GPU workstation; slides in native pyramidal formats (SVS, NDPI) are much faster to tile than PNGs. |
+| Commercial product | A foundation model with a commercial licence, validation on local scanners and stains, and a better-founded outlier method. |
+
+<Callout kind="deploy" title="The licence question">
+Phikon's weights and the HistoSSLscaling code are released for non-commercial use. A hospital research group can use them as they are; a company needs a licence from Owkin or a different foundation model (several are now available under various licences), and should expect to re-run the CHOWDER training, which is cheap.
+</Callout>
