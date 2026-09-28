@@ -1,0 +1,232 @@
+---
+slug: rsna-intracranial-hemorrhage-detection
+title: "RSNA Intracranial Hemorrhage Detection (2019): slice classifiers read in sequence"
+shortTitle: RSNA Intracranial Hemorrhage Detection
+kaggleSlug: rsna-intracranial-hemorrhage-detection
+kaggleUrl: https://www.kaggle.com/competitions/rsna-intracranial-hemorrhage-detection
+year: 2019
+dates: { start: "2019-09-18", end: "2019-11-13" }
+host: RSNA with ASNR and MD.ai
+collection: medicine
+field: Emergency neuroradiology
+modality: [Non-contrast head CT]
+tasks: [multi-label classification]
+techniques:
+  - multi-label-classification
+  - ct-windowing
+  - 2-5d-slices
+  - cnn-backbones
+  - sequence-models
+  - ensembling
+  - external-data
+  - tta
+  - grouped-cv
+metric:
+  name: Weighted multi-label log loss
+  summary: "Log loss over six labels per image (five haemorrhage subtypes and 'any'), with the 'any' label weighted more heavily."
+constraints: { runtime: "Two-stage; models uploaded before the stage-2 test set was released", hardware: "Participants' own hardware", internet: true }
+summary: "Label every slice of a head CT for five types of bleeding inside the skull. The top three teams all used the same two-step idea: a 2D CNN reads each slice (with its neighbours and several CT windows as channels), and a recurrent network then reads the sequence of slice embeddings across the whole scan. The winning method was later published in NeuroImage: Clinical."
+winningIdea: "Classify slices with 2D CNNs that see several CT windows and adjacent slices, then let a sequence model read the stack of slice embeddings the way a radiologist scrolls through a scan; include slice spacing as an input."
+solutions:
+  - rank: 1
+    team: CHAN, SeuTao, yelan, Sen Yang, SCP-173
+    members:
+      - { name: "CHAN", handle: "currylc" }
+      - { name: "SeuTao (Tao Shen)", handle: "shentao" }
+      - { name: "yelan", handle: "lanjunyelan" }
+      - { name: "Sen Yang", handle: "scusywxy" }
+      - { name: "SCP-173", handle: "scp173" }
+    writeup: https://www.kaggle.com/competitions/rsna-intracranial-hemorrhage-detection/writeups/seutao-1st-place-solution-sequential-model-wins
+    code:
+      - { label: "Code and pretrained models", url: "https://github.com/SeuTao/RSNA2019_1st_place_solution" }
+  - rank: 2
+    team: NoBrainer (Darragh Hanley and Dmitry Larko)
+    members: [{ name: "Darragh Hanley", handle: "darraghdog" }, { name: "Dmitry Larko" }]
+    writeup: https://www.kaggle.com/competitions/rsna-intracranial-hemorrhage-detection/writeups/nobrainer-2nd-place-solution-sequential-model
+    code:
+      - { label: "Code", url: "https://github.com/darraghdog/rsna" }
+  - rank: 3
+    team: takuoko
+    members: [{ name: "takuoko" }]
+    writeup: https://www.kaggle.com/competitions/rsna-intracranial-hemorrhage-detection/writeups/takuoko-3rd-place-solution-become-gm-updated-with-
+deployability:
+  score: 4
+  verdict: "Standard 2D backbones plus a small recurrent model, published and externally described in a journal; the winning configuration is a multi-model ensemble, but a single backbone with the sequence model captures most of the gain."
+  inference: "One forward pass per slice for each CNN (a head CT has 30–60 slices) and one pass of a small sequence model per scan; seconds per scan on a GPU."
+  models: "Three 2D CNN pipelines (SE-ResNeXt-101, DenseNet-169 at 256 px; DenseNet-121 at 512 px) and two stacked sequence models."
+  training: "Several days on multi-GPU workstations in 2019; a single-backbone version trains on one modern GPU."
+  externalData: "None for the winner; the third-place solution used the CQ500 dataset."
+  licences:
+    code: "Public GitHub repository; the competition required winners to open-source their code (check the repository for its licence file)."
+    data: "RSNA Intracranial Hemorrhage dataset under the competition data terms (non-commercial research use)."
+    weights: "See the winners' repository for released checkpoints."
+  risks:
+    - "The labels are per slice and per subtype but carry no information on size or mass effect; a clinical tool must also flag large bleeds and midline shift."
+    - "Slices were labelled by many volunteer neuroradiologists; label consistency between readers and sites varies."
+related:
+  - rsna-str-pulmonary-embolism-detection
+  - rsna-2022-cervical-spine-fracture-detection
+  - rsna-intracranial-aneurysm-detection
+  - rsna-2023-abdominal-trauma-detection
+papers:
+  - { label: "Wang X., Shen T., Yang S. et al. (2021). A deep learning algorithm for automatic detection and classification of acute intracranial hemorrhages in head CT scans. NeuroImage: Clinical 32, 102785.", url: "https://doi.org/10.1016/j.nicl.2021.102785" }
+  - { label: "Flanders A.E. et al. (2020). Construction of a machine learning dataset through collaboration: the RSNA 2019 Brain CT Hemorrhage Challenge. Radiology: Artificial Intelligence.", url: "https://doi.org/10.1148/ryai.2020190211" }
+  - { label: "Grewal M. et al. (2018). RADnet: radiologist level accuracy using deep learning for hemorrhage detection in CT scans (an earlier sequence approach).", url: "https://arxiv.org/abs/1710.04934" }
+dataLinks:
+  - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/rsna-intracranial-hemorrhage-detection/data" }
+priority: 10
+updated: "2026-09-28"
+---
+
+## The problem in its field
+
+An **intracranial haemorrhage** is bleeding inside the skull. It can follow trauma, a burst aneurysm, a stroke, high blood pressure, a vascular malformation or anticoagulant treatment. The competition description notes that haemorrhages cause about 10% of strokes in the United States. Blood inside the rigid skull raises pressure and compresses brain tissue, and some types need an operation within hours. Patients with sudden severe headache, reduced consciousness or head injury therefore receive an urgent **non-contrast head CT**, and the radiologist must decide quickly whether there is blood, where, and what kind.
+
+<Deep title="The five subtypes and how they look" kind="domain">
+
+Fresh blood is denser than brain tissue (roughly 50–90 Hounsfield units against 20–45) and appears bright on CT. The subtype is determined by location and shape:
+
+| Subtype | Where the blood is | Typical appearance |
+| --- | --- | --- |
+| **Epidural** | between the skull and the outer membrane (dura) | lens-shaped, bounded by skull sutures; often from an arterial tear after a fracture |
+| **Subdural** | between the dura and the arachnoid membrane | crescent along the brain surface, can cross sutures; often venous, common in the elderly |
+| **Subarachnoid** | in the fluid spaces around the brain | fills the grooves (sulci) and cisterns; classic after aneurysm rupture |
+| **Intraparenchymal** | inside the brain tissue | a rounded bright region; hypertension, stroke, trauma |
+| **Intraventricular** | inside the ventricles | fluid levels or casts in the ventricles |
+
+A patient can have several types at once. Thin subdural collections lying against the skull are hard to see in a standard brain window because they merge with the bright bone; a wider "subdural window" separates them.
+</Deep>
+
+<Foundation id="ct-hounsfield-windowing" />
+
+## The data
+
+The RSNA assembled, with the American Society of Neuroradiology and MD.ai, head CT studies from four institutions: Stanford University, Thomas Jefferson University, Unity Health Toronto and the Federal University of São Paulo. More than 60 volunteer neuroradiologists labelled over 25,000 examinations. The dataset paper (Flanders et al., 2020) describes the construction.
+
+Each **slice** carries six binary labels: epidural, intraparenchymal, intraventricular, subarachnoid, subdural, and **any** (at least one of the five). Slices are distributed as individual DICOM files; to rebuild a scan, one must group files by series and order them by position.
+
+The competition had two stages. Teams had to upload their models before stage 1 ended; the stage-2 test set was then released and predicted with those models.
+
+<Foundation id="dicom-and-volumes" />
+
+## The metric
+
+For each slice and each of the six labels, the binary log loss is computed; the "any" label counts more than the subtypes (in the organisers' implementation, weight 2 against 1). Predictions are clipped to $[10^{-15}, 1 - 10^{-15}]$ before logarithms.
+
+<Foundation id="binary-cross-entropy" />
+
+<Foundation id="weighted-log-loss" />
+
+Log loss punishes confident mistakes severely and rewards calibrated probabilities. Almost every slice-level label is 0, and neighbouring slices usually share labels, which is the fact the winning solutions exploited.
+
+## The key observation: a scan is a sequence
+
+A radiologist does not judge one slice in isolation; they scroll up and down through the stack. A faint density on one slice is convincing if the slices above and below show it continuing, and dismissible if it appears on one slice only. Slice labels are strongly correlated along the scan: a subdural haematoma spans many consecutive slices.
+
+The third-place author shows this directly: sorting slices by their position (`ImagePositionPatient[2]`) turns the label sequence into long runs of 0s and 1s. Every top solution found a way to give the model this context. The first and second place teams both called their write-ups "sequential model".
+
+## How the winning solution works
+
+The winning team (CHAN, SeuTao, yelan, Sen Yang and SCP-173) combined three 2D CNN pipelines with two sequence models trained on top of them.
+
+<Pipeline steps={[
+  {tag: "Slices", title: "Window and stack", detail: "three windows and/or three adjacent slices as channels"},
+  {tag: "2D CNN", title: "Classify each slice", detail: "SE-ResNeXt-101, DenseNet-169, DenseNet-121; 6 labels"},
+  {tag: "Seq 1", title: "MLP + recurrent layers on embeddings", detail: "features from all CNNs, read along the scan"},
+  {tag: "Seq 2", title: "1D CNN + recurrent layers on logits", detail: "stacks CNN outputs, Seq 1 output and slice spacing"},
+  {tag: "Output", title: "Six probabilities per slice", detail: "end-to-end trained sequence stages"}
+]} caption="The winning pipeline." />
+
+<Foundation id="models-and-loss" />
+
+<Foundation id="convolution" />
+
+### Step 1: 2D CNNs on windowed slices
+
+Three input settings, each giving three channels so that ImageNet-pretrained networks can be used unchanged:
+
+1. **One slice, three windows**: brain (centre 40, width 80), subdural (80, 200) and bone (600, 2800).
+2. **Three adjacent slices, one window.**
+3. **Three adjacent slices with three windows** (a combination of 1 and 2).
+
+<Plot series={[{fn: "window", params: {c: 40, w: 80}, label: "brain (40, 80)"}, {fn: "window", params: {c: 80, w: 200}, label: "subdural (80, 200)"}, {fn: "window", params: {c: 600, w: 2800}, label: "bone (600, 2800)"}]} x={[-100, 700]} y={[0, 1]} xLabel="Hounsfield units" yLabel="channel intensity" caption="The three windows used as channels. Blood at 50–90 HU is near the top of the brain window, mid-range in the subdural window, and barely distinguishable from brain tissue in the bone window." />
+
+Setting 2 is the **2.5D** idea: neighbouring slices in the channels give a 2D network local depth context at no extra cost.
+
+Backbones: SE-ResNeXt-101 and DenseNet-169 at 256 × 256, and DenseNet-121 at 512 × 512. Augmentation: shift-scale-rotate, random resized crop, horizontal flip. Adam with a cyclic learning rate between $5\times10^{-4}$ and $10^{-5}$. Sampling was balanced across series: each "epoch" drew images from four times the number of series, so long scans did not dominate.
+
+<Foundation id="cnn-backbones" />
+
+### Step 2: the sequence models
+
+After the CNNs were trained, their outputs were computed for every slice of every scan, and two sequence models were trained on them.
+
+**Sequence model 1** reads the **embeddings** (the penultimate-layer feature vectors) of all CNNs for each slice, passes them through an MLP, and then through recurrent layers (LSTM and GRU blocks) along the slice axis.
+
+**Sequence model 2** reads the **logits** of all CNNs (six per model per slice), the output of sequence model 1, and **slice spacing**, and passes them through 1D convolutions and recurrent layers. The two sequence models were trained end to end together.
+
+<Foundation id="recurrent-networks" />
+
+<Deep title="The progression, in the author's words and numbers" kind="detail">
+
+Replying to the fourth-place team, SeuTao described how the score improved on the stage-1 public leaderboard:
+
+| Step | Stage-1 log loss |
+| --- | --- |
+| Ensemble of four 2D CNNs, simple post-processing | 0.060 |
+| 1D CNN stacking over slices (early sequence model 2) | 0.057 |
+| + GRU and slice-position input | 0.056 |
+| + sequence model 1 and further tricks | 0.054 |
+
+The largest single gain came from letting a model read the CNN outputs along the scan, even before any recurrent layer.
+</Deep>
+
+### Slice thickness as a feature
+
+The sequence models receive the **first-order difference of the z-position** between consecutive slices, which equals the slice spacing. The author explains the domain reason: slices reconstructed with different thicknesses have different noise levels, so the same pixel pattern means different things on a 2.5 mm slice and a 5 mm one. This input improved the loss by about 0.0005. A seventh-place competitor reported that normalised slice positions had not helped him; the difference is that spacing describes image quality, while absolute position describes only where in the head the slice is.
+
+### Result
+
+The final submission scored 0.04383 on the private leaderboard. The authors later published the method with evaluation in *NeuroImage: Clinical* (Wang et al., 2021).
+
+## The runner-up: one backbone, embeddings and an LSTM
+
+Darragh Hanley and Dmitry Larko reached second place with a simpler version of the same idea.
+
+- **One image classifier**, ResNeXt-101 (the Facebook weakly supervised pretrained version), at 480 pixels, trained for 5 epochs on each of 3 of 5 folds. SE-ResNeXt and EfficientNet-B0 were worse.
+- **Preprocessing**: the windowing code from Appian's public repository ([appian42/kaggle-rsna-intracranial-hemorrhage](https://github.com/appian42/kaggle-rsna-intracranial-hemorrhage), eleventh place), cropping of black space, and a minimum filter (`scipy.ndimage.minimum_filter`) to erase thin lines from headrests and scanner parts, which otherwise made the head appear smaller after cropping.
+- **Embeddings** from the global-average-pooling layer were extracted after each epoch, with test-time augmentation.
+- **An LSTM** (architecture borrowed from a winning solution to an earlier text competition) read the embeddings per patient, study and series; most sequences had 24–60 slices. Each slice's input was its embedding concatenated with the differences to the previous and next slice's embeddings, telling the model how the image changes locally. Larger hidden layers and adding the embeddings back to the LSTM output helped. Padded positions in shorter sequences were excluded from the loss.
+- **15 LSTMs** (3 folds × 5 epochs of embeddings) were averaged.
+
+What did not help them: mixup on images or embeddings, sequence augmentations (partial or reversed sequences), and 1D convolutions over the sequence, which SeuTao's team did make work.
+
+## Third place: neighbours in the channels, and stacking along the scan
+
+takuoko, who became a Kaggle Grandmaster with this result, concentrated on the 2.5D input:
+
+- Stacked neighbouring slices in many combinations: $(s_{t-1}, s_t, s_{t+1})$, $(s_t, s_{t+1}, s_{t+2})$, $(s_{t-2}, s_{t-1}, s_t)$, $(s_{t-2}, s_t, s_{t+2})$, and averages of the 3, 5 or all slices on either side as the outer channels.
+- Multi-task training: from $(s_{t-1}, s_t, s_{t+1})$ predict the labels of all three slices.
+- "User stacking": applying the same neighbour-concatenation idea to the first-level models' predictions in the second-level ensemble.
+
+His best single model scored 0.060–0.062 on the stage-1 public set. He also added the external CQ500 dataset, predicted the five subtypes and set "any" to their maximum, and used generalised-mean pooling. His stacking-only model would have scored 0.043 on the private set, better than his selected 0.045.
+
+<Foundation id="ensembling-tta" />
+
+## Why this design won here, and where it went next
+
+A haemorrhage is visible on individual slices, so a 2D network can learn what blood looks like from hundreds of thousands of labelled slices, using ImageNet-pretrained weights. What a single slice cannot show is continuity, and a lightweight sequence model over slice embeddings adds exactly that, at negligible cost. A full 3D network would have had fewer training examples (scans rather than slices), no pretrained weights and a much larger memory footprint.
+
+The design became the template for later RSNA CT competitions. The 2020 pulmonary embolism winner credits these solutions directly; the 2022 cervical spine and 2023 abdominal trauma winners used the same 2D-CNN-plus-recurrent structure on crops found by a segmentation model. The 2025 aneurysm winner, facing small 3D targets and four imaging modalities, moved away from it towards native 3D models guided by vessel segmentation.
+
+## Compute and deployment
+
+| Setting | What the solution needs |
+| --- | --- |
+| Competition (2019) | Multi-GPU workstations for the three-pipeline ensemble. |
+| Hospital research group | One modern GPU trains a single-backbone version; inference is seconds per scan. |
+| Product | Several commercial haemorrhage-triage tools already exist; any new one needs regulatory clearance and site validation. |
+
+<Callout kind="deploy" title="The minimum useful version">
+A single CNN at 512 pixels on three windows, followed by a bidirectional GRU over slice embeddings, captures most of what the winning ensemble achieved. The published paper and released weights make this a reasonable starting point for research on local data.
+</Callout>
