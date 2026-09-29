@@ -28,7 +28,7 @@ const solution = z.object({
 });
 
 export const deployabilitySchema = z.object({
-  /** 1 (research artefact) to 5 (ready to wrap in a product) */
+  /** 1 (research artefact) to 5 (deployable as released) */
   score: z.number().int().min(1).max(5),
   /** One sentence: the reason for the score. */
   verdict: z.string(),

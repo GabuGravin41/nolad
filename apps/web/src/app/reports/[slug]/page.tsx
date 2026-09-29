@@ -95,7 +95,7 @@ export default async function ReportPage({ params }: { params: Promise<{ slug: s
         <div className="min-w-0">
           <div className="grid gap-6 lg:max-w-[var(--measure)]">
             <section className="card p-5">
-              <p className="eyebrow">The winning idea</p>
+              <p className="eyebrow">Method in brief</p>
               <p className="mt-2 font-serif text-[1.05rem] leading-relaxed">{m.winningIdea}</p>
               <p className="mt-3 text-sm text-muted">
                 1st place: <strong className="text-fg">{winner.team}</strong>

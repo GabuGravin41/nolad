@@ -7,7 +7,7 @@ const scale = [
   "Needs substantial engineering",
   "Deployable with work",
   "Close to deployable",
-  "Ready to wrap in a product",
+  "Deployable as released",
 ];
 
 export function DeployabilityCard({ d }: { d: Deployability }) {

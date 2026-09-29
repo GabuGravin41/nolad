@@ -42,7 +42,7 @@ export default function Home() {
             <ol className="grid gap-4 text-sm leading-relaxed">
               <li>
                 <strong className="text-fg">Skim.</strong>{" "}
-                <span className="text-muted">The summary, the winning idea and the deployability card give the result in two minutes.</span>
+                <span className="text-muted">The summary, the method in brief and the deployability card give the result in two minutes.</span>
               </li>
               <li>
                 <strong className="text-fg">Read.</strong>{" "}
