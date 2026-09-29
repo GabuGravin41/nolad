@@ -1,5 +1,6 @@
 import { getFoundation } from "@/lib/content";
 import { renderMDX } from "@/lib/mdx";
+import { DeepFooter, DeepRail } from "./DeepControls";
 
 const kindLabel = {
   math: "Mathematics",
@@ -33,9 +34,11 @@ export async function Foundation({ id, open = false }: { id: string; open?: bool
           ▸
         </span>
       </summary>
+      <DeepRail />
       <div className="deep-body">
         <p className="foundation-summary">{f.meta.summary}</p>
         {content}
+        <DeepFooter />
       </div>
     </details>
   );

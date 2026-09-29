@@ -7,6 +7,7 @@ import "./globals.css";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
 import { themeScript } from "@/components/ThemeToggle";
+import { DeepPlaceKeeper } from "@/components/mdx/DeepControls";
 import { site } from "@/lib/site";
 
 export const metadata: Metadata = {
@@ -44,6 +45,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         </a>
         <SiteHeader />
         <main id="main">{children}</main>
+        <DeepPlaceKeeper />
         <SiteFooter />
       </body>
     </html>

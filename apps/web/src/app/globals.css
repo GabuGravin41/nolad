@@ -367,6 +367,10 @@ code[data-theme*=" "] span {
   border-radius: var(--radius);
   background: var(--bg-raised);
   margin: 1.4em 0;
+  position: relative;
+  /* Height of a section header, and the offset below the sticky site header (h-14). */
+  --deep-head: 2.9rem;
+  --deep-stick: 3.5rem;
 }
 
 .deep-math {
@@ -416,6 +420,89 @@ code[data-theme*=" "] span {
   font-size: 0.95rem;
   line-height: 1.4;
   user-select: none;
+  min-height: var(--deep-head);
+  box-sizing: border-box;
+}
+
+/* An open section keeps its header in view while the reader is inside it,
+   so it can be closed without scrolling back up. Nested sections stack
+   below their parent's header. */
+.deep[open] > summary {
+  position: sticky;
+  top: var(--deep-stick);
+  z-index: 6;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px) calc(var(--radius) - 2px) 0 0;
+}
+
+.deep .deep[open] > summary {
+  top: calc(var(--deep-stick) + var(--deep-head));
+  z-index: 5;
+}
+
+.deep .deep .deep[open] > summary {
+  top: calc(var(--deep-stick) + 2 * var(--deep-head));
+  z-index: 4;
+}
+
+/* Clickable strip over the left border of an open section. */
+.deep-rail {
+  position: absolute;
+  top: var(--deep-head);
+  bottom: 0;
+  left: -3px;
+  width: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  z-index: 3;
+}
+
+.deep-rail-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--deep-color);
+  border-bottom-left-radius: var(--radius);
+  transition: width 0.12s ease, opacity 0.12s ease;
+}
+
+.deep-rail:hover .deep-rail-bar,
+.deep-rail:focus-visible .deep-rail-bar {
+  width: 7px;
+  opacity: 0.85;
+}
+
+.deep-rail:focus-visible {
+  outline: 2px solid var(--deep-color);
+  outline-offset: 2px;
+}
+
+.deep-footer {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px dashed var(--border);
+  padding-top: 0.6rem;
+}
+
+.deep-collapse {
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.2rem 0.75rem;
+  cursor: pointer;
+}
+
+.deep-collapse:hover {
+  color: var(--deep-color);
+  border-color: var(--deep-color);
 }
 
 .deep > summary::-webkit-details-marker {
@@ -863,5 +950,12 @@ a.chip:hover {
   }
   .deep {
     break-inside: avoid;
+  }
+  .deep-rail,
+  .deep-footer {
+    display: none;
+  }
+  .deep[open] > summary {
+    position: static;
   }
 }

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { DeepFooter, DeepRail } from "./DeepControls";
 
 const labels = {
   math: "Derivation",
@@ -34,7 +35,11 @@ export function Deep({
           ▸
         </span>
       </summary>
-      <div className="deep-body">{children}</div>
+      <DeepRail />
+      <div className="deep-body">
+        {children}
+        <DeepFooter />
+      </div>
     </details>
   );
 }
