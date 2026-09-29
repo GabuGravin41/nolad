@@ -33,6 +33,14 @@ Reports and foundations are written as a scientific review: third person, declar
 - Give worked numbers where they help: voxel counts, class fractions, score differences.
 - Use `\mathrm{}` for multi-letter names (AUC, TP, Dice), `\tfrac` for small inline fractions in display lines, and `\qquad` between parallel definitions.
 
+## Figures
+
+- A figure shows something the text states: a structure, a quantity, a step of a method. No decorative images.
+- Figures are drawn for Nolad as SVG React components in `apps/web/src/components/figures/`, registered by id and placed with `<Diagram id="…" caption="…" />`. They use the `.dg-*` classes so they follow the light and dark themes.
+- Figures from other sources are reproduced only under an open licence (for example CC BY) with a `credit`. Otherwise the report links to the figure in the original write-up or paper.
+- Images from competition datasets are not hosted.
+- Labels on the drawing are a few words; the explanation goes in the caption, which states what the figure shows. Numbers in a figure come from the write-ups and match the text.
+
 ## Code
 
 - Quoted code comes from the winners' repositories and carries a `<Source>` link.

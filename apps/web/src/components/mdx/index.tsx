@@ -6,6 +6,7 @@ import { Figure, Facts, Source } from "./Figure";
 import { Plot } from "./Plot";
 import { Bars } from "./Bars";
 import { Foundation } from "./Foundation";
+import { Diagram } from "@/components/figures";
 
 export const mdxComponents: MDXComponents = {
   Deep,
@@ -17,6 +18,7 @@ export const mdxComponents: MDXComponents = {
   Plot,
   Bars,
   Foundation,
+  Diagram,
   table: (props) => (
     <div className="table-wrap">
       <table {...props} />

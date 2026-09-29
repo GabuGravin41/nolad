@@ -639,6 +639,40 @@ code[data-theme*=" "] span {
   display: block;
 }
 
+.figure-credit {
+  color: var(--fg-faint);
+}
+
+/* ------------------------------------------------------------------ */
+/* Drawn figures (components/figures)                                   */
+/* ------------------------------------------------------------------ */
+.dg {
+  width: 100%;
+  color: var(--fg);
+  font-family: var(--font-sans);
+}
+.dg-title { fill: currentColor; font-size: 13.5px; font-weight: 650; }
+.dg-text { fill: currentColor; font-size: 13px; }
+.dg-small { fill: var(--fg-muted); font-size: 12px; }
+.dg-faint { fill: var(--fg-faint); font-size: 11.5px; font-style: italic; }
+.dg-vessel { fill: none; stroke: currentColor; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; opacity: 0.8; }
+.dg-vessel-thin { stroke-width: 2.5; }
+.dg-guide { stroke: var(--fg-faint); stroke-width: 1.2; stroke-dasharray: 4 4; fill: none; }
+.dg-guide-solid { stroke: var(--fg-faint); stroke-width: 1.2; }
+.dg-link { stroke: var(--fg-muted); stroke-width: 1.6; fill: none; }
+.dg-arrowhead { fill: var(--fg-muted); }
+.dg-mark { fill: var(--domain); }
+.dg-mark-text { fill: var(--bg-raised); font-size: 11px; font-weight: 700; }
+.dg-box { fill: var(--bg-sunken); stroke: var(--border); stroke-width: 1.2; }
+.dg-box-accent { fill: var(--accent-soft); stroke: var(--accent); }
+.dg-seg { stroke: var(--bg-raised); stroke-width: 2; }
+.dg-seg-a { fill: var(--math-soft); }
+.dg-seg-b { fill: var(--accent-soft); }
+.dg-seg-c { fill: var(--domain-soft); }
+.dg-grid-back { fill: var(--bg-sunken); stroke: var(--fg-faint); stroke-width: 1; }
+.dg-cell { fill: var(--bg-sunken); stroke: var(--border); stroke-width: 1; }
+.dg-cell-on { fill: var(--domain-soft); stroke: var(--domain); }
+
 .pipeline-steps {
   list-style: none !important;
   padding: 0 !important;

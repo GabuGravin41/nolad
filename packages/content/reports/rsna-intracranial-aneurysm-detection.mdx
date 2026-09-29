@@ -110,21 +110,12 @@ An unruptured aneurysm can be monitored, or treated by surgical clipping or by e
 
 Blood reaches the brain through four arteries in the neck: the left and right **internal carotid arteries (ICA)** anteriorly, and the two **vertebral arteries** posteriorly, which join to form the **basilar artery**. At the base of the brain these vessels are connected in a ring, the **Circle of Willis**. Each carotid divides into an **anterior cerebral artery (ACA)** and a **middle cerebral artery (MCA)**. The two ACAs are connected by the **anterior communicating artery (ACom)**, and each carotid is connected to the posterior circulation by a **posterior communicating artery (PCom)**.
 
-Aneurysms form mostly at branch points of this ring, where the flowing blood impinges on the vessel wall. The 13 location labels follow the anatomy:
-
-| Location | Sides |
-| --- | --- |
-| Infraclinoid ICA (below the anterior clinoid process) | left, right |
-| Supraclinoid ICA (above it) | left, right |
-| MCA | left, right |
-| ACA | left, right |
-| PCom | left, right |
-| ACom | single |
-| Basilar tip | single |
-| Other posterior circulation | single |
+Aneurysms form mostly at branch points of this ring, where the flowing blood impinges on the vessel wall. The 13 location labels follow this anatomy (figure below). The ICA is divided at the level of the anterior clinoid process, a bony landmark, into an infraclinoid and a supraclinoid segment.
 
 The ring varies between people: segments may be absent or hypoplastic, and the two sides may differ. A model that assumes a complete, symmetric ring will fail for these patients.
 </Deep>
+
+<Diagram id="aneurysm-circle-of-willis" caption="Schematic of the Circle of Willis seen from below, anterior at the top; the patient's right is drawn on the left, as in radiological images. Numbered markers show the label locations: five are paired (left and right) and three are unpaired, giving 13 location labels. The dashed lines mark the level of the anterior clinoid process; the short bars below mark where the internal carotid arteries continue down towards the neck." />
 
 ### Imaging modalities
 
@@ -177,12 +168,7 @@ Each location AUC is computed over all test series, and most series have no aneu
 
 The winner, tomoon33, competed alone. The solution has a preprocessing stage and three modelling stages.
 
-<Pipeline steps={[
-  {tag: "Stage 0", title: "Preprocessing", detail: "DICOM → NIfTI, reorientation, per-volume z-score normalisation"},
-  {tag: "Stage 1", title: "Coarse vessel segmentation", detail: "nnU-Net at 1 mm, DBSCAN, 140 mm cube around the largest vessel cluster"},
-  {tag: "Stage 2", title: "Fine vessel segmentation", detail: "two nnU-Nets at 0.80 × 0.45 × 0.44 mm inside the cube"},
-  {tag: "Stage 3", title: "Per-artery classification", detail: "3D network; features pooled within 13 vessel masks; transformer over locations"}
-]} caption="The winning pipeline. Each stage restricts the region processed by the next." />
+<Diagram id="aneurysm-pipeline" caption="The winning pipeline. Each stage restricts the region processed by the next. The bar shows the author's measured time per series on one Kaggle T4 GPU, averaged over 100 series." />
 
 <Foundation id="models-and-loss" />
 
@@ -304,6 +290,8 @@ The classifier receives the ROI resampled to 128 × 256 × 256 voxels, together 
 **Backbone.** The backbone is an nnU-Net that had already been trained for vessel segmentation. In the author's ablation, training the classifier without this initialisation lowered the score from 0.902 to 0.794, the largest effect of any component. The last decoder block, the most expensive, was removed without loss of accuracy.
 
 **Masked pooling per location.** For each of the 13 locations, the decoder feature map is averaged over the voxels inside that location's vessel mask. This yields one feature vector per artery. The vectors obtained with the masks of the two fine segmentation models are concatenated.
+
+<Diagram id="aneurysm-masked-pooling" caption="Masked average pooling, drawn in 2D for one channel slice. The feature map is averaged over the voxels of one artery's mask (shaded) to give the vector z_k. Repeating this for the 13 location masks gives 13 tokens, which the transformer processes jointly. The grid size is illustrative." />
 
 <Deep title="Masked average pooling" kind="math">
 
