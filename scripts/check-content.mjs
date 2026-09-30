@@ -9,6 +9,19 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 
+// MDX treats {…} in prose as a JavaScript expression; content must not contain any.
+function noExpressions() {
+  return (tree, file) => {
+    const walk = (n) => {
+      if (n.type === "mdxTextExpression" || n.type === "mdxFlowExpression") {
+        file.fail(`JavaScript expression in prose: {${n.value}} (escape the braces or use maths)`);
+      }
+      (n.children || []).forEach(walk);
+    };
+    walk(tree);
+  };
+}
+
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const content = path.join(root, "packages/content");
 const foundationIds = new Set(fs.readdirSync(path.join(content, "foundations")).map((f) => f.replace(/\.mdx$/, "")));
@@ -46,7 +59,7 @@ for (const file of files) {
     for (const m of body.matchAll(/<Diagram\s+id="([^"]+)"/g)) if (!figIds.has(m[1])) problems.push(`unknown figure ${m[1]}`);
     try {
       await compile(body, {
-        remarkPlugins: [remarkGfm, remarkMath],
+        remarkPlugins: [remarkGfm, remarkMath, noExpressions],
         rehypePlugins: [[rehypeKatex, { strict: false, throwOnError: true }]],
       });
     } catch (e) {

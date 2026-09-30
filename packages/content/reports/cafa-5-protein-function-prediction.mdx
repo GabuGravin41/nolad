@@ -155,7 +155,7 @@ $$
 \mathrm{rc}_i(\tau) = \frac{\mathrm{TP}_i(\tau)}{\mathrm{True}_i} .
 $$
 
-**Example.** A protein has true terms {root, $A$, $B$} with information accretion 0, 1 and 3 bits. The predicted set is {root, $A$, $C$}, with $\mathrm{ia}(C) = 2$. Then $\mathrm{TP} = 0 + 1 = 1$, $\mathrm{Pred} = 0 + 1 + 2 = 3$ and $\mathrm{True} = 0 + 1 + 3 = 4$, so the precision is $1/3$ and the recall is $1/4$. The correct prediction of the root adds nothing to either.
+**Example.** A protein has true terms $\{\text{root}, A, B\}$ with information accretion 0, 1 and 3 bits. The predicted set is $\{\text{root}, A, C\}$, with $\mathrm{ia}(C) = 2$. Then $\mathrm{TP} = 0 + 1 = 1$, $\mathrm{Pred} = 0 + 1 + 2 = 3$ and $\mathrm{True} = 0 + 1 + 3 = 4$, so the precision is $1/3$ and the recall is $1/4$. The correct prediction of the root adds nothing to either.
 
 **Averaging over proteins.** Precision is averaged over the $m(\tau)$ proteins that have at least one predicted term at threshold $\tau$, and recall over all $n$ evaluated proteins:
 
