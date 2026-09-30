@@ -1,32 +1,58 @@
 ---
 id: llm-reasoning
-title: "Language models that reason and use tools"
+title: "Language models for reasoning and tool use"
 kind: ml
-summary: "A language model generates text one token at a time. Trained on worked solutions, it learns to write out reasoning before answering; given a code interpreter, it can compute instead of guessing."
+summary: "Describes next-token prediction and sampling in language models, supervised fine-tuning on worked solutions, tool-integrated reasoning with a code interpreter, and majority voting over sampled answers, with the probability calculations behind maj@k and pass@k."
 ---
 
 ### Next-token prediction
 
-A decoder-only transformer assigns a probability to each possible next token given all previous tokens, and is trained to maximise the log-likelihood of text:
+A decoder-only transformer assigns a probability to each possible next token given all previous tokens. By the chain rule of probability, the probability of a text $t_1, \dots, t_T$ factorises as
 
 $$
-\log P(t_1,\dots,t_T) = \sum_{k=1}^{T}\log P(t_k\mid t_1,\dots,t_{k-1}).
+P(t_1, \dots, t_T) = \prod_{k=1}^{T} P(t_k \mid t_1, \dots, t_{k-1}),
+\qquad
+\log P(t_1, \dots, t_T) = \sum_{k=1}^{T} \log P(t_k \mid t_1, \dots, t_{k-1}).
 $$
 
-Generation samples tokens one at a time. **Temperature** $T$ divides the logits before the softmax: $T\to0$ approaches greedy decoding; larger $T$ gives more varied samples.
+Training maximises this log-likelihood over a corpus, which is the same as minimising the cross-entropy of each next token.
 
-### Chain of thought
+**Sampling and temperature.** Given logits $z_j$ for the vocabulary, the model samples the next token from
 
-A model fine-tuned on problems paired with long step-by-step solutions (chain of thought, CoT) learns to produce reasoning before the answer. Longer reasoning costs more tokens and therefore more time. In the AIMO report, the NemoSkills team generated 3.2 million solutions with DeepSeek-R1 and QwQ-32B, kept those whose final answers matched, and fine-tuned a 14-billion-parameter model on them.
+$$
+p_j(\tau) = \frac{e^{z_j/\tau}}{\sum_{l} e^{z_l/\tau}},
+$$
+
+where $\tau > 0$ is the temperature. As $\tau \to 0$ the distribution concentrates on the token with the largest logit (greedy decoding); $\tau = 1$ gives the model's distribution; larger $\tau$ flattens it and gives more varied samples.
+
+### Supervised fine-tuning on worked solutions
+
+Supervised fine-tuning (SFT) continues training a pretrained model on examples in the target format with the same next-token loss. A model fine-tuned on problems paired with step-by-step solutions (chain of thought) learns to write reasoning before the final answer. Longer reasoning costs more tokens, and therefore more time at inference. In the AIMO report, the NemoSkills team generated 3.2 million solutions with DeepSeek-R1 and QwQ-32B, kept those whose final answers were correct, and fine-tuned a 14-billion-parameter model on them.
 
 ### Tool-integrated reasoning
 
-Arithmetic and case enumeration are error-prone in text. In **tool-integrated reasoning (TIR)**, the model writes a code block, generation pauses, a sandbox executes the code, and its output is appended to the context before generation resumes. The model can check a conjecture by brute force or compute a sum exactly.
+Arithmetic and enumeration of cases are error-prone when carried out in text. In **tool-integrated reasoning (TIR)** the model writes a block of code, generation pauses, a sandbox executes the code, and its output is appended to the context before generation resumes. The model can then compute sums exactly or test a conjecture on many cases.
 
-### Majority voting
+### Majority voting, maj@k and pass@k
 
-Sampling $k$ independent solutions and returning the most common final answer (maj@$k$) is more accurate than a single sample when the model is right more often than any particular wrong answer. If the probability of the correct answer exceeds that of every competitor, the majority converges to it as $k$ grows. pass@$k$, the probability that at least one of $k$ samples is right, measures the ceiling that a perfect selector could reach.
+Suppose $k$ solutions are sampled independently, each correct with probability $\pi$.
 
-### Fine-tuning at scale
+**pass@k** is the probability that at least one of the $k$ is correct:
 
-Supervised fine-tuning (SFT) continues training a pretrained model on target-format data with the same next-token loss. Two further techniques appear in the AIMO report: extending the positional encoding (raising the RoPE base) so the model can handle long reasoning traces, and **model merging**, a linear interpolation of the weights of two fine-tuned versions of the same base model.
+$$
+\text{pass@}k = 1 - (1 - \pi)^{k}.
+$$
+
+For $\pi = 0.3$ and $k = 16$, $\text{pass@}16 = 1 - 0.7^{16} \approx 0.997$. It measures what a selector that always recognised the correct answer could achieve.
+
+**maj@k** returns the most frequent final answer among the $k$ samples. If wrong answers are spread over many values, each individually less likely than the correct one, the correct answer is the most frequent one with probability approaching 1 as $k$ grows. With two outcomes only (the correct answer with probability $\pi$ and one wrong answer with probability $1 - \pi$) and odd $k$, the majority is correct with probability
+
+$$
+\sum_{j = (k+1)/2}^{k} \binom{k}{j}\, \pi^{j} (1 - \pi)^{k - j},
+$$
+
+which tends to 1 if $\pi > 1/2$ and to 0 if $\pi < 1/2$. In problems with many possible wrong answers, majority voting can succeed even when $\pi < 1/2$, as long as no single wrong answer is more likely than the correct one.
+
+### Long contexts and model merging
+
+Two further techniques appear in the AIMO report. Raising the base of the rotary position embedding (RoPE) lowers its rotation frequencies, which allows the model to be fine-tuned on reasoning traces of tens of thousands of tokens. **Model merging** interpolates the weights of two models fine-tuned from the same base model (see the weight-averaging primer).

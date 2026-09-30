@@ -2,29 +2,39 @@
 id: digital-pathology
 title: "Digital pathology and whole-slide images"
 kind: domain
-summary: "A pathology slide is a thin section of tissue stained with dyes and scanned at microscope resolution into an image of billions of pixels. Models work on small tiles and then combine the tiles' evidence."
+summary: "Describes how stained tissue sections are digitised as whole-slide images, how such images are divided into tiles for machine learning, the effect of magnification and stain variation, and how pathologists grade tissue."
 ---
 
 ### From tissue to image
 
-A tissue sample (a biopsy core, a resection) is fixed, embedded in paraffin, cut into sections a few micrometres thick and stained. **Haematoxylin** colours nuclei blue-purple; **eosin** colours cytoplasm and extracellular matrix pink. The H&E slide is scanned at 20× or 40× magnification, roughly 0.5 or 0.25 µm per pixel. A single slide can be 100,000 × 100,000 pixels.
+A tissue sample, such as a biopsy core or a surgical resection, is fixed, embedded in paraffin, cut into sections a few micrometres thick and stained. **Haematoxylin** stains nuclei blue-purple and **eosin** stains cytoplasm and extracellular matrix pink (H&E staining). The slide is scanned at 20× or 40× magnification, about 0.5 or 0.25 µm per pixel.
 
-Scanners store **whole-slide images (WSIs)** as pyramids (SVS, NDPI, TIFF): the full resolution plus successively downsampled levels, so software can read any region at any zoom without loading the whole file. When competitions release slides as flat PNGs, as UBC-OCEAN did, loading one can exhaust memory; the winners wrote C code that reads a PNG row by row.
+At 0.25 µm per pixel, a tissue section of 25 mm × 25 mm occupies
 
-**Tissue microarrays (TMAs)** are small cores from many patients arranged on one slide, often scanned at 40×.
+$$
+\frac{25\,000\ \mu\text{m}}{0.25\ \mu\text{m}} = 100\,000 \text{ pixels}
+$$
+
+along each side, or $10^{10}$ pixels in total; at three bytes per pixel, 30 GB uncompressed.
+
+Scanners store **whole-slide images (WSIs)** as pyramids (in formats such as SVS, NDPI and TIFF): the full-resolution image and successively downsampled levels, so that software can read any region at any magnification without loading the whole file. When a competition releases slides as single flat PNG files, as UBC-OCEAN did, decoding a whole image can exhaust memory; the UBC-OCEAN winners wrote C code that reads a PNG row by row.
+
+**Tissue microarrays (TMAs)** contain small cores of tissue from many patients on one slide.
 
 ### Tiling
 
-1. Detect tissue on a low-resolution thumbnail, typically by Otsu thresholding the saturation channel, which separates stained tissue from white background.
-2. Cut the tissue region into tiles (for example 224 or 256 pixels) at a fixed magnification.
-3. Keep a subset (the top-$k$ by tissue content, or a random sample) to fit the compute budget.
+1. Detect tissue on a low-resolution thumbnail, usually by thresholding the saturation channel with Otsu's method, which separates stained tissue from the white background.
+2. Divide the tissue region into square tiles, for example of 224 or 256 pixels, at a fixed magnification.
+3. Keep a subset of tiles, such as the $k$ tiles with the most tissue or a random sample, to fit the computing budget.
 
-Magnification must be consistent: a 20× tile and a 40× tile of the same size show different amounts of tissue and different cell sizes. The UBC-OCEAN winners resized 40× TMA tiles to match 20× WSI tiles and called magnification "key information".
+At 0.5 µm per pixel, a 256-pixel tile covers $128 \times 128$ µm, and a tissue region of 10 mm × 10 mm contains about $(10\,000 / 128)^2 \approx 6\,100$ tiles.
+
+The magnification must be the same for all tiles: at equal pixel size, a 40× tile shows a quarter of the tissue area of a 20× tile, with cells twice as large in pixels. The UBC-OCEAN winners resized 40× TMA images to match 20× whole-slide tiles and describe magnification as key information.
 
 ### Stain variation
 
-The same tissue stained in two laboratories can differ markedly in colour. Remedies include colour augmentation during training and stain normalisation (Reinhard, Macenko, Vahadane methods) that maps images to a reference stain. Results vary: the HuBMAP fourth-place team called stain normalisation decisive; the UBC-OCEAN winners saw no gain from it on top of a foundation model.
+The same tissue stained in two laboratories can differ considerably in colour. Two approaches reduce the effect: colour augmentation during training and stain normalisation, which maps images to a reference stain (methods of Reinhard, Macenko and Vahadane; see the HuBMAP report for the equations). The results differ between competitions: the fourth-place team in HuBMAP reports stain normalisation as its main improvement, while the UBC-OCEAN winners saw no gain from it on top of a pathology foundation model.
 
 ### Grading and subtyping
 
-Pathologists grade by architecture and cell morphology. In prostate cancer, Gleason patterns 3, 4 and 5 describe increasingly disordered glands; the two most common patterns form the Gleason score (e.g. 3+4) and map to an ISUP grade group from 1 to 5. Agreement between pathologists is imperfect, so training labels are noisy, a central theme of the PANDA report.
+Pathologists grade tumours by tissue architecture and cell morphology. In prostate cancer, Gleason patterns 3, 4 and 5 describe increasingly disorganised glands; the two most prevalent patterns form the Gleason score (for example 3 + 4), which maps to an ISUP grade group from 1 to 5. Agreement between pathologists is imperfect, so training labels contain noise; this is a central topic of the PANDA report.

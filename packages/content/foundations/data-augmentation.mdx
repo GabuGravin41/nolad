@@ -2,29 +2,35 @@
 id: data-augmentation
 title: "Data augmentation"
 kind: ml
-summary: "Augmentation trains a model on randomly transformed copies of the data, teaching it which changes should not affect the answer. Good augmentations mirror the variation that real data contain."
+summary: "Describes data augmentation, the random transformation of training examples under which the label is unchanged or transformed consistently, the common families of augmentation, domain-specific augmentations used in the reports, and augmentations that change the correct answer."
 ---
 
-Each time an image is loaded for training, it is transformed at random: flipped, rotated, scaled, shifted, brightened, blurred, partly masked. The label stays the same (or is transformed consistently, as with a segmentation mask). The model never sees the same input twice and must learn features that survive the transformations.
+### Principle
+
+Each time a training example is loaded, it is transformed at random, for example flipped, rotated, scaled, shifted, brightened, blurred or partly masked. The label is kept, or transformed in the same way as the input (a segmentation mask is flipped together with its image). A transformation $g$ is a valid augmentation for a task if the correct output for $g(x)$ is the correspondingly transformed correct output for $x$. Training on transformed examples encourages the model to be invariant (or equivariant) to these transformations, and increases the effective variety of the training data.
 
 ### Common families
 
 - **Geometric:** flips, 90° rotations, small rotations, scaling, shearing, elastic and grid distortions.
-- **Photometric:** brightness, contrast, gamma, hue and saturation changes, CLAHE, blur, noise.
-- **Erasing:** Cutout, CoarseDropout, XY-masking of spectrograms: hide a region so the model cannot rely on one cue.
-- **Mixing:** Mixup blends two images and their labels, $\tilde x = \lambda x_a + (1-\lambda)x_b$, $\tilde y = \lambda y_a + (1-\lambda)y_b$; CutMix pastes a region of one onto the other and mixes labels by area.
+- **Photometric:** changes of brightness, contrast, gamma, hue and saturation; contrast-limited adaptive histogram equalisation (CLAHE); blur; noise.
+- **Erasing:** Cutout and CoarseDropout set random rectangles to a constant; XY-masking sets random rows and columns of a spectrogram to zero.
+- **Mixing:** **Mixup** blends two examples and their labels with a coefficient $\lambda \in [0, 1]$, usually drawn from a Beta distribution:
+  $$
+  \tilde x = \lambda\, x_a + (1 - \lambda)\, x_b, \qquad \tilde y = \lambda\, y_a + (1 - \lambda)\, y_b .
+  $$
+  **CutMix** pastes a rectangle from $x_b$ into $x_a$ and mixes the labels in proportion to area: if the rectangle covers a fraction $r$ of the image, $\tilde y = (1 - r)\, y_a + r\, y_b$.
 
 ### Domain-specific augmentation
 
-The most effective augmentations in these reports come from understanding how the data are produced:
+Several augmentations in these reports are derived from how the data are produced:
 
-- **Stain variation** in pathology (HuBMAP): tissue from different laboratories is stained differently; recolouring training images to other stain profiles narrows the gap.
-- **Finger dropout** in sign language (ASL): MediaPipe sometimes loses fingers; zeroing random fingers teaches robustness to exactly that failure.
-- **Left–right flip with label swap** (aneurysm, EEG): flipping a brain swaps left and right arteries or hemispheres, so the labels must be swapped too. Done correctly, this doubles the data.
-- **Simulated low resolution** (aneurysm): some scans have thick slices; downsampling training volumes teaches the model to handle them.
-- **Coordinate and slice jitter** (lumbar spine): the second stage receives crops located by a first-stage model that is sometimes off by one slice; jittering the training crops by the first stage's measured error rate prepares the second stage for those errors.
-- **Time-wise CutMix within the same signer** (ASL): cut two sequences at the same fraction and join them, joining their phrases at the same point.
+- **Stain variation** in pathology (HuBMAP): tissue from different laboratories is stained differently, and training images are recoloured to other stain profiles.
+- **Finger dropout** in sign language (ASL fingerspelling): MediaPipe sometimes fails to detect fingers, and randomly zeroing fingers during training produces the same pattern.
+- **Left–right flip with label exchange** (aneurysm, EEG): flipping a brain exchanges left and right arteries or hemispheres, so the corresponding labels are exchanged as well. Without the exchange, the flip would corrupt side-specific labels.
+- **Simulated low resolution** (aneurysm): some scans have thick slices, and downsampling followed by upsampling of training volumes reproduces their appearance.
+- **Coordinate and slice jitter** (lumbar spine): the second stage receives crops located by a first-stage model that is sometimes off by one slice; the training crops are shifted with the error rates measured for the first stage.
+- **Time-wise CutMix within one signer** (ASL fingerspelling): two sequences are cut at the same fraction of their length and joined, and their phrases are cut and joined at the same fraction.
 
-### Where augmentation hurts
+### Augmentations that change the answer
 
-Augmentations that change the answer teach the wrong thing. Vertical flips of a chest X-ray produce anatomy that never occurs; strong colour changes can erase the cue that distinguishes two skin lesions. Several write-ups list augmentations that were tried and removed, and those lists are as informative as the kept ones.
+An augmentation that changes the correct output trains the model on wrong labels. A vertical flip of a chest radiograph produces an anatomy that does not occur; strong colour changes can remove the cue that distinguishes two skin lesions; mirroring a brain without exchanging left and right labels assigns the wrong side. Several write-ups list augmentations that were tried and removed.

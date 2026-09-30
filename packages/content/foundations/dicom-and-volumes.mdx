@@ -1,32 +1,42 @@
 ---
 id: dicom-and-volumes
-title: "DICOM files and building volumes"
+title: "DICOM files and the construction of image volumes"
 kind: engineering
-summary: "Medical images arrive as DICOM files, one per slice, with metadata describing position, spacing and intensity scaling. Turning them into a correctly ordered, correctly scaled 3D array is the first and most error-prone step of every imaging pipeline."
+summary: "Describes the DICOM fields needed to turn a series of slice files into a correctly ordered, correctly scaled 3D array, the steps of that conversion, and its common failure modes."
 ---
 
-A DICOM file holds pixel data and a header of tagged fields. The fields used in these reports:
+### DICOM fields
+
+Medical images are distributed as DICOM files, usually one file per slice. Each file contains pixel data and a header of tagged fields. The fields used in these reports:
 
 | Field | Meaning |
 | --- | --- |
 | `StudyInstanceUID`, `SeriesInstanceUID`, `SOPInstanceUID` | identifiers of the study, the series and the individual image |
-| `ImagePositionPatient` | $(x,y,z)$ of the image's first pixel in millimetres, patient coordinates |
-| `ImageOrientationPatient` | direction cosines of the image rows and columns |
-| `PixelSpacing`, `SliceThickness` | in-plane spacing and nominal thickness, mm |
-| `RescaleSlope`, `RescaleIntercept` | convert stored integers to physical units (HU for CT) |
-| `WindowCenter`, `WindowWidth` | the display window chosen by the scanner |
-| `PhotometricInterpretation` | whether high values are bright (MONOCHROME2) or dark (MONOCHROME1) |
+| `ImagePositionPatient` | $(x, y, z)$ of the centre of the first pixel, in millimetres, in patient coordinates |
+| `ImageOrientationPatient` | direction cosines $\mathbf{r}$ of the image rows and $\mathbf{c}$ of the columns |
+| `PixelSpacing`, `SliceThickness` | in-plane pixel spacing and nominal slice thickness, in millimetres |
+| `RescaleSlope`, `RescaleIntercept` | convert stored integers to physical units (Hounsfield units for CT) |
+| `WindowCenter`, `WindowWidth` | display window suggested by the scanner |
+| `PhotometricInterpretation` | whether high values are displayed bright (MONOCHROME2) or dark (MONOCHROME1) |
 
 ### Building a volume
 
-1. Group files by series.
-2. Sort slices by the projection of `ImagePositionPatient` onto the slice normal (the cross product of the two orientation vectors); for axial scans this is the z-coordinate.
-3. Apply slope and intercept.
-4. Stack, and record the voxel spacing from `PixelSpacing` and the gaps between consecutive positions.
-5. Optionally resample to a fixed spacing, and reorient to a standard anatomical orientation.
+1. **Group** files by `SeriesInstanceUID`.
+2. **Order** the slices. The slice normal is the cross product of the row and column directions, $\mathbf{n} = \mathbf{r} \times \mathbf{c}$. The position of slice $i$ along the normal is the scalar projection
+   $$
+   s_i = \mathbf{n} \cdot \mathbf{p}_i ,
+   $$
+   where $\mathbf{p}_i$ is its `ImagePositionPatient`. Slices are sorted by $s_i$. For axial slices with $\mathbf{r} = (1, 0, 0)$ and $\mathbf{c} = (0, 1, 0)$, $\mathbf{n} = (0, 0, 1)$ and $s_i$ is the $z$ coordinate.
+3. **Rescale** each stored value $v$ to physical units, $u = \text{slope} \cdot v + \text{intercept}$. For CT, typical values are slope 1 and intercept $-1024$.
+4. **Stack** the slices into an array of shape (slices, rows, columns) and record the voxel spacing: `PixelSpacing` in plane and the median of the differences $s_{i+1} - s_i$ between slices. The slice spacing can differ from `SliceThickness`, since slices may overlap or have gaps.
+5. Optionally **resample** to a fixed spacing and **reorient** to a standard anatomical orientation.
 
-Common failures: slices with different sizes inside one series, duplicate positions, missing slices, multi-frame files that hold a whole series in one file, and inverted photometric interpretation in mammograms. Tools used by the winners include `pydicom`, `dicomsdl` (fast decoding), NVIDIA DALI (GPU decoding), `dcm2niix` (conversion to NIfTI) and `SimpleITK`.
+For example, a head CT with 0.45 mm pixels and 0.8 mm slice spacing has voxels of $0.45 \times 0.45 \times 0.8 = 0.162$ mm³; resampling it to 1 mm isotropic spacing reduces the number of voxels by a factor of about $1/0.162 \approx 6.2$.
 
-### Speed matters
+### Common failures
 
-Decoding thousands of compressed DICOM files can take longer than running the model. Several solutions moved decoding to the GPU or cached preprocessed arrays, and the mammography winner described GPU preprocessing as necessary to fit the 9-hour limit.
+Slices of different sizes within one series; duplicate positions; missing slices, which appear as a jump in $s_{i+1} - s_i$; multi-frame files that contain a whole series in one file; missing header fields; and inverted photometric interpretation in mammograms. Tools used by the winners include `pydicom`, `dicomsdl` (fast decoding), NVIDIA DALI (decoding on the GPU), `dcm2niix` (conversion to NIfTI) and `SimpleITK`.
+
+### Decoding time
+
+Decoding thousands of compressed DICOM files can take longer than running the model. Several solutions decoded images on the GPU or cached preprocessed arrays; the winner of the RSNA breast cancer competition decoded on the GPU to fit within the 9-hour limit.

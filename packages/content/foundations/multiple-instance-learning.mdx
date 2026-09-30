@@ -2,30 +2,45 @@
 id: multiple-instance-learning
 title: "Multiple instance learning and attention pooling"
 kind: ml
-summary: "When a label belongs to a collection of items (a slide, a scan, a stack of slices) but the model processes items one at a time, multiple instance learning decides how item-level evidence combines into the collection's prediction."
+summary: "Describes multiple instance learning, in which one label applies to a collection of items processed individually, and the pooling operators (max, mean, generalised mean, attention and top-k selection) that combine item-level evidence into a prediction for the collection."
 ---
 
-### The setting
+### Setting
 
-A **bag** $B = \{x_1,\dots,x_n\}$ of **instances** has one label $y$. A pathology slide is a bag of tiles; a lumbar MRI crop is a bag of five slices; a CT series is a bag of images. The standard assumption: the bag is positive if at least one instance is positive. Instance labels are unknown.
+A **bag** $B = \{x_1, \dots, x_n\}$ of **instances** carries a single label $y$, and the labels of the individual instances are unknown. A pathology slide is a bag of tiles, a crop of a lumbar MRI is a bag of slices, and a CT series is a bag of images. The standard assumption for binary labels is that a bag is positive if and only if at least one of its instances is positive:
 
-A MIL model encodes each instance to an embedding $h_i = f(x_i)$, pools the embeddings into one bag vector $z$, and classifies $z$. The choice of pooling is the design decision.
+$$
+y = \max_{i} y_i, \qquad y_i \in \{0, 1\} \text{ unobserved}.
+$$
+
+A multiple instance learning (MIL) model encodes each instance as an embedding $h_i = f(x_i) \in \mathbb{R}^{d}$, pools the embeddings into a bag vector $z \in \mathbb{R}^{d}$, and classifies $z$. The pooling operator determines how evidence from individual instances is combined.
 
 ### Pooling operators
 
-- **Max pooling**, $z = \max_i h_i$ (per dimension): matches the "one positive instance suffices" assumption but passes gradient to only one instance.
-- **Mean pooling**, $z = \frac1n\sum_i h_i$: stable, but a small lesion is diluted by many normal tiles.
-- **Generalised mean (GeM)**, $z = \left(\frac1n\sum_i h_i^{\,p}\right)^{1/p}$: interpolates between mean ($p=1$) and max ($p\to\infty$), with $p$ learned.
-- **Attention pooling** (Ilse et al., 2018):
+**Max pooling**, $z_c = \max_i h_{i,c}$ for each dimension $c$, matches the assumption that one positive instance suffices. Its gradient with respect to $h_{i,c}$ is 1 for the instance attaining the maximum and 0 for all others, so each training step updates the encoder through one instance per dimension.
+
+**Mean pooling**, $z = \frac{1}{n}\sum_i h_i$, passes gradient to every instance equally, but dilutes the evidence from a few positive instances. If one tile out of $n = 1000$ has a strong response $a$ in some dimension and all others have a background value $b$, the pooled value is $b + (a - b)/1000$.
+
+**Generalised mean (GeM)** pooling, for non-negative embeddings and $p \ge 1$,
 
 $$
-a_i = \frac{\exp\big(w^\top\tanh(Vh_i)\big)}{\sum_j\exp\big(w^\top\tanh(Vh_j)\big)}, \qquad z = \sum_i a_i h_i .
+z_c = \left(\frac{1}{n}\sum_{i=1}^{n} h_{i,c}^{\,p}\right)^{1/p},
 $$
 
-A small network scores each instance; the softmax turns scores into weights; the bag vector is the weighted average. The weights show which instances drove the prediction, which makes the model partly interpretable.
+equals mean pooling for $p = 1$ and tends to max pooling as $p \to \infty$, because the largest term dominates the sum of $p$-th powers. The exponent $p$ can be learned.
 
-- **Top-$k$ and bottom-$k$ selection (CHOWDER)** (Courtiol et al., 2018): score every tile with a linear layer, keep the $k$ highest and $k$ lowest scores, and classify from those $2k$ numbers. The UBC-OCEAN winners used CHOWDER with $k=10$ on foundation-model embeddings and found it as good as newer MIL architectures.
+**Attention pooling** (Ilse et al., 2018) computes a weight for each instance with a small network,
 
-### Adding order
+$$
+e_i = w^\top \tanh(V h_i), \qquad
+a_i = \frac{\exp(e_i)}{\sum_{j=1}^{n} \exp(e_j)}, \qquad
+z = \sum_{i=1}^{n} a_i\, h_i ,
+$$
 
-When instances are ordered (slices through a vertebra, frames in time), a bidirectional LSTM or GRU can process the sequence before pooling, so each instance's embedding reflects its neighbours. The lumbar spine winner's "LSTM-MIL" did exactly this: CNN per slice, BiLSTM across slices, attention pooling, with an auxiliary loss asking the attention to peak at the correct slice.
+with learned parameters $V \in \mathbb{R}^{m \times d}$ and $w \in \mathbb{R}^{m}$. The weights $a_i$ are positive and sum to 1, so $z$ is a weighted average of the instance embeddings. The weights indicate which instances contributed most to the prediction.
+
+**Top-$k$ and bottom-$k$ selection (CHOWDER)** (Courtiol et al., 2018) computes a scalar score $s_i = u^\top h_i$ for every instance, keeps the $k$ largest and the $k$ smallest scores, and classifies the bag from these $2k$ numbers with a small multilayer perceptron. The winners of UBC-OCEAN used CHOWDER with $k = 10$ on embeddings from a pathology foundation model and report that it performed as well as more recent MIL architectures.
+
+### Ordered instances
+
+When the instances have an order, such as slices through a vertebra or frames in time, a bidirectional LSTM or GRU can process the sequence of embeddings before pooling, so that each embedding also reflects its neighbours. The winner of the RSNA lumbar spine competition used this design: a CNN for each slice, a bidirectional LSTM across the slices, attention pooling, and an auxiliary loss that encourages the attention weights to peak at the annotated slice.

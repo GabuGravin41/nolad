@@ -2,23 +2,47 @@
 id: weight-averaging
 title: "Exponential moving averages and stochastic weight averaging"
 kind: ml
-summary: "Averaging a model's weights over the course of training gives a model that generalises better and is less sensitive to the exact stopping point."
+summary: "Describes the exponential moving average of weights, stochastic weight averaging and the merging of fine-tuned models, with the effective averaging window of an EMA and the conditions under which averaging weights is meaningful."
 ---
 
-### EMA
+### Exponential moving average (EMA)
 
-Keep a second copy of the weights that trails the training weights:
+During training, a second copy of the weights is kept and updated after every optimiser step $t$:
 
 $$
-\theta^{\text{EMA}}_t = \alpha\,\theta^{\text{EMA}}_{t-1} + (1-\alpha)\,\theta_t, \qquad \alpha \approx 0.999 .
+\theta^{\mathrm{EMA}}_t = \alpha\,\theta^{\mathrm{EMA}}_{t-1} + (1 - \alpha)\,\theta_t, \qquad 0 < \alpha < 1,
 $$
 
-Use $\theta^{\text{EMA}}$ for validation and inference. Because SGD bounces around a minimum, the average of recent iterates usually sits nearer its centre than any single iterate, and it changes smoothly, so validation curves are less noisy.
+where $\theta_t$ are the training weights and $\alpha$ is the decay, typically between 0.99 and 0.9999. The EMA weights are used for validation and inference.
 
-### SWA
+**Unrolling the recursion.** Starting from $\theta^{\mathrm{EMA}}_0 = \theta_0$ and substituting repeatedly,
 
-**Stochastic weight averaging** (Izmailov et al., 2018) averages checkpoints taken at intervals late in training, often with a constant or cyclic learning rate. The average tends to lie in a wide, flat region of the loss surface, and flat minima generalise better than sharp ones. The Vesuvius winners adopted SWA because their checkpoints were inconsistent from epoch to epoch and picking one was a gamble.
+$$
+\theta^{\mathrm{EMA}}_t = (1 - \alpha)\sum_{s=1}^{t} \alpha^{\,t-s}\,\theta_s \;+\; \alpha^{t}\,\theta_0 .
+$$
 
-### Checkpoint averaging and merging
+The EMA is a weighted average of all past iterates, with weights decreasing geometrically with age. The weights $(1-\alpha)\alpha^{k}$ for $k = 0, 1, 2, \dots$ sum to 1, and their mean age is
 
-The same idea at larger scale: the pneumothorax winner averaged the predictions of the top three checkpoints per fold; the NemoSkills team averaged the weights of checkpoints from different stages of fine-tuning and then linearly merged a chain-of-thought model with a tool-use model. Linear interpolation of weights works when the models share an initialisation, because their solutions lie in a connected low-loss region.
+$$
+\sum_{k=0}^{\infty} k\,(1 - \alpha)\,\alpha^{k} = \frac{\alpha}{1 - \alpha},
+$$
+
+so the average extends over roughly $1/(1-\alpha)$ recent steps: about 1,000 steps for $\alpha = 0.999$.
+
+Late in training, stochastic gradient descent moves the weights around a region of low loss because each step uses a noisy gradient. An average of recent iterates is typically closer to the centre of that region than an individual iterate, and it changes slowly, so validation scores computed with EMA weights fluctuate less from one evaluation to the next.
+
+### Stochastic weight averaging (SWA)
+
+**Stochastic weight averaging** (Izmailov et al., 2018) takes an equal-weight average of checkpoints saved at regular intervals in the last part of training, usually with a constant or cyclic learning rate during that period:
+
+$$
+\theta^{\mathrm{SWA}} = \frac{1}{n}\sum_{j=1}^{n} \theta_{t_j}.
+$$
+
+Izmailov et al. report that the average lies in a wider, flatter region of the loss surface than the individual checkpoints and generalises better. If the model contains batch normalisation, its running statistics must be recomputed for $\theta^{\mathrm{SWA}}$ with one pass over the training data, since the averaged weights produce different activations. The winners of the Vesuvius ink detection competition used SWA because the scores of individual checkpoints varied from epoch to epoch.
+
+### Averaging predictions, averaging weights and model merging
+
+Averaging the **predictions** of several checkpoints (as the pneumothorax winner did with the three best checkpoints per fold) requires one forward pass per checkpoint. Averaging the **weights** gives one model and one forward pass. Weight averaging is meaningful only when the models lie in a connected low-loss region, which is typically the case for checkpoints of the same training run and for models fine-tuned from the same pretrained initialisation. For two independently initialised networks, the average of their weights generally performs poorly, because equivalent networks can differ by a permutation of their hidden units.
+
+The NemoSkills team in AIMO-2 averaged checkpoints from different stages of fine-tuning, and then merged a chain-of-thought model and a tool-integrated model, both fine-tuned from the same base, by linear interpolation of weights: $\theta = 0.3\,\theta_{\mathrm{CoT}} + 0.7\,\theta_{\mathrm{TIR}}$.

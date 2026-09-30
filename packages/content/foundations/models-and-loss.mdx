@@ -2,39 +2,78 @@
 id: models-and-loss
 title: "Models, parameters and loss functions"
 kind: ml
-summary: "A trained network is a function with adjustable numbers inside it. Training chooses those numbers to make a loss function small on the training data."
+summary: "Defines a model as a parameterised function, a loss function as a measure of prediction error, and training as the minimisation of the average loss over a training set; distinguishes the loss, the evaluation metric and the decision rule."
 ---
 
-A **model** is a function $f_\theta$ that maps an input $x$ (an image, a signal, a sequence) to an output $\hat y = f_\theta(x)$ (a probability, a mask, a number). The vector $\theta$ collects the model's **parameters**: every weight and bias inside it. A small convolutional network has a few million parameters; the language models in the AIMO report have fourteen billion. Nothing else about the model changes during training.
+### Models and parameters
 
-A **loss function** $\ell(\hat y, y)$ measures how far a prediction $\hat y$ is from the correct answer $y$. It is small when the prediction is good and large when it is bad. Given a training set $\{(x_i, y_i)\}_{i=1}^{N}$, training searches for
+A **model** is a function $f_\theta$ that maps an input $x$ (an image, a signal, a sequence) to an output $\hat y = f_\theta(x)$ (a probability, a mask, a number). The vector $\theta \in \mathbb{R}^{P}$ collects the model's **parameters**, that is, every weight and bias it contains. Training changes $\theta$ and nothing else. A small convolutional network has a few million parameters; the language model in the AIMO report has about fourteen billion.
 
-$$
-\theta^\star = \arg\min_{\theta} \; \frac{1}{N}\sum_{i=1}^{N} \ell\big(f_\theta(x_i), y_i\big).
-$$
+### Loss functions and empirical risk
 
-The average on the right is the **empirical risk**. Minimising it is called empirical risk minimisation. The quantity we care about is the loss on data the model has never seen, the **expected risk**
+A **loss function** $\ell(\hat y, y) \ge 0$ measures the error of a prediction $\hat y$ against the correct answer $y$. It is small for good predictions and large for bad ones. Two examples:
 
 $$
-R(\theta) = \mathbb{E}_{(x,y)\sim \mathcal{D}}\,\ell\big(f_\theta(x), y\big),
+\ell_{\mathrm{sq}}(\hat y, y) = (\hat y - y)^2, \qquad
+\ell_{\mathrm{BCE}}(\hat p, y) = -\big[\,y \log \hat p + (1 - y)\log(1 - \hat p)\,\big],
 $$
 
-where $\mathcal{D}$ is the distribution that produces real cases. The empirical risk estimates $R(\theta)$, and the estimate is only good when the training data resemble the cases the model will meet. A model that drives the empirical risk far below $R(\theta)$ has **overfitted**: it has memorised features of the training set that do not recur.
+the squared error for a real-valued target and the binary cross-entropy for a label $y \in \{0, 1\}$ and a predicted probability $\hat p \in (0, 1)$.
 
-### Three things that are easy to confuse
+Given a training set $\{(x_i, y_i)\}_{i=1}^{N}$, the **empirical risk** is the average loss,
 
-- The **loss** is what the optimiser minimises. It must be differentiable in $\theta$ almost everywhere, because training uses gradients.
-- The **metric** is what the competition, or the clinic, scores. It is often not differentiable (accuracy, AUC, F-score, kappa), so it cannot be optimised directly. Much of the craft in these reports is choosing a loss whose minimum sits close to the metric's maximum.
-- The **decision rule** turns a model output into an action, such as "flag this scan if $\hat p > 0.3$". The threshold is chosen after training and can matter as much as the model.
+$$
+\hat R_N(\theta) = \frac{1}{N}\sum_{i=1}^{N} \ell\big(f_\theta(x_i), y_i\big),
+$$
 
-### Why probabilities
+and training searches for parameters that make it small:
 
-Most models in these reports output probabilities rather than hard labels. A probability can be ranked (for AUC), thresholded later (for F-scores), averaged with other models (for ensembles) and calibrated. Losses built from the likelihood of the data, such as binary cross-entropy, train models whose outputs behave like probabilities when the model is well specified.
+$$
+\theta^\star = \arg\min_{\theta}\ \hat R_N(\theta).
+$$
 
-### Generalisation in practice
+This procedure is called empirical risk minimisation.
 
-Three habits recur in every winning solution:
+### Expected risk and overfitting
 
-1. **Hold out data that the model never trains on** and measure the metric there (validation). Split by patient, subject or experiment, never by image, so that near-duplicates cannot leak.
-2. **Regularise**: augmentation, dropout, weight decay and early stopping all make memorisation harder.
-3. **Average**: ensembles of models trained differently make errors that partly cancel.
+The quantity of interest is the loss on new cases drawn from the distribution $\mathcal{D}$ that produces real inputs and labels, the **expected risk**
+
+$$
+R(\theta) = \mathbb{E}_{(x, y) \sim \mathcal{D}}\ \ell\big(f_\theta(x), y\big).
+$$
+
+For fixed $\theta$ and training examples drawn independently from $\mathcal{D}$, $\hat R_N(\theta)$ is an unbiased estimate of $R(\theta)$: taking expectations term by term,
+
+$$
+\mathbb{E}\big[\hat R_N(\theta)\big] = \frac{1}{N}\sum_{i=1}^{N} \mathbb{E}\,\ell\big(f_\theta(x_i), y_i\big) = \frac{1}{N}\cdot N \cdot R(\theta) = R(\theta).
+$$
+
+This no longer holds for $\theta^\star$, because $\theta^\star$ was chosen using the same training examples. Typically $\hat R_N(\theta^\star) < R(\theta^\star)$. When the gap is large the model has **overfitted**: it fits properties of the training examples that do not recur in new data. The expected risk is therefore estimated on held-out data that were not used to choose $\theta$ (see the cross-validation primer), and the estimate is valid only if the held-out data come from the same distribution as the cases the model will be used on.
+
+### Loss, metric and decision rule
+
+Three quantities are often confused:
+
+- The **loss** is minimised by the optimiser. It must be differentiable with respect to $\theta$ almost everywhere, because training uses gradients.
+- The **metric** is the score reported by a competition or used in practice. Many metrics (accuracy, AUC, F-scores, kappa) are piecewise constant in $\theta$, so their gradient is zero almost everywhere and they cannot be minimised by gradient descent. A loss is chosen whose minimiser is close to the maximiser of the metric.
+- The **decision rule** converts a model output into an action, for example "flag the scan if $\hat p > 0.3$". The threshold is usually chosen after training, on held-out data.
+
+### Probabilistic outputs
+
+Most models in these reports output probabilities. A probability can be used for ranking (AUC), thresholded later (F-scores), averaged over models (ensembles) and calibrated. Losses derived from the likelihood of the data train models whose outputs estimate conditional probabilities. For the binary cross-entropy, the expected loss at an input $x$ with $q = P(y = 1 \mid x)$ is
+
+$$
+L(\hat p) = -\big[\,q \log \hat p + (1 - q)\log(1 - \hat p)\,\big],
+\qquad
+L'(\hat p) = -\frac{q}{\hat p} + \frac{1 - q}{1 - \hat p},
+$$
+
+which is zero at $\hat p = q$; since $L''(\hat p) = q/\hat p^2 + (1-q)/(1-\hat p)^2 > 0$, this is the minimum. A model that minimises the expected cross-entropy therefore outputs $\hat p = P(y = 1 \mid x)$, provided the model class can represent that function.
+
+### Measures against overfitting
+
+The solutions in these reports use several measures to keep the gap between $\hat R_N$ and $R$ small and to estimate $R$ reliably:
+
+- **Held-out validation.** The metric is measured on data never used for training. Splits are made by patient, subject or experiment instead of by image or sample, so that near-duplicate examples do not appear on both sides of the split.
+- **Regularisation.** Data augmentation, dropout, weight decay and early stopping restrict how closely the model can fit individual training examples.
+- **Ensembling.** Averaging models trained with different seeds, data splits or architectures reduces the variance of the prediction, because their errors are partly independent.

@@ -2,28 +2,52 @@
 id: kl-divergence
 title: "Entropy, cross-entropy and KL divergence"
 kind: math
-summary: "KL divergence measures how much a predicted distribution differs from a target distribution. Minimising it is the same as minimising cross-entropy against that target."
+summary: "Defines entropy, cross-entropy and the Kullback–Leibler divergence between discrete distributions, proves that the divergence is non-negative, and shows that minimising it over the prediction is equivalent to minimising the cross-entropy."
 ---
 
-For two probability distributions $P$ (the target) and $Q$ (the prediction) over classes $k = 1,\dots,K$:
+### Definitions
+
+Let $P = (P_1, \dots, P_K)$ be a target distribution and $Q = (Q_1, \dots, Q_K)$ a predicted distribution over $K$ classes, with $P_k, Q_k \ge 0$ and $\sum_k P_k = \sum_k Q_k = 1$. The **entropy** of $P$ and the **cross-entropy** of $Q$ relative to $P$ are
 
 $$
-\text{Entropy: } H(P) = -\sum_k P_k\log P_k, \qquad \text{Cross-entropy: } H(P,Q) = -\sum_k P_k\log Q_k .
+H(P) = -\sum_{k=1}^{K} P_k \log P_k, \qquad H(P, Q) = -\sum_{k=1}^{K} P_k \log Q_k,
 $$
 
-The **Kullback–Leibler divergence** is their difference:
+with the convention $0 \log 0 = 0$. The **Kullback–Leibler divergence** is
 
 $$
-D_{\text{KL}}(P\,\Vert\,Q) = \sum_k P_k\log\frac{P_k}{Q_k} = H(P,Q) - H(P).
+D_{\mathrm{KL}}(P \,\|\, Q) = \sum_{k=1}^{K} P_k \log\frac{P_k}{Q_k} = H(P, Q) - H(P).
 $$
 
-Two properties matter in practice.
+With natural logarithms these quantities are measured in nats; with base-2 logarithms, in bits.
 
-1. $D_{\text{KL}}(P\Vert Q) \ge 0$, with equality only when $Q = P$. (This follows from Jensen's inequality applied to the concave logarithm: $-D_{\text{KL}} = \sum_k P_k \log(Q_k/P_k) \le \log\sum_k P_k (Q_k/P_k) = \log 1 = 0$.)
-2. $H(P)$ does not depend on the prediction. Minimising KL divergence over $Q$ is therefore the same as minimising cross-entropy $H(P,Q)$, and the gradient with respect to the logits is again $Q - P$.
+**Worked example.** For $P = (0.7, 0.2, 0.1)$ and $Q = (0.5, 0.3, 0.2)$,
 
-### Asymmetry and extreme predictions
+$$
+D_{\mathrm{KL}}(P\,\|\,Q) = 0.7\ln\tfrac{0.7}{0.5} + 0.2\ln\tfrac{0.2}{0.3} + 0.1\ln\tfrac{0.1}{0.2}
+\approx 0.2355 - 0.0811 - 0.0693 = 0.0851 \ \text{nats}.
+$$
 
-$D_{\text{KL}}(P\Vert Q)$ is not symmetric. A class with target mass $P_k > 0$ and predicted mass $Q_k \to 0$ contributes $P_k\log(P_k/Q_k) \to \infty$. Predicting near-zero probability for any class that even a minority of experts chose is expensive. The HMS winners noted that the metric is "sensitive to errors for extreme predictions", which is why diverse ensembles and slightly softened outputs (entmax with α close to 1, label smoothing) helped them.
+### Non-negativity
 
-Terms with $P_k = 0$ contribute nothing, by the convention $0\log 0 = 0$.
+$D_{\mathrm{KL}}(P\,\|\,Q) \ge 0$, with equality if and only if $Q = P$. Sum over the classes with $P_k > 0$. Since the logarithm is concave, Jensen's inequality gives
+
+$$
+-D_{\mathrm{KL}}(P\,\|\,Q) = \sum_{k:\,P_k > 0} P_k \log\frac{Q_k}{P_k}
+\;\le\; \log \sum_{k:\,P_k > 0} P_k\,\frac{Q_k}{P_k}
+= \log \sum_{k:\,P_k > 0} Q_k \;\le\; \log 1 = 0 .
+$$
+
+Equality in Jensen's inequality requires $Q_k / P_k$ to be constant over the classes with $P_k > 0$, and the last step requires $Q$ to put no mass elsewhere; together these give $Q = P$.
+
+### Minimising KL divergence is minimising cross-entropy
+
+$H(P)$ does not depend on $Q$. For a model that outputs $Q$, minimising $D_{\mathrm{KL}}(P\,\|\,Q)$ over the model parameters is therefore the same problem as minimising $H(P, Q)$. If $Q = \mathrm{softmax}(z)$ for logits $z$, the gradient of the cross-entropy with respect to the logits is (see the softmax cross-entropy primer)
+
+$$
+\frac{\partial H(P, Q)}{\partial z_k} = Q_k - P_k .
+$$
+
+### Asymmetry and near-zero predictions
+
+The divergence is not symmetric: in general $D_{\mathrm{KL}}(P\,\|\,Q) \ne D_{\mathrm{KL}}(Q\,\|\,P)$. In $D_{\mathrm{KL}}(P\,\|\,Q)$, a class with $P_k > 0$ and $Q_k \to 0$ contributes $P_k \log(P_k/Q_k) \to \infty$, while a class with $P_k = 0$ contributes nothing regardless of $Q_k$. When the target is a distribution of expert votes, as in the HMS brain-activity competition, a prediction of near-zero probability for a class chosen by even a few experts is heavily penalised. For example, with $P_k = 0.2$, predicting $Q_k = 0.001$ contributes $0.2 \ln 200 \approx 1.06$ nats from that class alone. The HMS winners used ensembles of diverse models and output functions that avoid exact zeros for this reason.

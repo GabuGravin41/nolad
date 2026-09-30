@@ -2,27 +2,31 @@
 id: unet
 title: "U-Net and encoder–decoder segmentation"
 kind: ml
-summary: "A U-Net compresses an image into coarse, meaningful features and then expands them back to full resolution, copying fine detail across through skip connections, so that every pixel gets a label."
+summary: "Describes the U-Net architecture, in which an encoder reduces spatial resolution to compute features, a decoder restores full resolution, and skip connections pass fine spatial detail from encoder to decoder; lists the variants used in the reports."
 ---
 
-Segmentation needs an output the size of the input. A classification backbone throws away spatial resolution on purpose, ending with a small grid of abstract features. Ronneberger et al. (2015) paired such an **encoder** with a mirrored **decoder**:
+### Architecture
 
-1. The encoder applies convolutions and downsampling, halving resolution and increasing channels at each stage. Deep stages know *what* is in the image but only roughly *where*.
-2. The decoder upsamples step by step (by interpolation or transposed convolution), halving channels.
-3. **Skip connections** concatenate each encoder stage's feature map with the decoder stage of the same resolution. The decoder receives both the coarse semantic signal and the fine spatial detail it needs to draw boundaries.
-4. A final $1\times1$ convolution maps each pixel's feature vector to class logits.
+Segmentation requires an output with the same spatial size as the input, one label per pixel. A classification network reduces the resolution in stages and ends with a small grid of features. Ronneberger et al. (2015) combined such an **encoder** with a symmetric **decoder**:
 
-<Pipeline steps={[{title: "Encoder stage 1", detail: "full resolution, few channels"}, {title: "Encoder stages 2–5", detail: "resolution ÷2 each, channels ×2"}, {title: "Bottleneck", detail: "coarse, semantic"}, {title: "Decoder stages", detail: "upsample ×2, concatenate skip features"}, {title: "1×1 conv head", detail: "per-pixel logits"}]} caption="Data flow in a U-Net. Skip connections link each encoder stage to the decoder stage of equal resolution." />
+1. **Encoder.** Each stage applies convolutions and then halves the resolution, usually doubling the number of channels. After $S$ stages, an input of $H \times W$ pixels becomes a feature map of $H/2^{S} \times W/2^{S}$ cells, each summarising a large region of the input.
+2. **Decoder.** Each stage doubles the resolution, by interpolation or transposed convolution, and usually halves the number of channels.
+3. **Skip connections.** Each decoder stage concatenates its input with the encoder feature map of the same resolution. The decoder thereby receives both the features of the deep stages and the spatial detail of the early stages, which is needed to place boundaries.
+4. **Output head.** A $1 \times 1$ convolution maps the feature vector of each pixel to class logits.
 
-In practice the encoder is any pretrained backbone (ResNet34, EfficientNet-B3, ConvNeXt) and libraries such as `segmentation_models_pytorch` or MONAI supply the decoder. The same shape works in 3D with 3D convolutions.
+For example, with a $512 \times 512$ input and $S = 5$ stages with channel counts 64, 128, 256, 512 and 1024, the deepest feature map has $512 / 2^5 = 16$ cells per side and 1024 channels, and the decoder restores $512 \times 512$ in five doublings.
 
-### Variants in these reports
+<Pipeline steps={[{title: "Encoder stage 1", detail: "full resolution, few channels"}, {title: "Encoder stages 2–5", detail: "resolution ÷2 each, channels ×2"}, {title: "Bottleneck", detail: "lowest resolution"}, {title: "Decoder stages", detail: "upsample ×2, concatenate skip features"}, {title: "1×1 convolution", detail: "per-pixel logits"}]} caption="Data flow in a U-Net. Skip connections link each encoder stage to the decoder stage of the same resolution." />
 
-- **UNet++, FPN, UPerNet, DeepLabV3** change how multi-scale features are combined.
-- **nnU-Net** (Isensee et al., 2021) is a U-Net framework that configures patch size, spacing, normalisation, augmentation and training schedule automatically from the dataset's properties. It won the aneurysm competition's segmentation stages and is the strongest default for 3D medical segmentation.
-- **Auxiliary segmentation heads** attached to a classifier's encoder (abdominal trauma, aneurysm) do not produce the final answer; they force the encoder to learn where organs or lesions are, which improves the classification.
-- **Partial decoders**: the CZII winners found the penultimate decoder output (half resolution) more accurate for locating particle centres than the full-resolution output, and dropped the last stage.
+In practice the encoder is usually a pretrained classification backbone (ResNet-34, EfficientNet-B3, ConvNeXt), and libraries such as `segmentation_models_pytorch` or MONAI provide the decoder. The same design applies in 3D with 3D convolutions, where each downsampling reduces the number of voxels by a factor of 8.
+
+### Variants in the reports
+
+- **UNet++, FPN, UPerNet and DeepLabV3** differ in how features from different resolutions are combined.
+- **nnU-Net** (Isensee et al., 2021) is a U-Net framework that sets the patch size, voxel spacing, normalisation, augmentation and training schedule automatically from properties of the dataset. It was used for the segmentation stages of the winning aneurysm solution and is a common baseline for 3D medical segmentation.
+- **Auxiliary segmentation heads** attached to the encoder of a classifier (abdominal trauma, aneurysm) are trained with segmentation targets but do not produce the final output; the authors report that they improve classification.
+- **Truncated decoders.** The CZII cryo-ET winners found the output of the penultimate decoder stage, at half resolution, more accurate for locating particle centres than the full-resolution output, and removed the last stage.
 
 ### Losses
 
-Segmentation is usually trained with per-pixel cross-entropy, an overlap loss such as Dice, or their sum. See the Dice foundation for why overlap losses help with small structures.
+Segmentation models are usually trained with pixel-wise cross-entropy, an overlap loss such as soft Dice, or their sum. The Dice primer derives the overlap losses and their gradients.

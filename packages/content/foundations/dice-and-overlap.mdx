@@ -2,60 +2,126 @@
 id: dice-and-overlap
 title: "Dice, IoU and overlap-based losses"
 kind: math
-summary: "The Dice coefficient scores a segmentation by its overlap with the truth. It equals the F1 score over pixels, ignores the true-negative background, and can be made differentiable to use as a loss."
+summary: "Defines the Dice coefficient and the intersection over union for segmentations, shows that Dice equals the F1 score over pixels, and derives the soft Dice, Tversky and Lovász losses used to train segmentation models."
 ---
 
 ### Definitions
 
-For a predicted set of pixels $X$ and a true set $Y$:
+Let $X$ be the set of pixels (or voxels) predicted as foreground and $Y$ the set of true foreground pixels. The **Dice coefficient** and the **intersection over union** (IoU, also called the Jaccard index) are
 
 $$
-\mathrm{Dice}(X,Y) = \frac{2\,|X\cap Y|}{|X| + |Y|}, \qquad \mathrm{IoU}(X,Y) = \frac{|X\cap Y|}{|X\cup Y|}.
+\mathrm{Dice}(X, Y) = \frac{2\,|X \cap Y|}{|X| + |Y|}, \qquad
+\mathrm{IoU}(X, Y) = \frac{|X \cap Y|}{|X \cup Y|}.
 $$
 
-Both range from 0 (no overlap) to 1 (identical). They are monotonically related: $\mathrm{Dice} = 2\,\mathrm{IoU}/(1+\mathrm{IoU})$.
+Both lie in $[0, 1]$: 0 when the sets do not overlap, 1 when they are identical.
 
-<Deep title="Dice is the F1 score over pixels" kind="math">
-
-Count pixels as true positives $TP = |X\cap Y|$, false positives $FP = |X\setminus Y|$ and false negatives $FN = |Y\setminus X|$. Then $|X| = TP+FP$ and $|Y| = TP+FN$, so
+**Relation between the two.** Write $I = |X \cap Y|$ and $S = |X| + |Y|$. Since $|X \cup Y| = |X| + |Y| - |X \cap Y| = S - I$,
 
 $$
-\mathrm{Dice} = \frac{2TP}{2TP+FP+FN}.
+\mathrm{IoU} = \frac{I}{S - I}, \qquad \mathrm{Dice} = \frac{2I}{S}.
 $$
 
-Precision is $P = TP/(TP+FP)$ and recall is $R = TP/(TP+FN)$. The harmonic mean $F_1 = 2PR/(P+R)$ simplifies:
+Solving the second for $S = 2I/\mathrm{Dice}$ and substituting into the first gives
 
 $$
-F_1 = \frac{2\cdot\frac{TP}{TP+FP}\cdot\frac{TP}{TP+FN}}{\frac{TP}{TP+FP}+\frac{TP}{TP+FN}} = \frac{2TP}{(TP+FN)+(TP+FP)} = \mathrm{Dice}.
+\mathrm{IoU} = \frac{I}{2I/\mathrm{Dice} - I} = \frac{\mathrm{Dice}}{2 - \mathrm{Dice}},
+\qquad\text{equivalently}\qquad
+\mathrm{Dice} = \frac{2\,\mathrm{IoU}}{1 + \mathrm{IoU}}.
 $$
 
-True negatives do not appear. A tumour occupying 0.1% of an image is scored on how well that 0.1% is found, not on the 99.9% of background correctly left empty.
-</Deep>
+The map is increasing, so the two measures rank predictions of a single image identically. For example, $\mathrm{IoU} = 0.5$ corresponds to $\mathrm{Dice} = 1/1.5 \approx 0.667$.
+
+### Dice equals the F1 score over pixels
+
+Count pixels as
+
+$$
+\mathrm{TP} = |X \cap Y|, \qquad \mathrm{FP} = |X \setminus Y|, \qquad \mathrm{FN} = |Y \setminus X|,
+$$
+
+so that $|X| = \mathrm{TP} + \mathrm{FP}$ and $|Y| = \mathrm{TP} + \mathrm{FN}$. Substituting into the definition,
+
+$$
+\mathrm{Dice} = \frac{2\,\mathrm{TP}}{2\,\mathrm{TP} + \mathrm{FP} + \mathrm{FN}}.
+$$
+
+The precision and recall are
+
+$$
+P = \frac{\mathrm{TP}}{\mathrm{TP} + \mathrm{FP}}, \qquad R = \frac{\mathrm{TP}}{\mathrm{TP} + \mathrm{FN}},
+$$
+
+and $F_1$ is their harmonic mean, $F_1 = 2PR/(P + R)$. Its reciprocal is the mean of the reciprocals:
+
+$$
+\frac{1}{F_1} = \frac{1}{2}\left(\frac{1}{P} + \frac{1}{R}\right)
+= \frac{1}{2}\left(\frac{\mathrm{TP} + \mathrm{FP}}{\mathrm{TP}} + \frac{\mathrm{TP} + \mathrm{FN}}{\mathrm{TP}}\right)
+= \frac{2\,\mathrm{TP} + \mathrm{FP} + \mathrm{FN}}{2\,\mathrm{TP}}.
+$$
+
+Inverting gives $F_1 = 2\,\mathrm{TP}/(2\,\mathrm{TP} + \mathrm{FP} + \mathrm{FN}) = \mathrm{Dice}$.
+
+True negatives (background pixels correctly left empty) do not appear in the formula. A structure occupying 0.1% of an image is scored only on how well that structure is found and on how many false pixels are added; the correctly empty 99.9% of the image does not raise the score.
+
+**Worked example.** A true lesion has $|Y| = 100$ pixels. A prediction has $|X| = 90$ pixels, of which 80 lie inside the lesion. Then $\mathrm{TP} = 80$, $\mathrm{FP} = 10$, $\mathrm{FN} = 20$, and
+
+$$
+\mathrm{Dice} = \frac{160}{160 + 10 + 20} = \frac{160}{190} \approx 0.842, \qquad
+\mathrm{IoU} = \frac{80}{80 + 10 + 20} = \frac{80}{110} \approx 0.727 .
+$$
+
+As a check, $2 \times 0.727 / 1.727 \approx 0.842$.
 
 ### Empty masks
 
-When both $X$ and $Y$ are empty the formula is $0/0$. Competitions must choose: the SIIM pneumothorax and HuBMAP metrics define Dice as 1 in that case, so correctly predicting "nothing here" on a negative image earns a perfect score for that image. Because roughly 78% of pneumothorax test images were negative, the decision of whether to output any mask at all drove most of the score, and the winner designed his thresholds around it.
+When $X$ and $Y$ are both empty, the definition gives $0/0$, and each competition fixes a value. The SIIM-ACR pneumothorax and HuBMAP metrics define Dice as 1 in this case, so a correct empty prediction on a negative image scores 1 for that image, while any predicted pixel on a negative image scores 0. In the pneumothorax test set about 78% of images were negative, so the decision whether to predict any mask at all accounted for most of the score.
 
-### Soft Dice as a loss
+### Soft Dice loss
 
-Dice counts pixels, so it is not differentiable. Replacing the binary prediction by probabilities $p_i\in[0,1]$ and the truth by $g_i\in\{0,1\}$ gives the soft Dice loss
-
-$$
-\mathcal{L}_{\text{Dice}} = 1 - \frac{2\sum_i p_i g_i + \epsilon}{\sum_i p_i + \sum_i g_i + \epsilon},
-$$
-
-where $\epsilon$ avoids division by zero. Its gradient depends on the whole image, not only on each pixel, so small structures receive as much attention as large ones. Pixel-wise cross-entropy, by contrast, is dominated by the abundant background. Many winners use the sum of the two.
-
-### Tversky and focal Tversky
-
-The **Tversky index** weights the two kinds of error separately:
+Dice is computed from pixel counts, which change by whole pixels as $\theta$ varies, so it has no useful gradient. Replacing the predicted set by predicted probabilities $p_i \in [0, 1]$ and the true set by labels $g_i \in \{0, 1\}$ gives soft counts
 
 $$
-T = \frac{TP}{TP + \alpha\,FN + \beta\,FP}.
+\mathrm{TP}_{\mathrm{s}} = \sum_i p_i g_i, \qquad \textstyle\sum_i p_i \ \text{in place of}\ |X|, \qquad \sum_i g_i = |Y|,
 $$
 
-With $\alpha=\beta=0.5$ it is Dice. Setting $\alpha > \beta$ penalises missed pixels more, favouring recall. The aneurysm winner used a Tversky loss for his recall-focused vessel model so thin vessels were not missed. **Focal Tversky** raises $(1-T)$ to a power to emphasise hard cases.
+and the **soft Dice loss**
+
+$$
+\mathcal{L}_{\mathrm{Dice}} = 1 - \frac{2\,\mathrm{TP}_{\mathrm{s}} + \epsilon}{\sum_i p_i + \sum_i g_i + \epsilon},
+$$
+
+where a small $\epsilon > 0$ keeps the fraction defined when both sums are zero. When all $p_i \in \{0, 1\}$ and $\epsilon \to 0$, the loss equals $1 - \mathrm{Dice}$.
+
+**Gradient.** Write $A = 2\,\mathrm{TP}_{\mathrm{s}} + \epsilon$ and $B = \sum_i p_i + \sum_i g_i + \epsilon$. By the quotient rule,
+
+$$
+\frac{\partial \mathcal{L}_{\mathrm{Dice}}}{\partial p_j}
+= -\frac{\partial}{\partial p_j}\frac{A}{B}
+= -\frac{2 g_j\, B - A}{B^2}
+= \frac{A - 2 g_j B}{B^2}.
+$$
+
+The gradient at pixel $j$ depends on $A$ and $B$, which are sums over the whole image. For a foreground pixel ($g_j = 1$), $A - 2B < 0$ when $A < 2B$, which always holds, so increasing $p_j$ decreases the loss; for a background pixel ($g_j = 0$) the gradient is $A/B^2 > 0$. Because $B$ is of the order of the size of the structure, the magnitude of the gradient scales inversely with that size: a small structure receives gradients as large as a large one. Pixel-wise cross-entropy, by contrast, sums a separate term for every pixel and is dominated by the many background pixels. Many solutions train with the sum of the two losses.
+
+### Tversky and focal Tversky losses
+
+The **Tversky index** weights the two kinds of error separately. With $\alpha, \beta \ge 0$,
+
+$$
+\mathrm{TI} = \frac{\mathrm{TP}}{\mathrm{TP} + \alpha\,\mathrm{FN} + \beta\,\mathrm{FP}}, \qquad \mathcal{L}_{\mathrm{Tversky}} = 1 - \mathrm{TI},
+$$
+
+with soft counts in place of $\mathrm{TP}$, $\mathrm{FP}$ and $\mathrm{FN}$ for training. For $\alpha = \beta = \tfrac12$,
+
+$$
+\frac{\mathrm{TP}}{\mathrm{TP} + \tfrac12\,\mathrm{FN} + \tfrac12\,\mathrm{FP}} = \frac{2\,\mathrm{TP}}{2\,\mathrm{TP} + \mathrm{FN} + \mathrm{FP}} = \mathrm{Dice},
+$$
+
+and for $\alpha = \beta = 1$ the index equals IoU. Choosing $\alpha > \beta$ makes a missed foreground pixel cost more than a false one, which favours recall. The winner of the 2025 aneurysm competition used a Tversky loss for a vessel segmentation model intended to miss as few thin vessels as possible.
+
+The **focal Tversky loss** raises the loss to a power, $(1 - \mathrm{TI})^{\gamma}$. For $\gamma < 1$ the loss decreases more slowly as $\mathrm{TI}$ approaches 1, which keeps larger gradients on examples that are already fairly well segmented; for $\gamma > 1$ the opposite holds. Implementations differ in the convention for $\gamma$.
 
 ### Lovász loss
 
-The Lovász hinge (Berman et al., 2018) is a convex surrogate that directly optimises IoU for binary segmentation. The third-place pneumothorax solution trained with it and needed no threshold search.
+The **Lovász loss** (Berman et al., 2018) is a convex surrogate for the IoU. The Jaccard loss $1 - \mathrm{IoU}$, viewed as a function of the set of mispredicted pixels, is submodular, and every submodular set function has a convex, piecewise-linear extension to real-valued error vectors, the Lovász extension. Minimising this extension with respect to per-pixel margins optimises the IoU of the whole image directly. The derivation is given in the HuBMAP report. The third-place solution to the pneumothorax competition trained with the Lovász hinge loss.

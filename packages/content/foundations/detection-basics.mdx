@@ -1,36 +1,60 @@
 ---
 id: detection-basics
-title: "Object and point detection: IoU, NMS and heatmaps"
+title: "Object and point detection: IoU, non-maximum suppression and heatmaps"
 kind: ml
-summary: "Detectors predict many candidate locations with confidences, then suppress duplicates. Point detectors do the same for object centres, using a distance-based similarity in place of box overlap."
+summary: "Describes how detectors produce candidate boxes or points with confidences, how predictions are matched to true objects by box overlap or by a distance-based similarity, and how duplicate detections are removed."
 ---
 
-### Boxes and IoU
+### Boxes and intersection over union
 
-A box detector outputs, for many candidate positions, a class probability and box coordinates. A prediction matches a true box if their **intersection over union** exceeds a threshold, typically 0.5.
+A box detector outputs, for many candidate positions, a class probability and box coordinates. For two axis-aligned boxes $A = [x_1, x_2] \times [y_1, y_2]$ and $B = [x_1', x_2'] \times [y_1', y_2']$, the overlap has width and height
 
-### Non-maximum suppression
+$$
+w = \max\big(0,\ \min(x_2, x_2') - \max(x_1, x_1')\big), \qquad
+h = \max\big(0,\ \min(y_2, y_2') - \max(y_1, y_1')\big),
+$$
 
-Neighbouring positions detect the same object. **Non-maximum suppression (NMS)** sorts predictions by confidence, keeps the most confident, deletes every remaining prediction that overlaps it by more than a threshold, and repeats. **Weighted box fusion (WBF)** instead averages overlapping boxes, weighting by confidence, which suits ensembles: boxes that several models agree on become one confident box.
+and the **intersection over union** is
+
+$$
+\mathrm{IoU}(A, B) = \frac{wh}{|A| + |B| - wh},
+$$
+
+where $|A|$ and $|B|$ are the box areas. A prediction is counted as matching a true box if their IoU exceeds a threshold, typically 0.5.
+
+**Example.** Two $10 \times 10$ boxes offset by 5 pixels horizontally overlap in a $5 \times 10$ region: $\mathrm{IoU} = 50 / (100 + 100 - 50) = 1/3$.
+
+### Non-maximum suppression and box fusion
+
+Neighbouring positions of a detector respond to the same object. **Non-maximum suppression (NMS)** removes these duplicates:
+
+1. Sort the predictions by confidence.
+2. Keep the most confident remaining prediction.
+3. Delete every remaining prediction whose IoU with it exceeds a threshold.
+4. Repeat from step 2 until no predictions remain.
+
+**Weighted box fusion (WBF)** instead replaces each cluster of overlapping boxes by their confidence-weighted average. It is used to combine the outputs of several models, where boxes predicted by several models merge into one box.
 
 ### Heatmap-based point detection
 
-When objects of a class share a size (protein complexes in a tomogram, aneurysms reduced to a centre point), boxes carry no information. The model can instead predict, at every voxel, the probability that an object centre lies there. Training targets are either single voxels or Gaussian blobs around each centre,
+When all objects of a class have about the same size, as with protein complexes in a tomogram, a box adds little information to its centre. The model can instead predict, at every voxel $\mathbf{x}$, the probability that an object centre lies there. Training targets are either single voxels at the centres or Gaussian blobs around each centre $\mathbf{c}$,
 
 $$
-H(\mathbf{x}) = \exp\!\left(-\frac{\lVert \mathbf{x}-\mathbf{c}\rVert^2}{2\sigma^2}\right),
+H(\mathbf{x}) = \exp\!\left(-\frac{\lVert \mathbf{x} - \mathbf{c} \rVert^2}{2\sigma^2}\right),
 $$
 
-and inference takes local maxima of the predicted map (a max-pooling comparison acts as NMS).
+with $\sigma$ related to the object size. At inference the detections are the local maxima of the predicted map. A voxel is a local maximum if it equals the maximum of the map over a window around it, which a max-pooling operation computes for all voxels at once and which serves as NMS.
 
-### Offsets and point "IoU"
+### Offsets and point similarity
 
-A detector that predicts at stride 2 (half resolution) can still localise precisely by also predicting, at each output cell, a 3D offset from the cell to the object centre. Matching predictions to ground truth needs a similarity between two points in place of box IoU. The CZII winners used the keypoint similarity from human-pose estimation,
+A detector that predicts on a grid coarser than the input (for example at half resolution) can still localise precisely if it also predicts, in each output cell, the offset from the cell centre to the object centre.
+
+Matching predicted points to true points requires a similarity between two points in place of box IoU. The CZII cryo-ET winners used the object keypoint similarity from human-pose estimation,
 
 $$
-\mathrm{OKS}(\mathbf{p},\mathbf{g}) = \exp\!\left(-\frac{\lVert\mathbf{p}-\mathbf{g}\rVert^2}{2r^2}\right),
+\mathrm{OKS}(\mathbf{p}, \mathbf{g}) = \exp\!\left(-\frac{\lVert \mathbf{p} - \mathbf{g} \rVert^2}{2r^2}\right),
 $$
 
-where $r$ is the particle radius. It is 1 at the centre and falls to $e^{-1/8}\approx 0.88$ at half a radius, which is exactly the competition's correctness radius.
+where $r$ is the particle radius. It equals 1 at the true centre. At a distance of half a radius it equals $e^{-0.25/2} = e^{-1/8} \approx 0.88$; a prediction within half a radius of the true centre was counted as correct by the competition metric, so an OKS threshold of 0.88 reproduces that rule.
 
 <Plot series={[{fn: "oks", params: {r: 1}, label: "OKS with radius r = 1"}]} x={[0, 3]} y={[0, 1]} xLabel="distance from the true centre, in radii" yLabel="similarity" markers={[{x: 0.5, label: "scoring radius 0.5 r"}]} />

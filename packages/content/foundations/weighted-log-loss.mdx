@@ -1,38 +1,61 @@
 ---
 id: weighted-log-loss
-title: "Weighted log loss and what it rewards"
+title: "Weighted log loss"
 kind: math
-summary: "Competitions often weight some labels or classes more heavily in the log loss. The weights change which mistakes matter and shift the prediction that minimises the metric."
+summary: "Defines the weighted log loss used in several competitions, derives the prediction that minimises it when the weight depends on the true class, and explains the effect of weights that depend on the label type and of clipping."
 ---
 
-A weighted log loss multiplies each term by a weight $w$ that depends on the label or the row:
+### Definition
+
+A weighted log loss multiplies the log loss of each row $i$ by a weight $w_i > 0$ and normalises by the total weight:
 
 $$
-L = \frac{\sum_i w_i\,\ell_i}{\sum_i w_i}, \qquad \ell_i = -\big[y_i \log p_i + (1-y_i)\log(1-p_i)\big].
+L = \frac{\sum_{i} w_i\, \ell_i}{\sum_{i} w_i}, \qquad
+\ell_i = -\big[\,y_i \log p_i + (1 - y_i) \log(1 - p_i)\,\big],
 $$
 
-In RSNA competitions, the weight typically depends on which label a row refers to (the "any haemorrhage" row counts more than a subtype row) or on the true class (a severe finding counts more than a normal one).
+where $y_i \in \{0, 1\}$ is the label and $p_i \in (0, 1)$ the predicted probability. In RSNA competitions the weight usually depends on which label a row refers to (an "any injury" or "any haemorrhage" row counts more than a subtype row), on the true class (a severe finding counts more than a normal one), or on both.
 
-### When the weight depends on the true class
+### Weights that depend on the true class
 
-Suppose a positive example carries weight $w_1$ and a negative example weight $w_0$. For a group of indistinguishable examples with positive fraction $\pi$, predicting $q$ costs, in expectation,
-
-$$
-L(q) \propto -\big[w_1\pi\log q + w_0(1-\pi)\log(1-q)\big].
-$$
-
-Setting the derivative to zero:
+Let positive rows carry weight $w_1$ and negative rows weight $w_0$. Consider a group of examples that the model cannot distinguish, of which a fraction $\pi$ is positive, and a common prediction $q$. Up to a positive constant that does not depend on $q$, the contribution of the group to the numerator of $L$ is
 
 $$
-\frac{w_1\pi}{q} = \frac{w_0(1-\pi)}{1-q} \;\Longrightarrow\; q^\star = \frac{w_1\pi}{w_1\pi + w_0(1-\pi)} .
+f(q) = -\big[\,w_1 \pi \log q + w_0 (1 - \pi) \log(1 - q)\,\big].
 $$
 
-With $w_1 = w_0$ this gives back $q^\star = \pi$. With $w_1 = 4$, $w_0 = 1$ and $\pi = 0.05$, the metric-optimal prediction is $q^\star = 0.2/(0.2+0.95) \approx 0.174$, more than three times the true frequency. A model trained with ordinary log loss is calibrated to $\pi$ and will be scored as underconfident. Winning solutions either train with the same weights as the metric or rescale predictions afterwards. The lumbar spine runner-up's multiplication of the highest severe-stenosis prediction by 1.25 is an example of the second approach.
+Its derivative is
 
-### When the weight depends on the row type
+$$
+f'(q) = -\frac{w_1 \pi}{q} + \frac{w_0 (1 - \pi)}{1 - q}.
+$$
 
-If the weight depends only on which label the row describes, it does not change that label's optimal prediction; it changes how much that label's errors count in the average. Improving the heavily weighted label pays more. Solutions respond by spending more modelling effort on it, as the aneurysm and trauma winners did with dedicated heads and pooling for the "any" label.
+Setting $f'(q) = 0$ gives $w_1 \pi (1 - q) = w_0 (1 - \pi)\, q$, and solving for $q$,
+
+$$
+q^\star = \frac{w_1 \pi}{w_1 \pi + w_0 (1 - \pi)} .
+$$
+
+Since $f''(q) = w_1\pi/q^2 + w_0(1-\pi)/(1-q)^2 > 0$, this is the minimum. (The denominator $\sum_i w_i$ also depends on the labels but not on the predictions, so it does not change the minimiser.)
+
+For $w_1 = w_0$, $q^\star = \pi$: the calibrated probability. For $w_1 = 4$, $w_0 = 1$ and $\pi = 0.05$,
+
+$$
+q^\star = \frac{4 \times 0.05}{4 \times 0.05 + 1 \times 0.95} = \frac{0.20}{1.15} \approx 0.174,
+$$
+
+more than three times the true frequency. A model trained with unweighted log loss estimates $\pi$ and is therefore scored as under-confident on the positive class. Solutions either train with the same weights as the metric or rescale the predictions afterwards. In terms of the logit $\log\frac{q}{1-q}$, the rescaling adds a constant:
+
+$$
+\log\frac{q^\star}{1 - q^\star} = \log\frac{\pi}{1 - \pi} + \log\frac{w_1}{w_0}.
+$$
+
+The second-place solution to the RSNA lumbar spine competition multiplied the highest severe-stenosis prediction by 1.25, which is a rescaling of this kind. The multi-class version of the result, $p_k^\star \propto w_k q_k$, is derived in the abdominal trauma report.
+
+### Weights that depend on the label type
+
+If the weight depends only on which label a row describes, and not on its true value, it does not change the optimal prediction for that label: the factor $w$ multiplies $f(q)$ and does not move its minimiser. It changes how much the errors on that label contribute to the average. The winners of the aneurysm and abdominal trauma competitions built dedicated model heads for the heavily weighted "any" labels for this reason.
 
 ### Clipping
 
-Most competition implementations clip predictions to $[\epsilon, 1-\epsilon]$ (for example $10^{-15}$) before taking logarithms so a single prediction of exactly 0 or 1 cannot give an infinite loss. The clip does not protect against confident errors in any practical sense: $-\log(10^{-15}) \approx 34.5$.
+Most competition implementations clip predictions to $[\epsilon, 1 - \epsilon]$ before taking logarithms, for example with $\epsilon = 10^{-15}$, so that a prediction of exactly 0 or 1 does not give an infinite loss. The clipped loss for a confident error is still very large: $-\ln(10^{-15}) \approx 34.5$, compared with $-\ln(0.5) \approx 0.69$ for an uninformative prediction.
