@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Report } from "@/lib/content";
-import { collectionById } from "@nolad/content/data/collections";
+import { domainById } from "@nolad/content/data/taxonomy";
 import { ScoreDots } from "./ScoreDots";
 
 export function ReportCard({ report }: { report: Report }) {
@@ -12,7 +12,7 @@ export function ReportCard({ report }: { report: Report }) {
     >
       <div className="flex items-center justify-between gap-3">
         <span className="eyebrow">
-          {collectionById.get(m.collection)?.name} · {m.year}
+          {domainById.get(m.domain)?.name} · {m.year}
         </span>
         <span className="flex items-center gap-2 text-xs text-faint" title="Deployability">
           <ScoreDots score={m.deployability.score} label="Deployability" />

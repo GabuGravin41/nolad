@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { getAllReports, getReport, getFoundation, foundationRefs } from "@/lib/content";
 import { renderMDX } from "@/lib/mdx";
 import { techniqueById } from "@nolad/content/data/techniques";
-import { collectionById } from "@nolad/content/data/collections";
+import { domainById } from "@nolad/content/data/taxonomy";
 import { DeployabilityCard } from "@/components/DeployabilityCard";
 import { Toc } from "@/components/Toc";
 import { DepthControls } from "@/components/DepthControls";
@@ -60,8 +60,8 @@ export default async function ReportPage({ params }: { params: Promise<{ slug: s
               Reports
             </Link>{" "}
             /{" "}
-            <Link href={`/collections/${m.collection}`} className="text-faint no-underline hover:text-accent">
-              {collectionById.get(m.collection)?.name}
+            <Link href={`/domains/${m.domain}`} className="text-faint no-underline hover:text-accent">
+              {domainById.get(m.domain)?.name}
             </Link>
           </nav>
           <h1 className="mt-3 max-w-4xl text-3xl font-semibold leading-tight tracking-tight sm:text-4xl">{m.title}</h1>

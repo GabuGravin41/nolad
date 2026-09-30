@@ -25,7 +25,7 @@ export function SiteFooter() {
             <p className="eyebrow">Read</p>
             <Link className="block text-muted no-underline hover:text-fg" href="/reports">Reports</Link>
             <Link className="block text-muted no-underline hover:text-fg" href="/techniques">Techniques</Link>
-            <Link className="block text-muted no-underline hover:text-fg" href="/collections">Collections</Link>
+            <Link className="block text-muted no-underline hover:text-fg" href="/domains">Domains</Link>
             <Link className="block text-muted no-underline hover:text-fg" href="/foundations">Foundations</Link>
           </div>
           <div className="space-y-2">

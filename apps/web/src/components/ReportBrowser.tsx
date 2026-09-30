@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ScoreDots } from "./ScoreDots";
 
 export interface BrowserReport {
   slug: string;
   title: string;
   year: number;
-  collection: string;
+  domain: string;
+  dataTypes: string[];
+  taskTypes: string[];
   field: string;
   modality: string[];
   tasks: string[];
@@ -21,39 +23,94 @@ export interface BrowserReport {
 }
 
 type Sort = "priority" | "year" | "deployability" | "title";
+type Names = Record<string, string>;
+
+interface Filters {
+  q: string;
+  domain: string;
+  data: string;
+  task: string;
+  technique: string;
+  minDeploy: number;
+  sort: Sort;
+}
+
+const initial: Filters = { q: "", domain: "all", data: "all", task: "all", technique: "all", minDeploy: 1, sort: "priority" };
+
+/** Options that occur in at least one report, with counts, ordered by name. */
+function optionsFor(reports: BrowserReport[], pick: (r: BrowserReport) => string[], names: Names) {
+  const counts = new Map<string, number>();
+  for (const r of reports) for (const v of pick(r)) counts.set(v, (counts.get(v) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([id, n]) => ({ id, n, name: names[id] ?? id }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
 
 export function ReportBrowser({
   reports,
-  collections,
+  domainNames,
+  dataTypeNames,
+  taskTypeNames,
   techniqueNames,
 }: {
   reports: BrowserReport[];
-  collections: { id: string; name: string }[];
-  techniqueNames: Record<string, string>;
+  domainNames: Names;
+  dataTypeNames: Names;
+  taskTypeNames: Names;
+  techniqueNames: Names;
 }) {
-  const [q, setQ] = useState("");
-  const [collection, setCollection] = useState<string>("all");
-  const [technique, setTechnique] = useState<string>("all");
-  const [minDeploy, setMinDeploy] = useState(1);
-  const [sort, setSort] = useState<Sort>("priority");
+  const [f, setF] = useState<Filters>(initial);
+  const set = <K extends keyof Filters>(k: K, v: Filters[K]) => setF((prev) => ({ ...prev, [k]: v }));
 
-  const techniqueOptions = useMemo(
-    () => Object.entries(techniqueNames).sort((a, b) => a[1].localeCompare(b[1])),
-    [techniqueNames],
-  );
+  // Filters are mirrored in the URL so a filtered view can be shared.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    setF((prev) => ({
+      ...prev,
+      q: p.get("q") ?? prev.q,
+      domain: p.get("domain") ?? prev.domain,
+      data: p.get("data") ?? prev.data,
+      task: p.get("task") ?? prev.task,
+      technique: p.get("technique") ?? prev.technique,
+      minDeploy: Number(p.get("deploy") ?? prev.minDeploy),
+      sort: (p.get("sort") as Sort) ?? prev.sort,
+    }));
+  }, []);
+  useEffect(() => {
+    const p = new URLSearchParams();
+    if (f.q) p.set("q", f.q);
+    if (f.domain !== "all") p.set("domain", f.domain);
+    if (f.data !== "all") p.set("data", f.data);
+    if (f.task !== "all") p.set("task", f.task);
+    if (f.technique !== "all") p.set("technique", f.technique);
+    if (f.minDeploy > 1) p.set("deploy", String(f.minDeploy));
+    if (f.sort !== "priority") p.set("sort", f.sort);
+    const qs = p.toString();
+    window.history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
+  }, [f]);
+
+  const domainOpts = useMemo(() => optionsFor(reports, (r) => [r.domain], domainNames), [reports, domainNames]);
+  const dataOpts = useMemo(() => optionsFor(reports, (r) => r.dataTypes, dataTypeNames), [reports, dataTypeNames]);
+  const taskOpts = useMemo(() => optionsFor(reports, (r) => r.taskTypes, taskTypeNames), [reports, taskTypeNames]);
+  const techOpts = useMemo(() => optionsFor(reports, (r) => r.techniques, techniqueNames), [reports, techniqueNames]);
 
   const shown = useMemo(() => {
-    const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+    const terms = f.q.toLowerCase().split(/\s+/).filter(Boolean);
     const list = reports.filter((r) => {
-      if (collection !== "all" && r.collection !== collection) return false;
-      if (technique !== "all" && !r.techniques.includes(technique)) return false;
-      if (r.deployability < minDeploy) return false;
+      if (f.domain !== "all" && r.domain !== f.domain) return false;
+      if (f.data !== "all" && !r.dataTypes.includes(f.data)) return false;
+      if (f.task !== "all" && !r.taskTypes.includes(f.task)) return false;
+      if (f.technique !== "all" && !r.techniques.includes(f.technique)) return false;
+      if (r.deployability < f.minDeploy) return false;
       if (!terms.length) return true;
       const hay = [
         r.title,
         r.field,
         r.summary,
         r.winningIdea,
+        domainNames[r.domain] ?? r.domain,
+        ...r.dataTypes.map((t) => dataTypeNames[t] ?? t),
+        ...r.taskTypes.map((t) => taskTypeNames[t] ?? t),
         ...r.modality,
         ...r.tasks,
         ...r.techniques.map((t) => techniqueNames[t] ?? t),
@@ -69,71 +126,86 @@ export function ReportBrowser({
       deployability: (a, b) => b.deployability - a.deployability || a.priority - b.priority,
       title: (a, b) => a.title.localeCompare(b.title),
     };
-    return [...list].sort(sorters[sort]);
-  }, [reports, q, collection, technique, minDeploy, sort, techniqueNames]);
+    return [...list].sort(sorters[f.sort]);
+  }, [reports, f, domainNames, dataTypeNames, taskTypeNames, techniqueNames]);
+
+  const active =
+    f.q !== "" || f.domain !== "all" || f.data !== "all" || f.task !== "all" || f.technique !== "all" || f.minDeploy > 1;
 
   const selectCls =
-    "rounded-lg border border-line bg-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none";
+    "w-full rounded-lg border border-line bg-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none";
+
+  const facet = (
+    label: string,
+    value: string,
+    onChange: (v: string) => void,
+    opts: { id: string; n: number; name: string }[],
+  ) => (
+    <label className="grid gap-1 text-xs text-faint">
+      {label}
+      <select value={value} onChange={(e) => onChange(e.target.value)} className={selectCls}>
+        <option value="all">All</option>
+        {opts.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.name} ({o.n})
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 
   return (
     <div>
-      <div className="card grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1.4fr_1fr_1fr]">
-        <label className="grid gap-1 text-xs text-faint">
-          Search
-          <input
-            type="search"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="CT, segmentation, RNA, EEG, 2021…"
-            className={selectCls}
-          />
-        </label>
-        <label className="grid gap-1 text-xs text-faint">
-          Collection
-          <select value={collection} onChange={(e) => setCollection(e.target.value)} className={selectCls}>
-            <option value="all">All</option>
-            {collections.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="grid gap-1 text-xs text-faint">
-          Technique
-          <select value={technique} onChange={(e) => setTechnique(e.target.value)} className={selectCls}>
-            <option value="all">Any</option>
-            {techniqueOptions.map(([id, name]) => (
-              <option key={id} value={id}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="grid gap-1 text-xs text-faint">
-          Deployability at least
-          <select value={minDeploy} onChange={(e) => setMinDeploy(Number(e.target.value))} className={selectCls}>
-            {[1, 2, 3, 4, 5].map((n) => (
-              <option key={n} value={n}>
-                {n} / 5
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="grid gap-1 text-xs text-faint">
-          Sort
-          <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} className={selectCls}>
-            <option value="priority">Nolad ranking</option>
-            <option value="year">Newest</option>
-            <option value="deployability">Most deployable</option>
-            <option value="title">A–Z</option>
-          </select>
-        </label>
+      <div className="card grid gap-3 p-4">
+        <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+          <label className="grid gap-1 text-xs text-faint">
+            Search
+            <input
+              type="search"
+              value={f.q}
+              onChange={(e) => set("q", e.target.value)}
+              placeholder="CT, segmentation, RNA, EEG, curriculum, 2021…"
+              className={selectCls}
+            />
+          </label>
+          <label className="grid gap-1 text-xs text-faint sm:w-48">
+            Sort
+            <select value={f.sort} onChange={(e) => set("sort", e.target.value as Sort)} className={selectCls}>
+              <option value="priority">Nolad ranking</option>
+              <option value="year">Newest</option>
+              <option value="deployability">Most deployable</option>
+              <option value="title">A–Z</option>
+            </select>
+          </label>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {facet("Domain", f.domain, (v) => set("domain", v), domainOpts)}
+          {facet("Data", f.data, (v) => set("data", v), dataOpts)}
+          {facet("Task", f.task, (v) => set("task", v), taskOpts)}
+          {facet("Technique", f.technique, (v) => set("technique", v), techOpts)}
+          <label className="grid gap-1 text-xs text-faint">
+            Deployability at least
+            <select value={f.minDeploy} onChange={(e) => set("minDeploy", Number(e.target.value))} className={selectCls}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>
+                  {n} / 5
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
 
-      <p className="mt-4 text-sm text-faint" aria-live="polite">
-        {shown.length} of {reports.length} reports
-      </p>
+      <div className="mt-4 flex items-center gap-3 text-sm text-faint" aria-live="polite">
+        <span>
+          {shown.length} of {reports.length} reports
+        </span>
+        {active ? (
+          <button type="button" className="chip cursor-pointer" onClick={() => setF({ ...initial, sort: f.sort })}>
+            Clear filters
+          </button>
+        ) : null}
+      </div>
 
       <ul className="mt-3 grid gap-3">
         {shown.map((r) => (
@@ -144,17 +216,28 @@ export function ReportBrowser({
             >
               <div className="min-w-0">
                 <p className="eyebrow">
-                  #{r.priority} · {collections.find((c) => c.id === r.collection)?.name} · {r.year} · {r.field}
+                  #{r.priority} · {domainNames[r.domain] ?? r.domain} · {r.year} · {r.field}
                 </p>
                 <h2 className="mt-1 text-lg font-semibold tracking-tight group-hover:text-accent">{r.title}</h2>
                 <p className="mt-1 text-sm leading-relaxed text-muted">{r.winningIdea}</p>
                 <div className="mt-3 flex flex-wrap gap-1.5">
-                  {r.modality.map((x) => (
+                  {r.dataTypes.map((x) => (
                     <span key={x} className="chip">
-                      {x}
+                      {dataTypeNames[x] ?? x}
                     </span>
                   ))}
-                  {r.techniques.slice(0, 4).map((t) => (
+                  {r.taskTypes.map((x) => (
+                    <span key={x} className="chip">
+                      {taskTypeNames[x] ?? x}
+                    </span>
+                  ))}
+                  {r.techniques
+                    .filter((t) => {
+                      const n = (techniqueNames[t] ?? t).toLowerCase();
+                      return !r.taskTypes.some((x) => (taskTypeNames[x] ?? x).toLowerCase() === n || n.endsWith(" " + (taskTypeNames[x] ?? x).toLowerCase()));
+                    })
+                    .slice(0, 3)
+                    .map((t) => (
                     <span key={t} className="chip">
                       {techniqueNames[t] ?? t}
                     </span>

@@ -2,12 +2,12 @@ import type { Metadata } from "next";
 import { getAllReports } from "@/lib/content";
 import { PageHeader } from "@/components/PageHeader";
 import { ReportBrowser } from "@/components/ReportBrowser";
-import { collections } from "@nolad/content/data/collections";
+import { dataTypes, domains, taskTypes } from "@nolad/content/data/taxonomy";
 import { techniqueById } from "@nolad/content/data/techniques";
 
 export const metadata: Metadata = {
   title: "Reports",
-  description: "Every documented competition, filterable by field, modality, technique and deployability.",
+  description: "Every documented competition, filterable by domain, data type, task, technique and deployability.",
 };
 
 export default function ReportsPage() {
@@ -15,7 +15,9 @@ export default function ReportsPage() {
     slug: r.meta.slug,
     title: r.meta.shortTitle,
     year: r.meta.year,
-    collection: r.meta.collection,
+    domain: r.meta.domain,
+    dataTypes: r.meta.dataTypes,
+    taskTypes: r.meta.taskTypes,
     field: r.meta.field,
     modality: r.meta.modality,
     tasks: r.meta.tasks,
@@ -38,7 +40,9 @@ export default function ReportsPage() {
       <div className="mx-auto max-w-7xl px-4 sm:px-6">
         <ReportBrowser
           reports={reports}
-          collections={collections.map((c) => ({ id: c.id, name: c.name }))}
+          domainNames={Object.fromEntries(domains.map((d) => [d.id, d.name]))}
+          dataTypeNames={Object.fromEntries(dataTypes.map((d) => [d.id, d.name]))}
+          taskTypeNames={Object.fromEntries(taskTypes.map((d) => [d.id, d.name]))}
           techniqueNames={techniqueNames}
         />
       </div>

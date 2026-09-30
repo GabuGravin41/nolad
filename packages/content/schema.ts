@@ -5,8 +5,7 @@ import { z } from "zod";
  * must satisfy this schema; the site build fails otherwise.
  */
 
-export const collectionIds = ["medicine", "molecular", "beyond"] as const;
-export type CollectionId = (typeof collectionIds)[number];
+import { dataTypeIds, domainIds, taskTypeIds } from "./data/taxonomy";
 
 const person = z.object({
   name: z.string(),
@@ -53,7 +52,9 @@ export const reportFrontmatterSchema = z.object({
   year: z.number().int(),
   dates: z.object({ start: z.string(), end: z.string() }),
   host: z.string(),
-  collection: z.enum(collectionIds),
+  domain: z.enum(domainIds),
+  dataTypes: z.array(z.enum(dataTypeIds)).min(1),
+  taskTypes: z.array(z.enum(taskTypeIds)).min(1),
   field: z.string(),
   modality: z.array(z.string()),
   tasks: z.array(z.string()),

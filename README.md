@@ -15,7 +15,7 @@ packages/content    Everything a reader sees
   reports/          One MDX file per competition (frontmatter validated by schema.ts)
   foundations/      First-principles explanation blocks embedded in reports with <Foundation id="…" />
   pages/            Method and About pages
-  data/             Technique taxonomy, collections, ranking scores
+  data/             Technique list, domain/data/task taxonomy, ranking scores
   schema.ts         Zod schemas for report and foundation frontmatter
 ```
 

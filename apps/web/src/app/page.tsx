@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getAllReports, getFoundations } from "@/lib/content";
-import { collections } from "@nolad/content/data/collections";
+import { domains } from "@nolad/content/data/taxonomy";
 import { techniques, techniqueGroups } from "@nolad/content/data/techniques";
 import { ReportCard } from "@/components/ReportCard";
 import { site } from "@/lib/site";
@@ -51,7 +51,7 @@ export default function Home() {
               <li>
                 <strong className="text-fg">Open the boxes.</strong>{" "}
                 <span className="text-muted">
-                  Coloured boxes hold derivations, code walk-throughs, clinical or biological background, and
+                  Coloured boxes hold derivations, code walk-throughs, domain background, and
                   first-principles explanations of every technique. Open only the ones you need.
                 </span>
               </li>
@@ -92,16 +92,19 @@ export default function Home() {
       </section>
 
       <section className="mx-auto max-w-7xl px-4 pt-16 sm:px-6">
-        <p className="eyebrow">Collections</p>
-        <h2 className="mt-2 text-2xl font-semibold tracking-tight">Three shelves, one method</h2>
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
-          {collections.map((c) => {
-            const n = reports.filter((r) => r.meta.collection === c.id).length;
+        <p className="eyebrow">Domains</p>
+        <h2 className="mt-2 text-2xl font-semibold tracking-tight">Competitions by field</h2>
+        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {domains.map((d) => {
+            const n = reports.filter((r) => r.meta.domain === d.id).length;
+            if (!n) return null;
             return (
-              <Link key={c.id} href={`/collections/${c.id}`} className="card group p-5 text-fg no-underline hover:border-accent">
-                <p className="eyebrow">{n} reports</p>
-                <h3 className="mt-2 text-lg font-semibold group-hover:text-accent">{c.name}</h3>
-                <p className="mt-1 text-sm text-muted">{c.tagline}</p>
+              <Link key={d.id} href={`/domains/${d.id}`} className="card group p-5 text-fg no-underline hover:border-accent">
+                <p className="eyebrow">
+                  {n} {n === 1 ? "report" : "reports"}
+                </p>
+                <h3 className="mt-2 text-lg font-semibold group-hover:text-accent">{d.name}</h3>
+                <p className="mt-1 text-sm text-muted">{d.description}</p>
               </Link>
             );
           })}

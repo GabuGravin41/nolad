@@ -10,7 +10,7 @@ Reports and foundations are written as a scientific review: third person, declar
 
 ## Titles and headings
 
-- Report title: competition name and year only. No subtitle.
+- Report title: competition name and year only, e.g. "RSNA Intracranial Aneurysm Detection (2025)". If the name already contains the year, omit the bracket ("BirdCLEF 2024"). No subtitle.
 - Headings describe their content: "Clinical background", "Data", "Evaluation metric", "Winning solution", "Stage 1: coarse vessel segmentation", "Loss function", "Ablation study", "Second place: …", "Comparison with other competitions", "Compute and deployment", "Considerations for deployment".
 - No coined labels or slogans ("vessel-first", "The split is the model", "The minimum useful version").
 
