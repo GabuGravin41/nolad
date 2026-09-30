@@ -1,6 +1,6 @@
 ---
 slug: hubmap-organ-segmentation
-title: "HuBMAP + HPA Hacking the Human Body (2022): SegFormer across organs and stain shift"
+title: "HuBMAP + HPA Hacking the Human Body (2022)"
 shortTitle: HuBMAP + HPA Organ Segmentation
 kaggleSlug: hubmap-organ-segmentation
 kaggleUrl: https://www.kaggle.com/competitions/hubmap-organ-segmentation
@@ -27,8 +27,8 @@ metric:
   name: Mean Dice coefficient
   summary: "Dice between predicted and true masks of functional tissue units, averaged over test images."
 constraints: { runtime: "Code competition: notebook inference within the Kaggle time limit", hardware: "Kaggle GPU notebook", internet: false }
-summary: "Segment the functional tissue units of five organs (kidney glomeruli, colon crypts, lung alveoli, prostate glands and splenic white pulp) in tissue images, training on one laboratory's images and testing mostly on another's, with different stains and pixel sizes. The winner trained SegFormer models end to end in MMSegmentation with heavy stain augmentation, a binary target, a cross-entropy plus Lovász loss, extra hand-made and pseudo-labelled data, and per-organ thresholds. The fourth-place team showed that stain normalisation alone closes much of the gap."
-winningIdea: "Make the model indifferent to staining and scale: re-stain every training image several ways, resize across a wide range, predict one binary 'tissue unit' class for all organs, and choose a threshold per organ."
+summary: "The competition asked participants to segment the functional tissue units of five organs (kidney glomeruli, colon crypts, lung alveoli, prostate glands and splenic white pulp) in stained tissue images, with training images from the Human Protein Atlas and test images mostly from HuBMAP laboratories using other stains and pixel sizes. The winning solution is an ensemble of SegFormer models trained on a binary target with a cross-entropy and Lovász loss, stain and scale augmentation, additional labelled and pseudo-labelled images, and a threshold per organ. It scored a mean Dice of 0.836 on the private test set."
+winningIdea: "Each training image is re-stained in several ways and resized over a wide range of scales, so that the model is trained on the variation in stain and pixel size expected at test time. A single binary class (functional tissue unit or background) is predicted for all organs, and the probability map is thresholded with a value chosen separately for each organ."
 solutions:
   - rank: 1
     team: opusen
@@ -69,10 +69,10 @@ dataLinks:
   - { label: "Human Protein Atlas", url: "https://www.proteinatlas.org/" }
   - { label: "HuBMAP portal", url: "https://portal.hubmapconsortium.org/" }
 priority: 21
-updated: "2026-09-28"
+updated: "2026-10-01"
 ---
 
-## The problem in its field
+## Background
 
 The human body contains around 37 trillion cells. Projects such as the NIH's **Human BioMolecular Atlas Program (HuBMAP)** and Sweden's **Human Protein Atlas (HPA)** aim to map where cells and proteins are in healthy tissue, organ by organ. Such maps are organised around **functional tissue units (FTUs)**: the smallest repeating structures that perform an organ's function, such as the kidney's glomeruli (more than a million per kidney). Locating FTUs automatically in tissue images is a first step for any quantitative atlas.
 
@@ -93,21 +93,21 @@ Their appearance and size differ greatly, and some (alveoli) are much harder to 
 
 <Foundation id="digital-pathology" />
 
-## The data
+## Data
 
 **Training:** 351 images from the HPA, typically a few thousand pixels on each side, with polygon annotations of FTUs. All come from one laboratory's pipeline with one pixel size and staining protocol.
 
 **Test:** the public test set mixes HPA and HuBMAP images; the private test set consists mostly of **HuBMAP** images, from other laboratories, with different stains (H&E and PAS, among others), scanners and pixel sizes. Only one HuBMAP image was visible to participants.
 
-This is a deliberate **domain-generalisation** problem: the model must work on a laboratory it has essentially never seen.
+The test set therefore measures **domain generalisation**: performance on images from laboratories that are almost absent from the training data.
 
-## The metric
+## Evaluation metric
 
 Mean Dice coefficient over test images, with all FTUs of an image combined into one binary mask; an image with empty prediction and empty truth scores 1.
 
 <Foundation id="dice-and-overlap" />
 
-## How the winning solution works
+## Winning solution
 
 The winner, opusen, trained alone on Google Colab. His write-up title ("I need SegFormer") names the architecture.
 
@@ -203,7 +203,7 @@ Whole images, **ignoring the pixel size**, with horizontal-flip TTA at scales ar
 
 The contributions add up to the overall mean Dice; they reflect both per-organ accuracy and how many test images each organ had.
 
-## Fourth place: stain normalisation is all you need
+## Fourth place: stain normalisation
 
 The fourth-place team (Rock, Archeve, zzh__98, nowandddfuture and YuFu_zju) started from a public baseline by hengck23 (CoaT encoder; 0.81 public) and used a two-stream model with a separate stream for lung. Encoders were CoaT-Lite-Medium, MiT (SegFormer) and MPViT with DAFormer and U-Net decoders.
 
@@ -233,7 +233,7 @@ $$
 This changes the colour of each stain without changing where it is, preserving structure.
 </Deep>
 
-## How this compares with other competitions
+## Comparison with other competitions
 
 - **UBC-OCEAN** faced a more extreme multi-centre shift in pathology (more than 20 centres) and was won by a pathology foundation model trained on millions of tiles, which is inherently robust to stain variation. HuBMAP's winners reached robustness with augmentation and normalisation instead, on only 351 images.
 - **PANDA** had two centres and handled their differences implicitly; CycleGAN-based stain transfer did not help its winners, while here stain handling was central, because the test set came from an unseen laboratory.
@@ -241,12 +241,12 @@ This changes the colour of each stain without changing where it is, preserving s
 
 ## Compute and deployment
 
-| Setting | What the solution needs |
+| Setting | Requirements |
 | --- | --- |
 | Competition | Google Colab for training; Kaggle GPU notebook for inference of six SegFormers with TTA. |
 | Atlas project | One GPU; images processed in seconds; stain augmentation or normalisation for each new laboratory. |
 | Commercial use | Replace the non-commercially licensed MiT weights with permissively licensed pretrained weights, and retrain. |
 
-<Callout kind="deploy" title="The minimum useful version">
+<Callout kind="deploy" title="Reduced configuration">
 One SegFormer (or another encoder with a permissive licence) trained on a binary FTU target with CE plus Lovász loss, heavy stain and scale augmentation, and a threshold per organ tuned on data from the target laboratory. Add stain normalisation towards the training data at inference when a new laboratory's images look different.
 </Callout>

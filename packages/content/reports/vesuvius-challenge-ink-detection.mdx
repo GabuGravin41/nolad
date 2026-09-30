@@ -1,6 +1,6 @@
 ---
 slug: vesuvius-challenge-ink-detection
-title: "Vesuvius Challenge Ink Detection (2023): finding ink in X-ray volumes of carbonised papyrus"
+title: "Vesuvius Challenge Ink Detection (2023)"
 shortTitle: Vesuvius Challenge Ink Detection
 kaggleSlug: vesuvius-challenge-ink-detection
 kaggleUrl: https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection
@@ -29,8 +29,8 @@ metric:
   name: F0.5 score
   summary: "Pixel-wise F-beta with beta = 0.5 between the predicted and true ink masks, weighting precision more than recall."
 constraints: { runtime: "Code competition: notebook inference within the Kaggle time limit", hardware: "Kaggle GPU notebook", internet: false }
-summary: "Detect ink on fragments of the Herculaneum papyri, carbonised by the eruption of Vesuvius in 79 CE, from X-ray CT volumes in which carbon ink is barely distinguishable from carbonised papyrus. The winning team encoded a stack of 16 CT layers with a 3D network, took the maximum over depth to make the model insensitive to which layer holds the ink, segmented the result with a SegFormer, and averaged nine models with rotation TTA, which also made the ensemble well calibrated at a threshold of 0.5."
-winningIdea: "Make the model depth-invariant: a 3D encoder followed by a maximum over the depth axis, so the ink can be found whichever layer it sits in, then a strong 2D segmenter on large 1024-pixel crops."
+summary: "The competition asked participants to detect ink on fragments of the Herculaneum papyri, carbonised in the eruption of Vesuvius in 79 CE, from X-ray micro-CT volumes in which carbon ink differs little in density from the papyrus. The winning solution encodes 16 layers of the CT surface volume with a 3D network, takes the maximum over the depth axis, and segments the result with a SegFormer; nine such models are averaged with rotation test-time augmentation. The best single model scored an F0.5 of 0.67 on the private test set."
+winningIdea: "A 3D encoder processes a stack of 16 CT layers, and its output is reduced by a maximum over the depth axis, which makes the resulting 2D features insensitive to the layer in which the ink lies. A SegFormer segments these features on crops of 1024 × 1024 pixels."
 solutions:
   - rank: 1
     team: ryches, Alex Loftus, Aina Tersol, Ted K
@@ -70,10 +70,10 @@ dataLinks:
   - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/data" }
   - { label: "Vesuvius Challenge", url: "https://scrollprize.org/" }
 priority: 25
-updated: "2026-09-28"
+updated: "2026-10-01"
 ---
 
-## The problem in its field
+## Background
 
 In 79 CE the eruption of Vesuvius buried the Roman town of Herculaneum. In the 18th century, excavators found a villa, now called the Villa of the Papyri, with a library of papyrus scrolls: the only intact library surviving from the classical world. The scrolls were carbonised by the heat. Attempts to unroll them destroyed many; hundreds remain rolled and unreadable.
 
@@ -91,10 +91,10 @@ If ink and papyrus have the same density, why can a model detect ink? Several we
 - Ink can **fill the gaps** between papyrus fibres, altering the fibre pattern locally (the "crackle" pattern later seen by eye in some scans).
 - Ink may contain small amounts of other elements that change X-ray absorption slightly.
 
-None of these is reliable to a human looking at one slice, but a model that sees many layers and a large area can combine them. This is why the input is a volume around the surface, not just the surface itself.
+None of these is reliable to a human looking at one slice, but a model that sees many layers and a large area can combine them. For this reason the input is a volume around the surface, not just the surface itself.
 </Deep>
 
-## The data
+## Data
 
 The training data were three **detached fragments** of scrolls, which had flaked off during earlier unrolling attempts. For these, ink is visible on the exposed surface in **infrared photographs**, which gave the labels.
 
@@ -107,7 +107,7 @@ The test fragments were hidden. The labels are 2D (ink or not at each position o
 
 <Foundation id="dicom-and-volumes" />
 
-## The metric
+## Evaluation metric
 
 Pixel-wise $F_{0.5}$:
 $$
@@ -119,7 +119,7 @@ With $\beta = 0.5$, precision counts more than recall. The reasoning: for readin
 
 <Plot series={[{fn: "fbeta-recall", params: {beta: 0.5, precision: 0.8}, label: "F0.5 at precision 0.8"}, {fn: "fbeta-recall", params: {beta: 1, precision: 0.8}, label: "F1 at precision 0.8"}]} x={[0, 1]} y={[0, 1]} xLabel="recall" yLabel="score" caption="At fixed precision, F0.5 rises quickly with recall and then saturates; F1 keeps rewarding recall. Low recall is penalised less by F0.5." />
 
-## How the winning solution works
+## Winning solution
 
 The winning team (ryches, Alex Loftus, Aina Tersol and Ted K) began from a public 2.5D segmentation baseline by tanakar. Their write-up lists four keys: larger crops, depth-invariant models, averaging many models for calibration, and validating on one fragment before training on all.
 
@@ -133,7 +133,7 @@ The winning team (ryches, Alex Loftus, Aina Tersol and Ted K) began from a publi
 
 <Foundation id="models-and-loss" />
 
-### The problem with 2.5D models
+### Limitation of 2.5D models
 
 The public baseline treated the layers as channels of a 2D network (2.5D). Such a network learns weights tied to channel positions, which means it learns **which layers** contain ink. On the training fragments, ink sits in particular layers; on another fragment, because of different surface extraction or papyrus thickness, it can sit several layers higher or lower. A 2.5D model then looks in the wrong place.
 
@@ -254,11 +254,11 @@ def remove_small(mask: np.ndarray, min_size: int = 10_000) -> np.ndarray:
 A Nolad illustration; the team used `cv2.connectedComponents` with the same size threshold.
 </Deep>
 
-### The final ensemble
+### Final ensemble
 
 Nine models, all with a 3D stage followed by SegFormer: 3D U-Nets with SegFormer-B3 at 1024 and 512 (and an SWA variant), 3D CNNs with 32 or 64 channels and SegFormer-B3 or B5, a 3D U-Net with 32 channels and B5 at 1024, UNETR with B5 at 512, and a UNETR model with a three-class target (no fragment, fragment without ink, ink). Individual public scores were 0.77–0.82.
 
-## How this compares with other competitions
+## Comparison with other competitions
 
 - **CZII cryo-ET** is the other "beyond medicine" volumetric competition: locate particles in 3D tomograms. There the target is 3D; here a 3D input produces a 2D answer, and the depth reduction is the design problem.
 - **Medical CT competitions** (haemorrhage, cervical spine, trauma) mostly used 2.5D slice stacks with shared 2D backbones and recurrent layers. Ink detection shows the failure mode of fixed-channel 2.5D inputs when the position of the signal in the stack varies, and a simple fix.
@@ -266,12 +266,12 @@ Nine models, all with a 3D stage followed by SegFormer: 3D U-Nets with SegFormer
 
 ## Compute and deployment
 
-| Setting | What the solution needs |
+| Setting | Requirements |
 | --- | --- |
 | Competition | Kaggle GPU notebook for nine models with overlapping windows and rotation TTA. |
 | Research group | One GPU per model; training fragments fit in memory as 16-layer surface volumes. |
 | Reading scrolls | Virtual unwrapping of each scroll into surface volumes, ink detection over square metres of surface, and review by papyrologists. |
 
-<Callout kind="deploy" title="The minimum useful version">
+<Callout kind="deploy" title="Reduced configuration">
 A small 3D CNN over 16 surface layers, max-pooled over depth, followed by a SegFormer-B3, trained with Dice + BCE, flips and rotations on 1024-pixel crops, with rotation TTA and a small-component filter. Average several such models before choosing a threshold, and treat the output as an image for a papyrologist to read, not as a transcription.
 </Callout>

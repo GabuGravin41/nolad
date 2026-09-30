@@ -1,6 +1,6 @@
 ---
 slug: stanford-ribonanza-rna-folding
-title: "Stanford Ribonanza RNA Folding (2023): transformers with base-pairing attention bias"
+title: "Stanford Ribonanza RNA Folding (2023)"
 shortTitle: Stanford Ribonanza RNA Folding
 kaggleSlug: stanford-ribonanza-rna-folding
 kaggleUrl: https://www.kaggle.com/competitions/stanford-ribonanza-rna-folding
@@ -27,8 +27,8 @@ metric:
   name: Mean absolute error
   summary: "MAE between predicted and measured reactivity for every nucleotide of every test sequence, in two chemical mapping experiments, with measured values clipped to [0, 1]."
 constraints: { runtime: "Predictions submitted as a file (about 540 million values)", hardware: "Participants' own hardware", internet: true }
-summary: "Predict, for each nucleotide of an RNA sequence, how strongly it reacts with two chemical probes; reactivity is high where the nucleotide is unpaired and flexible, so the task is an indirect readout of RNA structure. Both top solutions were transformer encoders over the sequence whose attention logits receive a bias computed from the base-pairing probability matrix predicted by a classical folding program. The winner added a learned relative position bias that extrapolates to longer sequences."
-winningIdea: "Give the transformer the physics-based base-pairing probability matrix as a per-head bias on its attention logits, so that attention between nucleotides that may pair is favoured, and use a learned relative position bias that generalises to longer test sequences."
+summary: "The competition asked participants to predict, for every nucleotide of an RNA sequence, its reactivity to two chemical probes (DMS and 2A3), which is high where the nucleotide is unpaired or flexible. The winning solution is an ensemble of transformer encoders whose attention logits receive a per-head bias computed from the base-pairing probability matrix of the EternaFold folding program, together with a learned relative position bias. Its models have 12 layers and a width of 192."
+winningIdea: "The base-pairing probability matrix computed by a thermodynamic folding program is passed through a small 2D convolution and added to the attention logits of each head, which raises the attention between nucleotides that are likely to pair. A learned relative position bias replaces fixed positional encodings and was found to extrapolate better to test sequences longer than those in training."
 solutions:
   - rank: 1
     team: vigg
@@ -77,10 +77,10 @@ dataLinks:
   - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/stanford-ribonanza-rna-folding/data" }
   - { label: "Arnie (Das Lab wrapper for RNA folding packages)", url: "https://github.com/DasLabStanford/arnie" }
 priority: 13
-updated: "2026-09-28"
+updated: "2026-10-01"
 ---
 
-## The problem in its field
+## Background
 
 RNA molecules are single strands of nucleotides (A, C, G, U) that fold back on themselves: complementary bases pair (A with U, G with C, and the weaker G–U wobble pair) to form helices, separated by loops of unpaired nucleotides. This **secondary structure**, and the 3D shape built on it, determines what many RNAs do: how ribosomes and riboswitches work, how stable an mRNA vaccine is, and whether a designed RNA drug binds its target.
 
@@ -113,7 +113,7 @@ McCaskill's algorithm (1990) computes $Z$ and all $P_{ij}$ by dynamic programmin
 **EternaFold** (Wayment-Steele et al., 2022) is a folding package whose parameters were trained on Eterna players' designs and chemical mapping data; it was the most useful BPPM source in this competition.
 </Deep>
 
-## The data
+## Data
 
 Training data contain chemical mapping profiles for hundreds of thousands of sequences, mostly of length 177 or 206 nucleotides, many of them designed by Eterna players, with the two experiments measured separately. Many profiles are noisy.
 
@@ -121,7 +121,7 @@ The test set is very large: 1,343,824 sequences with a total length of about 270
 
 About 13% of the public test sequences were identical to training sequences, a leak the winners dealt with explicitly (see below).
 
-## The metric
+## Evaluation metric
 
 The score is the mean absolute error over all scored nucleotides and both experiments, with measured reactivities clipped to $[0, 1]$.
 
@@ -140,7 +140,7 @@ This is zero when $F(c) = 1/2$: the minimiser is the **median** of $Y$. For squa
 Clipping targets to $[0,1]$ reduces the influence of extreme, often noisy values.
 </Deep>
 
-## How the winning solution works
+## Winning solution
 
 Team vigg (Dmitry Penzar, Valeriy Vyaltsev, Elizaveta Aristova, Artemy Bakulin and a team member known as polymerase; several are authors of the LegNet model for regulatory DNA) built a transformer encoder that receives the BPPM through its attention.
 
@@ -156,11 +156,11 @@ Team vigg (Dmitry Penzar, Valeriy Vyaltsev, Elizaveta Aristova, Artemy Bakulin a
 
 <Foundation id="attention-transformers" />
 
-### The input
+### Input
 
 Each sequence becomes tokens: the four nucleotides plus start and end tokens, embedded in dimension 192. An embedding of the **quality flag** (`SN_filter`) is added to every token. During training the flag tells the model whether a profile is clean or noisy; at inference it is set to "clean", so the model predicts what a high-quality experiment would measure.
 
-### BPPM as an attention bias
+### Base-pairing probabilities as an attention bias
 
 Standard self-attention for head $h$ computes, for query position $i$ and key position $j$,
 $$
@@ -266,7 +266,7 @@ About 13% of the public test sequences were also in the training set. A model th
 
 <Foundation id="cross-validation" />
 
-### The ensemble
+### Ensemble
 
 15 models with squeeze-excitation BPPM convolutions, 10 with plain convolutions, and 2 trained on length splits were averaged. For the 2A3 output, the final prediction gave weight 1/28 to a separate model that predicts 2A3 from DMS (the two experiments are correlated).
 
@@ -289,7 +289,7 @@ Self-supervised pre-training (Data2Vec, BERT-style masking) gave inconsistent re
 
 <Foundation id="recurrent-networks" />
 
-## How this compares with other competitions
+## Comparison with other competitions
 
 - **ASL fingerspelling** and **Ribonanza** share the Squeezeformer: an architecture from speech recognition moved to sign-language landmarks and then to RNA. The common structure is a 1D sequence with both local patterns (convolutions) and long-range dependencies (attention).
 - **Leash BELKA** (small-molecule binding) also works from molecular strings, and its winner trained a tiny SMILES transformer from scratch; pre-training on the much larger ZINC database did not help him. In Ribonanza, similarly, embeddings from the RNA language model RNA-FM did not help, while the physics-based BPPM did.
@@ -297,7 +297,7 @@ Self-supervised pre-training (Data2Vec, BERT-style masking) gave inconsistent re
 
 ## Compute and deployment
 
-| Setting | What the solution needs |
+| Setting | Requirements |
 | --- | --- |
 | Competition | Multi-GPU training for an ensemble of 27 models; EternaFold BPPMs for 1.3 million test sequences (a substantial CPU job). |
 | Research lab | One RTX 4090 trains a strong single model in about 30 hours. |
@@ -305,6 +305,6 @@ Self-supervised pre-training (Data2Vec, BERT-style masking) gave inconsistent re
 
 The organisers' Ribonanza paper (Kretsch et al., 2024) describes the competition results and a model, RibonanzaNet, developed from the lessons of the top solutions.
 
-<Callout kind="deploy" title="The minimum useful version">
+<Callout kind="deploy" title="Reduced configuration">
 A 12-layer, 192-dimensional transformer with BPPM attention bias and a learned relative position bias, trained with an SN-weighted L1 loss. The EternaFold computation is the main runtime cost at inference and can be parallelised on CPUs.
 </Callout>

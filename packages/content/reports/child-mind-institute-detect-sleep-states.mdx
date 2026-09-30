@@ -1,6 +1,6 @@
 ---
 slug: child-mind-institute-detect-sleep-states
-title: "Child Mind Institute Detect Sleep States (2023): finding sleep onset and waking in wrist accelerometry"
+title: "Child Mind Institute Detect Sleep States (2023)"
 shortTitle: CMI Detect Sleep States
 kaggleSlug: child-mind-institute-detect-sleep-states
 kaggleUrl: https://www.kaggle.com/competitions/child-mind-institute-detect-sleep-states
@@ -26,8 +26,8 @@ metric:
   name: Event-detection average precision
   summary: "Average precision of predicted onset and wake-up times, averaged over ten time tolerances from 1 to 30 minutes and over the two event types."
 constraints: { runtime: "9 h", hardware: "Kaggle notebook", internet: false }
-summary: "Given weeks of wrist accelerometer readings from children and adolescents, mark when each night's sleep began and ended. The winners built a small convolution–GRU network with targets that shrink during training, then a second-stage model that estimates the probability of an event in each minute, and finally a submission builder that picks timestamps to maximise the expected score directly."
-winningIdea: "Separate what to predict from what to submit: a CNN–GRU–CNN model gives smooth event scores, a second-level model turns them into per-minute probabilities, and a greedy algorithm chooses submission times that maximise expected average precision across all ten tolerances."
+summary: "The competition asked participants to detect the times of sleep onset and wake-up in multi-week wrist accelerometer recordings from children and adolescents in the Healthy Brain Network study. The winning solution combines a convolutional and recurrent network trained on soft targets that narrow during training, a second-stage model that estimates the probability of an event in each minute, and a greedy procedure that selects submission times to maximise the expected average precision. The post-processing raised the private score from 0.829 to 0.852."
+winningIdea: "A CNN–GRU–CNN network produces event scores every 5 seconds from arm angle and movement features. A second-level model converts the scores into the probability of an event at each minute, and submission times are chosen greedily, one at a time, to maximise the expected average precision over the ten time tolerances of the metric."
 solutions:
   - rank: 1
     team: sakami, kami and shimacos
@@ -51,7 +51,7 @@ solutions:
     writeup: https://www.kaggle.com/competitions/child-mind-institute-detect-sleep-states/writeups/chris-deotte-11th-place-gru-cnn-transformer-gpu-de
 deployability:
   score: 4
-  verdict: "The first-stage network is small and fast and reads only two signals every wrist-worn research device records; the post-processing is tailored to the competition metric and would be replaced by a simpler event rule for research use."
+  verdict: "The first-level network is small and reads two signals that wrist-worn research accelerometers record. The second-level model and the submission procedure are specific to the competition metric; a research pipeline would replace the submission procedure with a rule that selects one onset and one wake-up per night."
   inference: "A compact 1D model over multi-day series; seconds per participant on a GPU and practical on a CPU."
   models: "CNN–residual GRU–CNN first-level models; second-level LightGBM, CatBoost and small sequence models on candidate windows."
   training: "Modest; the first-level model has hidden size 64 and trains on daily chunks."
@@ -73,12 +73,12 @@ papers:
 dataLinks:
   - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/child-mind-institute-detect-sleep-states/data" }
 priority: 9
-updated: "2026-09-28"
+updated: "2026-10-01"
 ---
 
-## The problem in its field
+## Background
 
-Sleep regulates mood, attention and behaviour, and disturbed sleep is common in children with mental-health and learning difficulties. Studying it at scale is hard. Polysomnography in a sleep laboratory is accurate but expensive and unnatural. Sleep diaries are cheap but unreliable, and cannot separate getting into bed from falling asleep. **Wrist-worn accelerometers** record movement continuously for weeks in a person's normal life and are standard in large studies, but turning their signals into sleep times has relied on hand-made rules that vary between individuals.
+Sleep affects mood, attention and behaviour, and disturbed sleep is common in children with mental-health and learning difficulties. Measuring sleep in large studies is difficult. Polysomnography in a sleep laboratory is accurate but expensive and unnatural. Sleep diaries are cheap but unreliable, and cannot separate getting into bed from falling asleep. **Wrist-worn accelerometers** record movement continuously for weeks in a person's normal environment and are standard in large studies. Sleep times have been derived from their signals with hand-crafted rules, whose accuracy varies between individuals.
 
 The Child Mind Institute provided recordings from the **Healthy Brain Network**, a large New York study of child and adolescent mental health, and asked for models that detect **sleep onset** and **wake-up** events.
 
@@ -89,35 +89,47 @@ A three-axis accelerometer on the wrist measures acceleration along three direct
 - **anglez**: the angle of the arm relative to the horizontal plane, derived from the direction of gravity. It changes when the wrist rotates.
 - **ENMO** (Euclidean norm minus one): $\max\big(0,\ \sqrt{a_x^2 + a_y^2 + a_z^2} - 1\big)$ in units of $g$, the acceleration beyond gravity. It is near zero at rest and rises with movement.
 
-During sleep, both become quiet for long stretches, interrupted by occasional posture changes. The classic heuristic (van Hees et al.) marks sleep when the arm angle stays nearly constant for several minutes. The difficulty is distinguishing lying still awake (reading, watching a screen) from sleeping, and marking the transition minute precisely.
+During sleep both signals are low for long periods, interrupted by occasional changes of posture. A widely used heuristic (van Hees et al.) marks sleep when the arm angle stays nearly constant for several minutes. Such rules have difficulty separating quiet wakefulness (reading, watching a screen) from sleep, and placing the transition at the correct minute.
 
-Devices are sometimes taken off. A watch lying on a table produces a perfectly flat signal; in this dataset, periods of non-wear showed an exact daily repetition of values, an artefact of how gaps had been filled.
+Devices are sometimes removed. In this dataset, periods without wear show an exact repetition of values with a period of one day, an artefact of how the gaps had been filled.
 </Deep>
 
-## The data
+## Data
 
 Each training series is one participant's recording over many days, at one sample every 5 seconds (17,280 steps per day), with the two signals and a timestamp. Labels give, for each night, the step of sleep onset and of wake-up. Some nights have no labelled events, for example when the device was not worn. The hidden test set had to be processed in 9 hours.
 
-## The metric
+## Evaluation metric
 
-For each event type and each tolerance $\tau$ in $\{1, 3, 5, 7.5, 10, 12.5, 15, 20, 25, 30\}$ minutes (12 to 360 steps), predictions are matched to ground-truth events: each true event is paired with the highest-confidence unmatched prediction within $\tau$. Average precision is computed over all predictions ranked by confidence, then averaged over the ten tolerances and the two event types.
+For each event type (onset, wake-up) and each tolerance $\tau$ in $\{1, 3, 5, 7.5, 10, 12.5, 15, 20, 25, 30\}$ minutes (12 to 360 steps of 5 seconds), predictions are matched to true events. Predictions are processed in order of decreasing confidence; each is matched to the nearest unmatched true event of the same series within $\tau$, if one exists. Matched predictions are true positives and unmatched ones false positives.
+
+With the predictions sorted by confidence, let $\mathrm{TP}(k)$ be the number of true positives among the first $k$, $P(k) = \mathrm{TP}(k)/k$ the precision and $R(k) = \mathrm{TP}(k)/G$ the recall, where $G$ is the number of true events. The average precision at tolerance $\tau$ is
+
+$$
+\mathrm{AP}_\tau = \sum_{k} \big(R(k) - R(k-1)\big)\,P(k),
+$$
+
+a sum over the ranks at which recall increases, that is, over the true positives. The score is the mean of $\mathrm{AP}_\tau$ over the ten tolerances and the two event types:
+
+$$
+\text{score} = \frac{1}{2 \cdot 10} \sum_{e \in \{\text{onset},\,\text{wake-up}\}}\ \sum_{\tau} \mathrm{AP}_{\tau}^{(e)} .
+$$
 
 <Foundation id="precision-recall-fbeta" />
 
-<Deep title="What this metric rewards" kind="math">
+<Deep title="Properties of the metric" kind="math">
 
-Three properties drive the solutions:
+Three properties of the metric determine the design of the solutions:
 
-1. **Unmatched low-confidence predictions cost little.** AP is computed from the ranked list. Extra predictions ranked below all the true matches only add false positives at recall levels already reached, where precision has little weight. It therefore pays to submit many candidate times per night with decreasing confidence.
-2. **Precision at many tolerances.** A prediction 4 minutes from the truth counts at tolerances of 5 minutes and above (7 of 10) but not at 1 or 3. Being exactly right earns credit at all ten.
-3. **One match per event.** Once a prediction is matched to an event at a given tolerance, a second nearby prediction cannot match the same event and becomes a false positive. Two confident predictions 2 minutes apart around one event waste the second one.
+1. **Low-confidence predictions cost little.** In the sum above, a false positive ranked below the last true positive does not change any term, because $R(k)$ no longer increases after that rank. A false positive ranked between true positives lowers $P(k)$ for the true positives that follow it. Submitting many candidate times per night with decreasing confidence therefore adds possible matches at little cost.
+2. **Several tolerances.** A prediction 4 minutes from the true event is a match at tolerances of 5 minutes and above (8 of the 10) but not at 1 or 3 minutes. A prediction within 1 minute is a match at all ten.
+3. **One match per event.** Once a true event has been matched at a given tolerance, a second prediction near it cannot match it and counts as a false positive. Of two confident predictions 2 minutes apart around one event, the second adds a false positive at every tolerance at which the first already matched.
 
-The winning post-processing is a direct response to these three properties.
+The winning post-processing is designed around these three properties.
 </Deep>
 
-## How the winning solution works
+## Winning solution
 
-The team of sakami, kami and shimacos built a first-level network, a second-level model and a submission builder. The first-level network alone would have placed ninth; the rest lifted the private score from 0.829 to 0.852.
+The team of sakami, kami and shimacos built a first-level network, a second-level model and a procedure for selecting submission times. The first-level network alone scored 0.829 on the private leaderboard, which would have placed ninth; with the second level and the selection procedure the private score was 0.852.
 
 <Pipeline steps={[
   {tag: "Level 1", title: "CNN → residual GRU → CNN", detail: "per-step event scores from anglez, ENMO, time features"},
@@ -128,7 +140,7 @@ The team of sakami, kami and shimacos built a first-level network, a second-leve
 
 <Foundation id="models-and-loss" />
 
-### Level 1: the network
+### Level 1: CNN–GRU network
 
 The architecture comes from a public notebook by danielphalen:
 
@@ -156,7 +168,7 @@ class SEScale(nn.Module):
         return h * x
 ```
 
-`SEScale` computes, for each time step, a weight in $(0, 1)$ for each input channel from all channels together, and multiplies the channels by those weights. It lets the model turn features up or down depending on context (for example, trust ENMO less when the angle is flat).
+`SEScale` computes, for each time step, a weight in $(0, 1)$ for each input channel from all channels together, and multiplies the channels by those weights. For an input vector $x \in \mathbb{R}^{c}$ at one time step, with weight matrices $W_1 \in \mathbb{R}^{r \times c}$, $W_2 \in \mathbb{R}^{c \times r}$ and biases $b_1, b_2$, the output is $x \odot \sigma\big(W_2\,\mathrm{ReLU}(W_1 x + b_1) + b_2\big)$, where $\sigma$ is the logistic function and $\odot$ the elementwise product. The model can thereby scale features up or down depending on the values of the other features.
 
 ```python title="forward pass (excerpt)"
 def forward(self, num_x, cat_x):
@@ -176,16 +188,16 @@ def forward(self, num_x, cat_x):
 - Categorical features (hour, minute, weekday, non-wear flag) pass through embedding tables; numerical features through a linear layer; both are concatenated.
 - `self.conv` and `self.dconv` are 1D convolutions over time; `transpose` moves the time axis where `Conv1d` expects it.
 - The GRU layers run on the downsampled sequence, which is cheaper.
-- The **minute embedding** is concatenated again right before the output. Competitors had noticed that ground-truth events were not spread evenly over the minutes of the hour. Feeding the minute directly to the last layer lets the model express that bias without it being washed out by the recurrent layers.
+- The **minute embedding** is concatenated again immediately before the output layer. Competitors had observed that the labelled events were not distributed uniformly over the minutes of the hour. Supplying the minute directly to the last layer allows the model to represent this pattern without passing it through the recurrent layers.
 </Deep>
 
 **Features.** Categorical: hour, minute, weekday, non-wear flag. Numerical: anglez / 45; $\log(1 + \text{ENMO})$ clipped at 1 and divided by 0.1; rolling mean, standard deviation and maximum of anglez and ENMO over 12 steps (1 minute); rolling median over 5 minutes of the absolute change in anglez. Month and day of month were removed (this improved CV).
 
-**Data preparation.** Each series is cut into chunks of about one day, with chunk starts offset by 0.35 days so chunk boundaries fall at different times of day. Each epoch uses half of the chunks. At evaluation, overlapping chunk predictions are averaged and 30 minutes are trimmed from each chunk's ends, where the network lacks context.
+**Data preparation.** Each series is cut into chunks of about one day, with chunk starts offset by 0.35 days so that chunk boundaries fall at different times of day. Each epoch uses half of the chunks. At evaluation, predictions from overlapping chunks are averaged, and 30 minutes are removed from both ends of each chunk, where the network has little context.
 
-### Targets that shrink during training
+### Decaying soft targets
 
-A single step marked 1 at each event and 0 everywhere else is a hard target to learn. The winners built a **soft target** that is highest at the event and decays with distance, built from the metric's tolerances: for tolerance $i$ with window $w_i$ steps (12, 36, ..., 360), each step within $w_i$ of an event gets value $1 - i/10$, and the target is the maximum over tolerances. Steps within 1 minute get 1.0, within 3 minutes 0.9, and so on, down to 0.1 at 30 minutes.
+A target equal to 1 at the single step of each event and 0 elsewhere gives very few positive steps. The winners used a **soft target** that is highest at the event and decreases with distance, built from the tolerances of the metric: for tolerance $i$ with window $w_i$ steps (12, 36, ..., 360), each step within $w_i$ of an event gets value $1 - i/10$, and the target is the maximum over tolerances. Steps within 1 minute get 1.0, within 3 minutes 0.9, and so on, down to 0.1 at 30 minutes.
 
 <Deep title="Code: building the decaying target" kind="code">
 
@@ -218,18 +230,18 @@ Then, every epoch:
 targets = np.where(targets == 1.0, 1.0, (targets - (1.0 / config.n_epochs)).clip(min=0.0))
 ```
 
-Every value below 1 is reduced by $1/\text{epochs}$. By the last epoch, only the steps within 1 minute of an event remain positive.
+Every value below 1 is reduced by $1/E$ per epoch, where $E$ is the number of epochs. A step with initial value $v < 1$ therefore reaches 0 after $\lceil vE \rceil$ epochs, and by the last epoch only the steps within 1 minute of an event remain positive.
 </Deep>
 
-Early in training the wide target gives the network a strong signal about roughly where events are. As the target narrows, the network is pushed to sharpen its peaks. The authors report that this decay was the largest single improvement to the first-level model (CV 0.7510 to 0.7699).
+Early in training the wide target provides many positive steps near each event. As the target narrows, the loss increasingly penalises scores away from the event minute, which sharpens the peaks of the output. The authors report the decaying target as the largest single improvement to the first-level model (CV 0.7510 to 0.7699).
 
 <Foundation id="soft-labels" />
 
-### Removing non-wear periods
+### Non-wear periods
 
-The data had a quirk: when the device was not worn, the filled-in signal repeated exactly with a period of one day. A rule detected those segments and set a flag, used both as an input feature and to zero out predictions in non-wear periods.
+When the device was not worn, the filled-in signal repeated exactly with a period of one day. A rule detected those segments and set a flag, used both as an input feature and to zero out predictions in non-wear periods.
 
-### Level-1 improvements, step by step
+### Development of the level-1 model
 
 | Change | CV |
 | --- | --- |
@@ -245,7 +257,7 @@ The data had a quirk: when the device was not worn, the filled-in signal repeate
 
 At this point the single model scored 0.768 public and 0.829 private.
 
-### Level 2: a probability per minute
+### Level 2: event probability per minute
 
 Ground-truth events were always at second 0 of a minute, and the metric cannot distinguish predictions within 30 seconds of the truth. The level-1 network outputs a score every 5 seconds and is trained to be positive in a window around events. The second level converts this into the probability that an event occurs **exactly at a given minute**.
 
@@ -254,11 +266,11 @@ Ground-truth events were always at second 0 of a minute, and the metric cannot d
 3. Around each peak, take a window of 8 minutes before and after (overlapping windows merged). These windows contained 98.45% of true events.
 4. For each candidate minute, aggregate features from the level-1 predictions and the raw signals, and train LightGBM and CatBoost to predict 1 at the exact event minute and 0 elsewhere. Also train small CNN–RNN, CNN and transformer models on the windows as sequences.
 
-The level-2 outputs were well calibrated without further adjustment, and they absorbed the minute bias that the level-1 model only partly captured.
+The authors report that the level-2 outputs were well calibrated without further adjustment and captured the dependence on the minute of the hour more fully than the level-1 model.
 
 <Foundation id="gradient-boosting" />
 
-### Building the submission to maximise expected AP
+### Selection of submission times
 
 With calibrated per-minute probabilities $q_m$, the team chose submission times greedily.
 
@@ -270,29 +282,41 @@ With calibrated per-minute probabilities $q_m$, the team chose submission times 
 
 Daily normalisation of the level-2 probabilities, computing score changes incrementally, and JIT compilation made this fast enough to run on every series.
 
-<Deep title="Why greedy selection with discounting approximates the best submission" kind="math">
+<Deep title="Greedy selection with discounting" kind="math">
 
-Ignoring interactions between tolerances, the contribution of a submitted time $t$ at tolerance $w$ is roughly the probability that an unmatched true event lies within $w$ of $t$. Summing over tolerances gives the expected number of tolerance-level matches $t$ creates, which is what AP rewards when $t$ is ranked high.
+Let $q_m \in [0,1]$ be the level-2 probability that an event occurs at minute $m$, and let $W_w(t)$ be the set of minutes within tolerance $w$ of a candidate time $t$. Treating tolerances independently, the expected number of true events that $t$ can match at tolerance $w$ is
 
-Once $t$ is submitted, events near it are likely matched, so the value of another candidate $t'$ near $t$ falls. Subtracting the probability mass within each tolerance window of $t$ updates every candidate's expected value to account for that. Picking the highest remaining value each time and ranking picks in the order chosen places the most valuable predictions at the top of the ranked list, which is where AP gives most weight.
+$$
+v_w(t) = \sum_{m \in W_w(t)} q^{(w)}_m ,
+$$
 
-The procedure is a greedy approximation to the combinatorial problem of choosing a set of times and their ranking; it is exact neither in the discounting (which treats tolerances independently) nor in optimality, but it encodes the three properties of the metric listed above.
+where $q^{(w)}_m$ is the probability mass at minute $m$ not yet claimed at tolerance $w$; initially $q^{(w)}_m = q_m$. The value of the candidate is $v(t) = \sum_w v_w(t)$, the expected number of (event, tolerance) matches it creates.
+
+After a time $t^\ast$ is selected, an event within $w$ of $t^\ast$ is expected to be matched by $t^\ast$ at tolerance $w$ and cannot be matched again. The update
+
+$$
+q^{(w)}_m \leftarrow 0 \quad \text{for } m \in W_w(t^\ast),
+$$
+
+removes that mass for tolerance $w$ (the implementation subtracts it from the running sums), and the values $v(t)$ of all other candidates are recomputed. Selecting the largest remaining $v(t)$ at each step and ranking the selected times in the order of selection puts the times with the largest expected contribution at the top of the ranked list, where each true positive raises the precision of all later ones.
+
+The procedure is a greedy approximation to the combinatorial problem of choosing a set of times and their order. It treats the tolerances independently and is not guaranteed to be optimal.
 </Deep>
 
 This post-processing raised the scores from 0.768 to 0.790 public and from 0.829 to 0.852 private.
 
 ## Other top solutions
 
-Most top teams used some combination of a 1D U-Net or GRU over the raw signals and post-processing tuned to the metric: second place (k-mat); third place with a GRU, a U-Net and LightGBM; fourth place with a modified U-Net, a transformer and weighted boxes fusion adapted to events; sixth place with a BiLSTM U-Net; seventh with a WaveNet. Chris Deotte's eleventh-place write-up describes a fast GPU pipeline comparing GRU, CNN and transformer models. The consistent lesson is that the post-processing was worth as much as the network.
+Most top teams combined a 1D U-Net or GRU over the signals with post-processing designed for the metric: second place (k-mat); third place with a GRU, a U-Net and LightGBM; fourth place with a modified U-Net, a transformer and weighted boxes fusion adapted to events; sixth place with a BiLSTM U-Net; seventh place with a WaveNet. Chris Deotte's eleventh-place write-up describes a GPU pipeline comparing GRU, CNN and transformer models. In the winning solution, the second level and the selection procedure added 0.023 to the private score of the first-level model.
 
 ## Compute and deployment
 
-| Setting | What the solution needs |
+| Setting | Requirements |
 | --- | --- |
 | Kaggle | 9 hours for the hidden test set; the models are light. |
 | Sleep research study | The level-1 network plus a simple rule (for example, the highest-scoring onset and wake-up per night) gives one sleep window per night. Runs on a laptop. |
-| Clinical tool | Validation against polysomnography, which the competition labels were not. |
+| Clinical tool | Validation against polysomnography; the competition labels were not derived from it. |
 
-<Callout kind="deploy" title="Separate the model from the metric">
-The level-1 network is the transferable part: a small model that turns wrist accelerometry into event scores. The level-2 model and the greedy submission builder optimise a leaderboard metric that rewards many candidate times per night. A research pipeline would keep level 1, possibly level 2, and replace the submission builder with a rule that fits the study's definition of a night's sleep.
+<Callout kind="deploy" title="Considerations for deployment">
+The level-1 network converts wrist accelerometry into event scores and can be used outside the competition. The level-2 model and the selection procedure optimise a metric that rewards many candidate times per night. A research pipeline would keep the level-1 network, possibly the level-2 model, and replace the selection procedure with a rule that matches the study's definition of a night's sleep.
 </Callout>

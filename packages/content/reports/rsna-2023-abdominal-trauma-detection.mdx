@@ -1,6 +1,6 @@
 ---
 slug: rsna-2023-abdominal-trauma-detection
-title: "RSNA 2023 Abdominal Trauma Detection: organ crops, soft slice labels and metric-aware scaling"
+title: "RSNA 2023 Abdominal Trauma Detection"
 shortTitle: RSNA Abdominal Trauma
 kaggleSlug: rsna-2023-abdominal-trauma-detection
 kaggleUrl: https://www.kaggle.com/competitions/rsna-2023-abdominal-trauma-detection
@@ -32,8 +32,8 @@ metric:
   name: Weighted log loss over injury types
   summary: "Mean of sample-weighted log losses for bowel injury, active extravasation, kidney, liver and spleen injury (healthy, low or high grade), and a derived 'any injury' label; injured classes carry weights from 2 to 6."
 constraints: { runtime: "Code competition: notebook inference in at most 9 hours", hardware: "Kaggle CPU or GPU notebook", internet: false }
-summary: "Detect and grade injuries to the liver, spleen, kidneys and bowel, and active bleeding, in abdominal CT scans of trauma patients. The winning team segmented the organs in 3D, cropped each organ, and trained 2.5D CNN-GRU models whose slice labels were weighted by how much of the organ each slice shows, with an auxiliary segmentation loss; the ensemble's probabilities were then rescaled per class to match the metric's weights."
-winningIdea: "Crop each organ from a 3D segmentation, give every slice a soft label proportional to how much of the organ it contains, train a 2.5D CNN with a GRU and an auxiliary Dice loss, take the maximum over slices, and rescale class probabilities to the metric's weights."
+summary: "The competition asked participants to detect and grade injuries to the liver, spleen, kidneys and bowel, and active bleeding, in contrast-enhanced abdominal CT scans of trauma patients. The winning solution segments the organs in 3D, crops each organ, and classifies the crops with 2.5D CNN–GRU models trained on slice labels weighted by the area of the organ on each slice and with an auxiliary segmentation loss; class probabilities are then rescaled to the weights of the metric. The best ensemble reached an out-of-fold weighted log loss of about 0.31."
+winningIdea: "Each organ is cropped using a 3D segmentation, and every slice of the crop receives a soft label proportional to the area of the organ on that slice. A 2.5D CNN with a GRU, trained with an auxiliary Dice loss, predicts per-slice scores, the patient score is the maximum over slices, and class probabilities are rescaled on out-of-fold data to account for the class weights of the metric."
 solutions:
   - rank: 1
     team: Team Oxygen
@@ -77,10 +77,10 @@ papers:
 dataLinks:
   - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/rsna-2023-abdominal-trauma-detection/data" }
 priority: 17
-updated: "2026-09-28"
+updated: "2026-10-01"
 ---
 
-## The problem in its field
+## Background
 
 Traumatic injury causes more than five million deaths worldwide each year. Blunt abdominal trauma, most often from road traffic accidents, can injure solid organs (liver, spleen, kidneys) and the bowel without any visible wound, and the clinical examination is often unreliable, especially in unconscious or intoxicated patients. **Contrast-enhanced CT** is therefore the standard test for stable trauma patients.
 
@@ -97,7 +97,7 @@ A single patient can have several injuries. "Any injury" is positive if at least
 
 <Foundation id="ct-hounsfield-windowing" />
 
-## The data
+## Data
 
 The RSNA collected abdominal CT studies from trauma centres, annotated by radiologists from ASER and SAR. Each patient may have one or two CT series. Labels are per patient:
 
@@ -109,7 +109,7 @@ Additional annotations for subsets: organ **segmentation masks** (derived with T
 
 <Foundation id="dicom-and-volumes" />
 
-## The metric
+## Evaluation metric
 
 For each injury type, a sample-weighted log loss is computed, and the final score is the mean over types, including an **any injury** label derived from the submitted probabilities. The weights for the true class are:
 
@@ -148,7 +148,7 @@ The optimal submission multiplies each calibrated class probability by its weigh
 A model trained with unweighted cross-entropy learns $q$. The winners tuned **per-class scaling factors** on out-of-fold predictions, which estimates the $w_k$ empirically and also corrects for imperfect calibration. The result is the same as the derivation predicts: injured-class probabilities go up.
 </Deep>
 
-## How the winning solution works
+## Winning solution
 
 Team Oxygen (Nischay Dhankhar, Harshit Sheoran and Qishen Ha; Qishen Ha had won the 2022 cervical spine competition) built a three-part system. Validation used 4-fold group K-fold by patient.
 
@@ -187,7 +187,7 @@ Binary cross-entropy with a soft target $t \in [0,1]$ is minimised at $p = t$ (s
 **Aggregation by maximum.** The patient probability is $\max_s \sigma(z_s)$, the most confident slice. If any slice shows the injury, the maximum picks it up; slices without injury do not dilute it, which averaging would.
 </Deep>
 
-### Part 3: the model
+### Part 3: classification model
 
 The backbone (CoaT-Lite Medium, CoaT-Lite Small or EfficientNetV2-S) encodes each of the 32 stacks; a **GRU** reads the sequence of 32 embeddings and outputs per-slice predictions. The CoaT (Co-Scale Conv-Attentional Transformer) models combine convolution and attention; CoaT-Lite Medium was the best single architecture, with an out-of-fold score of 0.326 over four folds.
 
@@ -241,7 +241,7 @@ Slice-level predictions were averaged within folds for each architecture; patien
 
 <Foundation id="ensembling-tta" />
 
-## Second place: a strong single pipeline
+## Second place: a single pipeline
 
 Theo Viel, working alone, reached second place, and his best private score came from a single pipeline rather than an ensemble.
 
@@ -263,7 +263,7 @@ Theo Viel, working alone, reached second place, and his best private score came 
 
 What did not help: YOLOX detection with the extravasation boxes, a sequence head in stage 1 once the crop models were strong, and ensembling for the private score.
 
-## How this compares with the other RSNA CT competitions
+## Comparison with other RSNA CT competitions
 
 | Competition | Localisation | Slice-level supervision | Aggregation |
 | --- | --- | --- | --- |
@@ -276,12 +276,12 @@ Trauma is the hardest of the four in its labels: patient-level only for most tar
 
 ## Compute and deployment
 
-| Setting | What the solution needs |
+| Setting | Requirements |
 | --- | --- |
 | Competition | 9-hour notebook; the runner-up's single pipeline takes under 4 hours for the test set. |
 | Hospital research group | One GPU; segmentation can use the public TotalSegmentator model. |
 | Trauma centre product | Multi-phase protocol support, sensitivity-focused thresholds for bleeding, and regulatory approval. |
 
-<Callout kind="deploy" title="The minimum useful version">
+<Callout kind="deploy" title="Reduced configuration">
 TotalSegmentator (or a small 3D U-Net) to crop the liver, spleen and kidneys; one 2.5D CNN-GRU per organ with area-weighted soft slice labels and an auxiliary Dice head; max aggregation. Keep a separate whole-abdomen model for extravasation, and set its threshold for sensitivity, since missed active bleeding is the most dangerous error.
 </Callout>
