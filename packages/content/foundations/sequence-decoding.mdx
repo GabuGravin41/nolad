@@ -1,30 +1,76 @@
 ---
 id: sequence-decoding
-title: "Decoding sequences: CTC, attention decoders and edit distance"
+title: "Sequence decoding, CTC and edit distance"
 kind: ml
-summary: "When the output is a sequence of characters whose length differs from the input's, a model needs a way to align them. CTC sums over alignments; an attention decoder generates characters one by one while looking at the input."
+summary: "When a model must output a sequence of characters whose length differs from that of its input and no alignment between the two is given, it can be trained with connectionist temporal classification (CTC), which sums over alignments, or with an attention decoder, which generates the output one character at a time. The primer defines both and the Levenshtein edit distance used to score such outputs."
 ---
 
 ### The alignment problem
 
-A fingerspelled phrase might span 200 video frames and 12 characters, with no label saying which frames belong to which letter. The model must learn the alignment.
+Let the input be a sequence of $T$ frames $x = (x_1, \dots, x_T)$, for example the hand landmarks in each frame of a video, and let the target be a string $y = (y_1, \dots, y_U)$ of $U$ characters from an alphabet $\mathcal{A}$. Usually $T$ is much larger than $U$: a fingerspelled phrase can span a few hundred frames and a dozen characters. Training data give the pair $(x, y)$ but not which frames correspond to which character. A sequence model therefore has to handle the alignment itself.
 
-### Connectionist temporal classification (CTC)
+### Connectionist temporal classification
 
-CTC (Graves et al., 2006) lets the model output, at every frame, a distribution over characters plus a special **blank**. An output path is collapsed by merging repeated characters and deleting blanks: `hh-e-ll-ll-oo` becomes `hello`. The probability of a target string is the sum over all paths that collapse to it, computed efficiently by dynamic programming, and training maximises its logarithm. CTC assumes the outputs at different frames are conditionally independent given the input.
+**CTC** (Graves et al., 2006) adds a **blank** symbol, written "-", to the alphabet. At every frame $t$ the model outputs a probability distribution $p_t(\cdot)$ over $\mathcal{A} \cup \{-\}$.
+
+A **path** is a sequence $\pi = (\pi_1, \dots, \pi_T)$ with one symbol per frame. The **collapse map** $\mathcal{B}$ turns a path into a string in two steps: first merge runs of repeated symbols, then delete blanks. For example,
+
+$$
+\mathcal{B}(\texttt{hh-e-ll-ll-oo}) = \texttt{hello}.
+$$
+
+The blank between the two runs of `l` keeps them apart; without it they would merge into one `l`.
+
+CTC assumes that the symbols at different frames are conditionally independent given the input. The probability of a path is then the product of the per-frame probabilities, and the probability of a target string is the sum over all paths that collapse to it:
+
+$$
+P(\pi \mid x) = \prod_{t=1}^{T} p_t(\pi_t), \qquad
+P(y \mid x) = \sum_{\pi \,:\, \mathcal{B}(\pi) = y} P(\pi \mid x).
+$$
+
+The number of such paths grows exponentially with $T$, but the sum can be computed in time proportional to $T \times U$ by dynamic programming over prefixes of $y$ (the forward–backward algorithm). Training minimises $-\log P(y \mid x)$.
+
+**Worked example.** Take $T = 3$ frames, the one-letter alphabet $\{\texttt{a}\}$ plus blank, and per-frame probabilities of `a` equal to $0.6, 0.5, 0.2$ (so the blank has $0.4, 0.5, 0.8$). The paths that collapse to `a` are those with a single run of `a`:
+
+| Path | Probability |
+| --- | --- |
+| `aaa` | $0.6 \times 0.5 \times 0.2 = 0.06$ |
+| `aa-` | $0.6 \times 0.5 \times 0.8 = 0.24$ |
+| `a--` | $0.6 \times 0.5 \times 0.8 = 0.24$ |
+| `-aa` | $0.4 \times 0.5 \times 0.2 = 0.04$ |
+| `-a-` | $0.4 \times 0.5 \times 0.8 = 0.16$ |
+| `--a` | $0.4 \times 0.5 \times 0.2 = 0.04$ |
+
+So $P(\texttt{a} \mid x) = 0.78$. The remaining probability belongs to the empty string (path `---`, $0.16$) and to `aa` (path `a-a`, $0.06$), and the three totals sum to 1.
 
 ### Attention encoder–decoder
 
-An encoder turns the input frames into a sequence of vectors. A decoder generates the output one character at a time, each step attending to the encoder vectors (cross-attention) and to the characters already produced (causal self-attention). Training uses teacher forcing: the decoder receives the true previous characters and is trained with cross-entropy on the next one. At inference it feeds back its own predictions (greedy decoding or beam search).
+An **encoder** maps the input frames to a sequence of vectors $e_1, \dots, e_{T'}$. A **decoder** generates the output one character at a time, factorising the probability of the string by the chain rule:
 
-Decoders model dependencies between output characters and usually outperform CTC when enough data exist. The ASL fingerspelling winners found a two-layer transformer decoder better than CTC, and CTC as an auxiliary loss made things worse.
+$$
+P(y \mid x) = \prod_{u=1}^{U} P\big(y_u \mid y_1, \dots, y_{u-1},\ x\big).
+$$
+
+In a transformer decoder, each step attends to the encoder vectors (cross-attention) and to the characters already produced (causal self-attention, which can see only earlier positions). A special end-of-sequence symbol terminates the output. This factorisation makes no independence assumption between output characters.
+
+**Training** uses **teacher forcing**: the decoder receives the true previous characters $y_1, \dots, y_{u-1}$ as input and is trained with cross-entropy on $y_u$, for all $u$ in parallel. **Inference** feeds back the decoder's own predictions. **Greedy decoding** takes the most probable character at each step. **Beam search** keeps the $B$ most probable partial strings at each step and extends each of them, at roughly $B$ times the cost.
+
+In the ASL fingerspelling competition, the winners used a two-layer transformer decoder. In their ablation it scored 0.003 higher than a CTC head, and adding CTC as an auxiliary loss did not help. They did not use beam search, which they reported as too costly.
 
 ### Edit distance
 
-The **Levenshtein distance** between two strings is the minimum number of single-character insertions, deletions and substitutions that turns one into the other, computed by dynamic programming:
+The **Levenshtein distance** $d(a, b)$ between strings $a = (a_1, \dots, a_m)$ and $b = (b_1, \dots, b_n)$ is the minimum number of single-character insertions, deletions and substitutions that transform $a$ into $b$. Let $D[i,j]$ be the distance between the first $i$ characters of $a$ and the first $j$ characters of $b$. Then $D[i,0] = i$, $D[0,j] = j$, and for $i, j \ge 1$
 
 $$
-D[i,j] = \min\begin{cases} D[i-1,j] + 1 \\ D[i,j-1] + 1 \\ D[i-1,j-1] + \mathbb{1}[a_i \ne b_j]\end{cases}
+D[i,j] = \min\begin{cases} D[i-1,j] + 1 & \text{delete } a_i \\ D[i,j-1] + 1 & \text{insert } b_j \\ D[i-1,j-1] + \mathbb{1}[a_i \ne b_j] & \text{substitute or match} \end{cases}
 $$
 
-with $D[i,0] = i$ and $D[0,j] = j$. The ASL metric was $(N-D)/N$, where $N$ is the total number of reference characters and $D$ the total distance. A useful corollary: when the model is unsure, outputting a short "average" string can have lower expected distance than a confident wrong guess, which is the basis of the ASL winners' fallback phrase.
+where $\mathbb{1}[\cdot]$ is 1 if the condition holds and 0 otherwise. The distance is $d(a,b) = D[m,n]$, computed in $m \times n$ steps. For example, $d(\texttt{kitten}, \texttt{sitting}) = 3$: substitute k→s, substitute e→i, and insert g.
+
+The ASL fingerspelling metric summed over all test phrases:
+
+$$
+\mathrm{Score} = \frac{N - D}{N},
+$$
+
+where $N$ is the total number of characters in the reference phrases and $D$ the total Levenshtein distance between predictions and references. An empty prediction for a phrase of length $n$ costs exactly $n$, while a wrong prediction of similar length can cost up to $n$ as well; the string that minimises the expected distance under uncertainty is in general neither of these. The ASL winners trained a confidence head to predict the normalised edit distance of their own output. When the predicted confidence was below 0.15, or the input had fewer than 15 frames, they replaced the output with a fixed phrase (`2 a-e -aroe`) chosen, following a suggestion credited to another competitor, to minimise the expected distance. This raised their score by 0.006.

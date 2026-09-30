@@ -1,6 +1,6 @@
 ---
 slug: czii-cryo-et-object-identification
-title: "CZII CryoET Object Identification (2025): finding protein complexes in 3D tomograms"
+title: "CZII CryoET Object Identification (2025)"
 shortTitle: CZII CryoET Object Identification
 kaggleSlug: czii-cryo-et-object-identification
 kaggleUrl: https://www.kaggle.com/competitions/czii-cryo-et-object-identification
@@ -24,10 +24,10 @@ techniques:
   - grouped-cv
 metric:
   name: Class-weighted F-beta (β = 4)
-  summary: "A predicted particle counts if it lies within half a particle radius of a true one. Recall weighs 16 times as much as precision; two hard particle types count double."
+  summary: "A predicted particle is correct if it lies within half a particle radius of an unmatched true centre of the same type. F-beta with β = 4 is computed per particle type, so a missed particle costs 16 times as much as a false detection. The two hard particle types have weight 2 and the three easy types weight 1."
 constraints: { runtime: "12 h for about 500 tomograms", hardware: "Kaggle GPU notebook (2 × T4)", internet: false }
-summary: "Locate five kinds of protein complex inside 3D cryo-electron tomograms. The winning team combined two small, independently developed 3D models, one a U-Net trained to mark single voxels at particle centres and one an anchor-free point detector, aligned their outputs by rank, and exported them to TensorRT to fit an ensemble into the time limit. Neither used external or simulated data."
-winningIdea: "Particles of one type all have the same size, so predict centres, not shapes: a partly-decoded U-Net trained on single-voxel targets with heavily up-weighted positives, plus a point detector with offset regression, blended after quantile-matching their outputs."
+summary: "The competition asked participants to locate five kinds of protein complex in 3D cryo-electron tomograms of a prepared sample. The winning solution combines two independently developed 3D networks, a U-Net trained on single-voxel targets at particle centres and an anchor-free point detector, matches the distributions of their output maps by rank, and averages them. Exported to TensorRT, the ensemble processed about 500 test tomograms within 12 hours on two T4 GPUs."
+winningIdea: "Particles of one type have the same size, so the models predict particle centres and no shapes or boxes. One model is a U-Net without its last decoder stage, trained with weighted cross-entropy on single-voxel centre targets; the other predicts a class map and a 3D offset to the nearest centre. Their output maps are brought to a common value distribution by quantile matching before averaging."
 solutions:
   - rank: 1
     team: Christof Henkel and Eugene Khvedchenya
@@ -38,7 +38,7 @@ solutions:
       - { label: "Detection part", url: "https://github.com/BloodAxe/Kaggle-2024-CryoET" }
       - { label: "Inference notebook", url: "https://www.kaggle.com/code/christofhenkel/cryo-et-1st-place-solution" }
       - { label: "ONNX → TensorRT notebook", url: "https://www.kaggle.com/code/bloodaxe/convert-onnx-ensemble-to-tensorrt" }
-    note: "Detection write-up: https://www.kaggle.com/competitions/czii-cryo-et-object-identification/discussion/561440"
+    note: "The detection part is described in a separate write-up: https://www.kaggle.com/competitions/czii-cryo-et-object-identification/discussion/561440"
   - rank: 2
     team: luoziqian and lion
     writeup: https://www.kaggle.com/competitions/czii-cryo-et-object-identification/writeups/luoziqian-lion-2nd-place-solution
@@ -48,10 +48,10 @@ solutions:
   - rank: 4
     team: yu4u and tattaka
     writeup: https://www.kaggle.com/competitions/czii-cryo-et-object-identification/writeups/yu4u-tattaka-4th-place-solution-source-codes-submi
-    note: "Source code and submission notebook released."
+    note: "The team released its source code and submission notebook."
 deployability:
   score: 5
-  verdict: "Small 3D networks, full code and weights, TensorRT engines and a runtime of about 1.5 minutes per tomogram on T4s: directly usable by a structural-biology lab."
+  verdict: "The networks are small 3D models, and the code, weights and TensorRT conversion notebook are public. The full ensemble needed about 1.5 minutes per tomogram on two T4 GPUs. A structural-biology laboratory with one GPU can run it."
   inference: "About 500 tomograms in under 12 hours on two T4 GPUs, i.e. around 1.5 minutes each for the full ensemble; a single segmentation model set runs far faster."
   models: "Segmentation: MONAI FlexibleUNet with ResNet-34 and EfficientNet-B3 encoders, 7 folds. Detection: SegResNet and DynUNet with a custom point head, 5 folds. Exported to ONNX and TensorRT."
   training: "About 2 hours per detection fold on 4 × RTX 3090; segmentation models are small enough for a single GPU."
@@ -61,8 +61,8 @@ deployability:
     data: "CZII cryoET data portal (check dataset licences on the portal)."
     weights: "Released as Kaggle datasets and GitHub releases."
   risks:
-    - "Trained on seven experimental tomograms from one sample preparation; tomograms of real cells are more crowded and contain many other complexes."
-    - "The F-beta metric with β = 4 rewards over-prediction; a lab wanting clean particle sets for averaging would choose a stricter threshold."
+    - "The models were trained on seven annotated tomograms of a prepared sample. Tomograms of intact cells contain many other complexes at higher density, and performance on them has to be measured after fine-tuning on annotated cellular data."
+    - "The F-beta metric with β = 4 favours thresholds that admit many false detections. A laboratory that needs clean particle sets for subtomogram averaging would refit the thresholds for higher precision."
 related:
   - rsna-intracranial-aneurysm-detection
   - vesuvius-challenge-ink-detection
@@ -75,131 +75,227 @@ dataLinks:
   - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/czii-cryo-et-object-identification/data" }
   - { label: "Pretrained detection models (Kaggle dataset)", url: "https://www.kaggle.com/datasets/bloodaxe/cryoet-detection-models" }
 priority: 6
-updated: "2026-09-28"
+updated: "2026-09-29"
 ---
 
-## The problem in its field
+## Scientific background
 
-Cells do their work with **protein complexes**: ribosomes that build proteins, enzymes that break down sugars, storage proteins that hold iron. Knowing where these machines sit inside a cell, how many there are and how they are arranged tells biologists how the cell functions. **Cryo-electron tomography (cryo-ET)** can image them in place, at close to molecular resolution, without extracting them from their surroundings.
+Many cellular processes are carried out by **protein complexes**, assemblies of several protein chains: ribosomes synthesise proteins, and ferritin stores iron, for example. The number, position and arrangement of these complexes inside a cell are informative about how the cell functions. **Cryo-electron tomography (cryo-ET)** images them in their native environment in three dimensions, at a resolution at which individual complexes are visible.
 
 <Deep title="How cryo-electron tomography works" kind="domain">
 
-1. **Vitrification.** The sample (purified proteins, or a thin slice of a cell) is frozen so fast that water becomes glass-like instead of crystalline ice. Structures stay in their native state and no stain is needed.
-2. **Tilt series.** In an electron microscope the sample is tilted step by step, typically from about −60° to +60°, and imaged at each angle. The electron dose must be kept low to avoid destroying the sample, so each image is extremely noisy.
-3. **Reconstruction.** The tilted projections are combined, much as in CT, into a 3D volume called a **tomogram**. Because tilting stops short of ±90°, a wedge of directions is never observed (the "missing wedge"), which smears structures along one axis.
-4. **Particle picking.** Every copy of a complex of interest must be located. The copies are then extracted and averaged (subtomogram averaging) to obtain a high-resolution structure.
+1. **Vitrification.** The sample (purified proteins, or a thin section of a cell) is frozen fast enough that water solidifies as an amorphous glass without forming ice crystals. Structures are preserved close to their native state, and no stain is used.
+2. **Tilt series.** In the electron microscope the sample is tilted in steps, typically from about −60° to +60°, and imaged at each angle. The total electron dose is kept low to limit radiation damage, so each image has a low signal-to-noise ratio.
+3. **Reconstruction.** The projections are combined into a 3D volume, the **tomogram**, by a reconstruction procedure related to that of CT. Because the tilt range stops short of ±90°, a wedge of directions in Fourier space is never sampled (the "missing wedge"), and structures appear elongated along the beam axis.
+4. **Particle picking.** Each copy of a complex of interest is located in the tomogram. The copies are then extracted and averaged (subtomogram averaging) to obtain a structure at higher resolution than any single copy.
 
-Particle picking is the bottleneck. It has traditionally used template matching (correlating the volume with a known structure) or manual clicking, both slow and error-prone at low signal-to-noise ratio.
+Particle picking has traditionally been done by template matching (cross-correlation of the tomogram with a known structure) or by manual annotation. Both are slow at low signal-to-noise ratio, and automatic picking is the subject of this competition.
 </Deep>
 
-The competition asked for automatic picking of five complexes in tomograms of a controlled sample:
+The competition asked participants to locate the centres of five kinds of complex in tomograms of a prepared sample. The organisers classed three as easy and two as hard, and a sixth complex, β-amylase, was present in the data but not scored:
 
-| Particle | Difficulty and weight | Notes |
+| Particle | Organisers' class | Weight in the score |
 | --- | --- | --- |
-| Apo-ferritin | easy, weight 1 | iron-storage shell, compact |
-| Ribosome | easy, weight 1 | large, dense |
-| Virus-like particle | easy, weight 1 | very large |
-| Thyroglobulin | hard, weight 2 | resembles other medium-size complexes |
-| β-galactosidase | hard, weight 2 | similar size to β-amylase |
-| β-amylase | present, weight 0 | not scored, but may be predicted |
+| Apo-ferritin | easy | 1 |
+| Ribosome | easy | 1 |
+| Virus-like particle | easy | 1 |
+| Thyroglobulin | hard | 2 |
+| β-galactosidase | hard | 2 |
+| β-amylase | not scored | 0 |
 
-## The data
+## Data
 
-Training data were seven tomograms of about 630 × 630 × 184 voxels, with the centre coordinates of every annotated particle. The hidden test set had about 500 tomograms, to be processed in 12 hours on Kaggle's GPUs: roughly 1.5 minutes each.
+The training data were tomograms from seven experiments, each of about 630 × 630 × 184 voxels with a voxel size of about 10 Å, together with the centre coordinates of every annotated particle. Each tomogram contains many particles, so the training set has many positive examples, but they come from only seven volumes.
 
-Seven training volumes is very little. Each contains many particles, so there are thousands of positive examples, but only seven sets of imaging conditions.
+The hidden test set had about 500 tomograms. Submissions ran in a Kaggle notebook without internet access, on two T4 GPUs, within 12 hours. The time available per tomogram was therefore
+
+$$
+\frac{12 \times 60\ \text{min}}{500} = 1.44\ \text{min} \approx 1.5\ \text{min}.
+$$
 
 <Foundation id="convolution" />
 
-## The metric
+## Evaluation metric
 
-A predicted point is correct if it lies within half the particle's radius of an unmatched ground-truth centre of the same type. With counts of true positives, false positives and false negatives micro-averaged over all tomograms, the score is an $F_\beta$ with $\beta = 4$, computed per particle type and combined with weights 1 for the easy types and 2 for the hard ones.
+For each particle type $c$, a predicted point is a true positive if it lies within $\tfrac12 r_c$ of a ground-truth centre of type $c$ that has not already been matched, where $r_c$ is the radius of particle type $c$. Unmatched predictions are false positives and unmatched ground-truth centres are false negatives. The counts $\mathrm{TP}_c$, $\mathrm{FP}_c$ and $\mathrm{FN}_c$ are summed over all test tomograms (micro-averaging) before the score is computed.
 
 <Foundation id="precision-recall-fbeta" />
 
-With $\beta = 4$, a missed particle costs $\beta^2 = 16$ times as much as a false detection. A good submission therefore predicts generously: when in doubt, output the point.
+With precision $P_c = \mathrm{TP}_c/(\mathrm{TP}_c + \mathrm{FP}_c)$ and recall $R_c = \mathrm{TP}_c/(\mathrm{TP}_c + \mathrm{FN}_c)$, the per-type score is
 
-## How the winning solution works
+$$
+F_{\beta,c} = \frac{(1+\beta^2)\,P_c\,R_c}{\beta^2 P_c + R_c}, \qquad \beta = 4 .
+$$
 
-Christof Henkel and Eugene Khvedchenya each reached the top five independently with different approaches, then merged teams and combined their models to take first place. Both used MONAI, a PyTorch library for medical imaging, and both trained from scratch with no external or simulated data.
+Substituting the definitions of $P_c$ and $R_c$ and multiplying numerator and denominator by $(\mathrm{TP}_c + \mathrm{FP}_c)(\mathrm{TP}_c + \mathrm{FN}_c)/\mathrm{TP}_c$ gives the same score in counts:
+
+$$
+F_{\beta,c} = \frac{(1+\beta^2)\,\mathrm{TP}_c}{(1+\beta^2)\,\mathrm{TP}_c + \beta^2\,\mathrm{FN}_c + \mathrm{FP}_c} .
+$$
+
+In the denominator a false negative has coefficient $\beta^2 = 16$ and a false positive coefficient 1. The final score is the weighted mean over the five scored types, with weights $w_c$ from the table above:
+
+$$
+\text{Score} = \frac{\sum_c w_c\,F_{4,c}}{\sum_c w_c}
+= \frac{F_{\text{apo}} + F_{\text{ribo}} + F_{\text{VLP}} + 2F_{\text{thyro}} + 2F_{\beta\text{-gal}}}{7} .
+$$
+
+The two hard types together carry $4/7 \approx 57\%$ of the score.
+
+**Worked example.** Consider a type with 100 true particles and two submissions. Submission A finds 90 of them and adds 50 false detections; submission B finds 80 and adds 10. With $1+\beta^2 = 17$:
+
+$$
+F_A = \frac{17 \cdot 90}{17 \cdot 90 + 16 \cdot 10 + 50} = \frac{1530}{1740} \approx 0.879,
+\qquad
+F_B = \frac{17 \cdot 80}{17 \cdot 80 + 16 \cdot 20 + 10} = \frac{1360}{1690} \approx 0.805 .
+$$
+
+Submission A scores higher although its precision is $90/140 \approx 0.64$ and that of B is $80/90 \approx 0.89$.
+
+<Deep title="The threshold at which an extra prediction raises the score" kind="math">
+
+Write the count form as $F = N/D$ with $N = (1+\beta^2)\,\mathrm{TP}$ and $D = (1+\beta^2)\,\mathrm{TP} + \beta^2\,\mathrm{FN} + \mathrm{FP}$ for one particle type. Consider adding one candidate point that is a true positive with probability $q$.
+
+If it is correct, $\mathrm{TP}$ rises by 1 and $\mathrm{FN}$ falls by 1, so $N$ rises by $1+\beta^2$ and $D$ changes by $(1+\beta^2) - \beta^2 = 1$.
+
+If it is wrong, $\mathrm{FP}$ rises by 1, so $N$ is unchanged and $D$ rises by 1.
+
+The denominator becomes $D+1$ in both cases, so the expected score after adding the point is
+
+$$
+\mathbb{E}[F'] = \frac{N + q\,(1+\beta^2)}{D + 1} .
+$$
+
+Adding the point raises the expected score when $\mathbb{E}[F'] > N/D$. Multiplying both sides by $D(D+1)$:
+
+$$
+D\,N + q\,(1+\beta^2)\,D > N\,D + N .
+$$
+
+Cancelling $DN$ and dividing by $(1+\beta^2)\,D$:
+
+$$
+q > \frac{F}{1+\beta^2} .
+$$
+
+For $\beta = 4$ and a current score of $F = 0.8$, any candidate with $q > 0.8/17 \approx 0.047$ is worth submitting. At $\beta = 1$ the same bound would be $0.8/2 = 0.4$. The bound accounts for the low per-class thresholds of competitive submissions, and for their unsuitability for applications that need high precision (see "Considerations for deployment").
+</Deep>
+
+## Winning solution
+
+Christof Henkel and Eugene Khvedchenya each reached the top five independently, with different approaches. They then merged teams and combined their models, which placed first. Both used MONAI, a PyTorch library for medical imaging; both trained their models from scratch, and neither used external or simulated data.
 
 <Pipeline steps={[
-  {tag: "Henkel", title: "Partly-decoded 3D U-Net", detail: "single-voxel targets, positives weighted 256×, output at half resolution"},
+  {tag: "Henkel", title: "3D U-Net without its last decoder stage", detail: "single-voxel targets, positives weighted 256×, output at half resolution"},
   {tag: "Khvedchenya", title: "Anchor-free 3D point detector", detail: "class map + 3D offsets at stride 2, varifocal loss"},
-  {tag: "Merge", title: "Rank-match the output maps", detail: "give both models the same value distribution per class"},
+  {tag: "Merge", title: "Quantile matching of output maps", detail: "both models given the same value distribution per class"},
   {tag: "Decode", title: "Peak finding + per-class thresholds", detail: "thresholds fitted on out-of-fold predictions"},
-  {tag: "Speed", title: "TensorRT FP16 engines", detail: "≈2× faster than eager PyTorch; 2 T4s in parallel"}
-]} caption="The combined 1st-place pipeline." />
+  {tag: "Speed", title: "TensorRT FP16 engines", detail: "two T4 GPUs in parallel"}
+]} caption="The combined first-place pipeline." />
 
 <Foundation id="models-and-loss" />
 
-### Part 1: segmentation with a "partly U-Net"
+### Segmentation model
 
-**Validation.** Seven folds, one per tomogram. After each epoch, a per-class threshold was grid-searched on the validation tomogram. After all folds were trained, the thresholds were recalibrated on out-of-fold predictions: for each fold, the threshold was fitted on the other six folds' predictions, the resulting F4 curves were averaged, and the best threshold was taken.
+This part is Henkel's.
+
+**Validation.** Seven folds were used, one per training tomogram. After each epoch a per-class threshold was chosen by grid search on the validation tomogram. After all folds had been trained, the thresholds were recalibrated on out-of-fold predictions: for each fold, the threshold was fitted on the predictions for the other six folds, the resulting $F_4$ curves were averaged, and the threshold with the highest average was taken.
 
 **Preprocessing.** Each tomogram was standardised to zero mean and unit variance before being cut into patches.
 
-**Augmentation.** Because the models were trained from scratch on seven volumes, augmentation was essential: random crops, flips along each axis and rotations from MONAI, plus Henkel's own implementation of MixUp, which he describes as highly effective for training longer without overfitting.
+**Augmentation.** Random crops, flips along each axis and rotations from MONAI were combined with Henkel's own implementation of MixUp, which blends pairs of training patches and their targets. Henkel reports MixUp as the main measure against overfitting on the seven training volumes.
 
 <Foundation id="data-augmentation" />
 
-**Model design.** Henkel started with a U-Net whose target was a small 3D Gaussian ball at each particle centre, the usual heatmap formulation. He then tried MONAI's example object detector, found it worked well out of the box, and analysed where its advantage came from. Two findings shaped his final model:
+**Development of the model.** Henkel first trained a U-Net whose target was a small 3D Gaussian at each particle centre, the usual heatmap formulation for point detection. He then tried MONAI's example object detector, which performed well without modification, and examined where its advantage came from. He reports two findings:
 
-1. **The penultimate decoder output was more accurate than the last.** It sits at half the input resolution, which is still finer than the scoring tolerance.
-2. **Regressing boxes added almost nothing**, because all particles of one type have the same size.
+1. The output of the penultimate decoder stage, at half the input resolution, gave more accurate centres than the output of the last stage.
+2. Regressing bounding boxes added almost nothing, because all particles of one type have the same size.
 
-So a pixel-wise loss on the penultimate feature map suffices: a U-Net with its final decoder stage removed. And the Gaussian heatmap is unnecessary if the background class is given a low weight: the targets can be **single voxels** at particle centres.
+A pixel-wise loss on the penultimate feature map is therefore sufficient, and the final model is a U-Net with its last decoder stage removed, which Henkel calls a "partly U-Net". He also found that the Gaussian target can be dropped if the background class receives a low weight: the target is then a single voxel at each particle centre.
 
 <Foundation id="unet" />
 
-<Deep title="Why single-voxel targets work with class weighting" kind="math">
-
-In a 48³ output block there are 110,592 voxels and perhaps a few dozen particle centres. With unweighted cross-entropy, predicting "background" everywhere gives a tiny loss, and the model learns little else. Henkel used weighted cross-entropy over 7 classes (background, the five scored particles and β-amylase) with weight 256 on every non-background voxel and 1 on background:
+**Loss function.** The output has 7 classes: background, the five scored particle types and β-amylase. Let $v$ index the voxels of the output block, $y_v \in \{0, \dots, 6\}$ the class of voxel $v$ (0 for background), and $p_k(v) \in [0,1]$ the predicted probability of class $k$ at $v$. With class weights $w_k$, the weighted cross-entropy is
 
 $$
-\mathcal{L} = -\frac{\sum_v w_{y_v}\log p_{y_v}(v)}{\sum_v w_{y_v}}, \qquad w_{\text{bg}} = 1,\ w_{\text{particle}} = 256 .
+\mathcal{L} = -\frac{\sum_v w_{y_v}\,\log p_{y_v}(v)}{\sum_v w_{y_v}}, \qquad w_0 = 1, \qquad w_1 = \dots = w_6 = 256 .
 $$
 
-A single centre voxel now contributes as much as 256 background voxels. The model is pushed to put a sharp probability peak on each centre and suppress the rest. A Gaussian ball would spend capacity on reproducing the shape of the ball's tails; the metric only cares about where the peak is.
+<Deep title="Class balance with single-voxel targets" kind="math">
+
+The input patch is $96^3$ voxels and the loss is computed on the $48^3$ output of the penultimate decoder stage, which has
+
+$$
+48^3 = 110{,}592
+$$
+
+voxels. Suppose, for illustration, that a block contains $n = 20$ particle centres. Without weights the positive voxels make up
+
+$$
+\frac{20}{110{,}592} \approx 1.8 \times 10^{-4}
+$$
+
+of the terms in the loss, and a model that predicts background everywhere attains a low loss. With weight 256 on each positive voxel, their share of the total weight in the denominator becomes
+
+$$
+\frac{256 \cdot 20}{256 \cdot 20 + (110{,}592 - 20)} = \frac{5{,}120}{115{,}692} \approx 0.044,
+$$
+
+an increase by a factor of about 240. The loss then rewards a sharp probability peak at each centre. A Gaussian target would additionally require the network to reproduce the profile of the Gaussian around each centre, while the metric depends only on the position of the peak.
 </Deep>
 
-**β-amylase as a class.** β-amylase is not scored, but keeping it as a separate class helped: the model learns to distinguish it from β-galactosidase, which has similar size and density. Dropping it would have put β-amylase particles into the background class and taught the model a confusing boundary.
+**β-amylase as a separate class.** β-amylase is not scored, but Henkel kept it as its own class and reports that this helped the model distinguish β-galactosidase. Without the class, β-amylase particles would be labelled as background.
 
-**Architecture and training.** MONAI's `FlexibleUNet` with ResNet-34 and EfficientNet-B3 encoders; inputs of 96³ voxels, loss computed on the 48³ penultimate output; cosine schedule with a peak learning rate of $10^{-3}$, mixed precision and an effective batch size of 32 patches. Six checkpoints of this model alone ran in under 2 hours and would have placed seventh.
+**Architecture and training.** The network is MONAI's `FlexibleUNet` with ResNet-34 and EfficientNet-B3 encoders. Inputs are $96^3$-voxel patches, and the loss is computed on the $48^3$ penultimate output. Training used a cosine learning-rate schedule with a peak of $10^{-3}$, mixed precision and an effective batch size of 32 patches. An ensemble of six checkpoints of this model alone ran in under 2 hours and, according to the write-up, would have placed seventh on the leaderboard.
 
-What did not help: external or simulated data, other augmentations, Tversky and Dice losses. Henkel's summary: relatively small models work well, and the design of the loss matters most.
+Henkel lists the following as not helping: external or simulated data, other augmentations, and Tversky and Dice losses. He concludes that relatively small models are sufficient and that the design of the loss has the largest effect.
 
-### Part 2: point detection
+### Point-detection model
 
-Khvedchenya's baseline was also a Gaussian-heatmap U-Net (SegResNet backbone) with the penalty-reduced focal loss and max-pool non-maximum suppression from the CenterNet paper. It scored about 0.740, already in the silver range, but he dropped it: many teams would use heatmaps, a detector would add diversity to any later team ensemble, and much of a heatmap model's capacity goes into reproducing the curvature of the Gaussian rather than telling particle types apart.
+This part is Khvedchenya's.
+
+**Baseline.** His baseline was a 3D U-Net with a SegResNet backbone trained on Gaussian heatmaps, with the penalty-reduced focal loss of CenterNet (Zhou et al., 2019) and non-maximum suppression. It scored about 0.740 on the leaderboard. He then replaced it with an anchor-free point detector.
 
 <Foundation id="detection-basics" />
 
-**The detector.** SegResNet and DynUNet backbones from MONAI with a custom head that, at every cell of a stride-2 output grid, predicts class probabilities and a 3D offset from the cell to the particle centre. There are no boxes, so matching predictions to targets needs a point-to-point similarity in place of box IoU. He used keypoint similarity, $\exp\!\big(-\lVert p-g\rVert^2/(2r^2)\big)$ with $r$ the particle radius.
+**Architecture.** SegResNet and DynUNet backbones from MONAI are followed by a custom head. At every cell of a stride-2 output grid, the head predicts class probabilities and a 3D offset from the cell to the particle centre. Because there are no boxes, the intersection over union (IoU) used to match box predictions to targets is replaced by a similarity between points, the object keypoint similarity:
 
-**The loss**, modelled on PP-YOLO's with changes:
+$$
+s(\mathbf{p}, \mathbf{g}) = \exp\!\left(-\frac{\lVert \mathbf{p} - \mathbf{g} \rVert^2}{2 r^2}\right),
+$$
 
-- assign ground-truth particles to predicted centres by point-to-point similarity, keeping the top-$k$ predictions per target;
-- **varifocal loss** for the class map (a focal-style loss whose positive targets are the predicted localisation quality rather than 1);
-- a similarity-based loss for the offsets.
+where $\mathbf{p} \in \mathbb{R}^3$ is a predicted centre, $\mathbf{g} \in \mathbb{R}^3$ a ground-truth centre and $r > 0$ the radius of the particle type. The similarity is 1 for coincident points. At the scoring tolerance $\lVert \mathbf{p} - \mathbf{g}\rVert = r/2$ it is $\exp(-\tfrac18) \approx 0.88$, and at a distance of one radius it is $\exp(-\tfrac12) \approx 0.61$.
 
-A single fold trained in about 2 hours on four RTX 3090s and scored 0.752.
+**Loss function.** The loss is modelled on that of PP-YOLO, with changes:
 
-**Output stride.** Predicting at stride 2 was about 50% faster than full resolution and lost only about 0.002. Stride 4 worked but was worse. A two-head model with strides 2 and 4 gave no gain, though large particles migrated to the stride-4 head and small ones to the stride-2 head on their own.
+- Ground-truth particles are assigned to predictions by keypoint similarity, keeping the top $k$ predictions for each target.
+- The class map is trained with the **varifocal loss**, a focal-type loss in which the target for a positive prediction is its localisation quality (here the keypoint similarity) instead of 1.
+- The offsets are trained with a loss based on the keypoint similarity.
 
-**Training data sampling.** Each epoch drew a fixed number of random crops per tomogram and a fixed number of crops centred near particles. Augmentations: rotation about the z-axis by up to ±180°, about x and y by up to ±10°, scale jitter of ±5%, flips along all axes. Erasing particles, copy-pasting particles between tomograms and particle-level mixup did not help.
+<Foundation id="focal-loss" />
 
-### Part 3: blending two very different models
+**Training.** One fold trained in about 2 hours on four RTX 3090 GPUs and scored 0.752 on the leaderboard. Five folds were used. Each epoch drew a fixed number of random crops per tomogram and a fixed number of crops centred near particles. Augmentations were rotations about the z-axis by up to ±180° and about the x- and y-axes by up to ±10°, scaling by ±5%, and flips along all axes. Erasing particles, copying particles between tomograms and particle-level mixup gave no gain.
 
-The segmentation model's output maps and the detector's class maps are both "probability of a particle centre here", but they come from different architectures and losses and their values are distributed differently. Averaging them directly lets one model dominate.
+**Output stride.** Predicting at stride 2 was about 50% faster than predicting at full resolution, which scored only about 0.002 higher. Stride 4 worked but scored lower. A model with two heads, at strides 2 and 4, gave no gain; during training the large particles were assigned mostly to the stride-4 head and the small ones to the stride-2 head.
 
-The team's fix was a rank-based mapping. For each class, sort all voxel values of model A and of model B; replace each value of B by the value of A at the same rank. Afterwards B's map has exactly A's distribution of values, but B's spatial ordering, and the two maps can be averaged before the detection post-processing.
+### Combining the two models
 
-<Deep title="Illustration: quantile matching in NumPy" kind="code">
+Both models output, for each class, a map of the probability that a particle centre lies at each voxel. They were trained with different architectures and losses, and their values follow different distributions, so a direct average would be dominated by the model with the larger values. The team mapped one model's values onto the other's distribution by rank, separately for each class, and then averaged the maps before peak detection.
 
-This is Nolad's minimal illustration of the operation described in the write-up, not the team's code.
+Let $A$ and $B$ be the two maps for one class, each with $n$ voxels. Let $a_{(1)} \le a_{(2)} \le \dots \le a_{(n)}$ be the values of $A$ in increasing order, and let $\operatorname{rank}_B(v) \in \{1, \dots, n\}$ be the position of voxel $v$ when the values of $B$ are sorted in increasing order. The matched map is
 
-```python title="quantile_match.py (illustration)"
+$$
+\tilde B(v) = a_{(\operatorname{rank}_B(v))} .
+$$
+
+$\tilde B$ has exactly the same multiset of values as $A$, and it orders the voxels as $B$ does: if $B(u) < B(v)$ then $\tilde B(u) \le \tilde B(v)$. The blended map is $\tfrac12\big(A + \tilde B\big)$.
+
+<Deep title="Quantile matching in NumPy" kind="code">
+
+A Nolad illustration of the operation described in the write-up; it is not the team's code.
+
+```python title="quantile_match.py (A Nolad illustration)"
 import numpy as np
 
 def quantile_match(b: np.ndarray, a: np.ndarray) -> np.ndarray:
@@ -213,37 +309,33 @@ def quantile_match(b: np.ndarray, a: np.ndarray) -> np.ndarray:
 blended = 0.5 * seg_map + 0.5 * quantile_match(det_map, seg_map)
 ```
 
-The operation requires both maps to have the same number of voxels (resample one if their strides differ). It is monotonic, so it never changes which of two voxels B considers more likely; it only rescales B's confidence to A's.
+Both maps must have the same number of voxels; if the two models predict at different strides, one map is resampled first. Because the mapping is monotonic, it does not change which of two voxels $B$ ranks higher; it replaces $B$'s confidence values with $A$'s.
 </Deep>
 
 <Foundation id="ensembling-tta" />
 
-### Part 4: fitting the ensemble into 12 hours
+### Inference within the time limit
 
-Both models were exported to ONNX and compiled with **NVIDIA TensorRT** in FP16, about a 200% speed-up over eager PyTorch, and predictions ran on both T4 GPUs in parallel. The saved time bought a larger ensemble, which the team considered worth more than finer sliding-window strides.
+Both models were exported to ONNX and compiled with NVIDIA TensorRT in FP16. The team reports a speed-up of about 200% over eager PyTorch. Predictions ran on both T4 GPUs in parallel, and the time saved allowed a larger ensemble within the 12-hour limit.
 
 <Foundation id="mixed-precision-quantisation" />
 
 ## Other top solutions
 
-The shared lesson across the top four is that the problem rewards careful handling of the loss and post-processing more than large models. The fourth-place team (yu4u and tattaka) released full source code; the aneurysm competition winner later cited both their write-up and the sixth-place write-up for loss choices on sparse 3D targets, an example of techniques travelling between competitions within months.
+The second place went to luoziqian and lion, the third to once upon a moon, and the fourth to yu4u and tattaka, who released their source code and submission notebook. Their write-ups are linked in the solutions list. The winner of the 2025 RSNA intracranial aneurysm competition credits the fourth- and sixth-place write-ups of this competition as sources of ideas for his own solution.
 
-## Why this generalises beyond cryo-ET
+## Comparison with other competitions
 
-The problem shape (find the centres of many small objects of known size in a large noisy 3D volume) recurs in microscopy (cell nuclei, synapses, bacterial motors), in medical imaging (lung nodules, micro-calcifications, aneurysm centres) and in materials science. Three findings transfer directly:
-
-1. When object sizes are fixed per class, predict points rather than masks or boxes.
-2. Single-voxel targets with strong positive weighting can replace Gaussian heatmaps.
-3. Models with incompatible output scales can be ensembled after quantile matching.
+The task of locating the centres of many small objects of known size in a large, noisy 3D volume also occurs in fluorescence and electron microscopy and in medical imaging, where the RSNA intracranial aneurysm competition supplied aneurysm centres without masks. The findings of the winning team that do not depend on cryo-ET are the following. When all objects of a class have the same size, the models predicted centres without shapes or boxes. Single-voxel targets with strong positive weighting replaced Gaussian heatmaps. Two models with different output distributions were combined after quantile matching.
 
 ## Compute and deployment
 
-| Setting | What the solution needs |
+| Setting | Requirements |
 | --- | --- |
-| Kaggle | 12 hours for about 500 tomograms on 2 T4s. |
-| Structural biology lab | One GPU; minutes per tomogram; weights and TensorRT conversion notebooks are public. |
-| Cellular tomograms | Retraining or fine-tuning on annotated cellular data; the competition sample was cleaner than a cell. |
+| Kaggle | 12 hours for about 500 tomograms on two T4 GPUs. |
+| Structural biology laboratory | One GPU; the full ensemble needs minutes per tomogram. Weights and the TensorRT conversion notebook are public. |
+| Tomograms of cells | Retraining or fine-tuning on annotated cellular tomograms. The competition sample contained fewer kinds of complex than a cell. |
 
-<Callout kind="deploy" title="Choosing a threshold for real use">
-The competition's β = 4 pushes thresholds low. For subtomogram averaging, false positives degrade the averaged structure, so a lab would raise the per-class thresholds until precision is acceptable. The released out-of-fold machinery makes that trade-off easy to recompute.
-</Callout>
+### Considerations for deployment
+
+The competition metric with β = 4 leads to low thresholds (see the derivation under "Evaluation metric"). In subtomogram averaging, false positives are averaged together with true particles and degrade the resulting structure, so a laboratory would raise the per-class thresholds until precision is acceptable. The per-class thresholds can be refitted on out-of-fold predictions for a smaller β or for a target precision, in the same way as the team fitted them for β = 4.

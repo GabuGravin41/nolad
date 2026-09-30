@@ -1,6 +1,6 @@
 ---
 slug: uw-madison-gi-tract-image-segmentation
-title: "UW-Madison GI Tract Image Segmentation (2022): classify, then segment, in 2.5D and 3D"
+title: "UW-Madison GI Tract Image Segmentation (2022)"
 shortTitle: UW-Madison GI Tract Segmentation
 kaggleSlug: uw-madison-gi-tract-image-segmentation
 kaggleUrl: https://www.kaggle.com/competitions/uw-madison-gi-tract-image-segmentation
@@ -24,10 +24,10 @@ techniques:
   - tta
 metric:
   name: Dice and 3D Hausdorff distance
-  summary: "0.4 × mean Dice coefficient + 0.6 × (1 − normalised 3D Hausdorff distance), over the stomach, small bowel and large bowel."
+  summary: "0.4 × mean Dice coefficient + 0.6 × (1 − normalised 3D Hausdorff distance), computed for the stomach, small bowel and large bowel."
 constraints: { runtime: "Code competition: notebook inference within the Kaggle time limit", hardware: "Kaggle GPU notebook", internet: false }
-summary: "Outline the stomach, small bowel and large bowel on daily MRI scans of patients receiving radiotherapy for abdominal cancers, so that radiation can be aimed around them. The winning team first classified each slice as containing an organ or not, segmented only the positive slices with an ensemble of 2.5D U-Nets and UPerNets, fused the result with 3D SegResNets, and so avoided the false positives that the Hausdorff part of the metric punishes most."
-winningIdea: "Decide per slice whether each organ is present with a dedicated classifier, and only then segment; fuse 2.5D and 3D models by averaging logits, because the metric's Hausdorff term is ruined by a single stray false-positive region."
+summary: "The competition asked participants to segment the stomach, small bowel and large bowel on daily abdominal MRI scans from an MR-Linac, acquired from patients receiving radiotherapy for gastrointestinal cancer. The winning solution first decides for each slice and organ whether the organ is present, using U-Nets with a minimum-area rule, then segments the positive slices with an ensemble of 2.5D U-Nets and UPerNets, and averages their logits with those of 3D SegResNets. A single 2.5D U-Net scored about 0.883 on the public leaderboard, and the fused 2.5D group about 0.889."
+winningIdea: "A set of U-Nets decides for each slice whether each organ is present, and slices judged empty receive an empty mask without being segmented. The remaining slices are segmented by 2.5D models that take three neighbouring slices as input channels. Their logits are averaged with those of 3D models with weights 0.6 and 0.4."
 solutions:
   - rank: 1
     team: nccsm
@@ -44,7 +44,7 @@ solutions:
       - { label: "Overview post", url: "https://www.kaggle.com/competitions/uw-madison-gi-tract-image-segmentation/discussion/337197" }
 deployability:
   score: 4
-  verdict: "The components are standard (U-Nets with EfficientNet encoders, UPerNet with ConvNeXt, MONAI SegResNet) and the code is public, though trained weights were not released. The full ensemble is heavy for the few minutes available during a treatment session; a reduced version (one classifier, one 2.5D U-Net, one SegResNet) fits the clinical time budget."
+  verdict: "The components are standard (U-Nets with EfficientNet encoders, UPerNet with ConvNeXt, MONAI SegResNet) and the code is public; trained weights were not released. The full ensemble has 14 models. A reduced version with one classifier, one 2.5D U-Net and one SegResNet uses the same components and needs far less computation per scan."
   inference: "Per scan (about 144 slices): slice classification, 2.5D segmentation of positive slices, and one 3D pass; seconds for a reduced ensemble on a GPU."
   models: "4 classification U-Nets (EfficientNet-B4 to B7), 5 segmentation U-Nets and 2 UPerNets (ConvNeXt), 3 SegResNets."
   training: "Several GPUs over days for the full ensemble; each model trains on one GPU."
@@ -54,9 +54,9 @@ deployability:
     data: "Competition data under Kaggle competition terms."
     weights: "Not released."
   risks:
-    - "Bowel loops change position and filling daily; a contour must be checked by the clinician before each treatment."
-    - "Annotations of where the large and small bowel end are ambiguous; the winners excluded some slices near those boundaries from training."
-    - "Data come from one centre and one MR-Linac; other scanners and sequences need validation."
+    - "The position and filling of bowel loops change from day to day, so each contour has to be checked by the clinician before treatment."
+    - "The annotation of where the large and small bowel end is ambiguous. The winners excluded the five slices after the last annotated slice of each bowel from the training of some models."
+    - "The data come from one centre and one MR-Linac. Other scanners and sequences require validation."
 related:
   - siim-acr-pneumothorax-segmentation
   - hubmap-organ-segmentation
@@ -69,53 +69,71 @@ papers:
 dataLinks:
   - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/uw-madison-gi-tract-image-segmentation/data" }
 priority: 20
-updated: "2026-09-28"
+updated: "2026-09-29"
 ---
 
-## The problem in its field
+## Clinical background
 
-The competition description cites about 5 million people diagnosed with cancer of the gastrointestinal tract worldwide in 2019, about half of whom are eligible for radiotherapy, typically delivered in 10–15-minute sessions daily for one to six weeks. Radiation must hit the tumour while sparing the stomach and intestines, which are sensitive to radiation and move from day to day as they fill, empty and contract.
+The competition description cites about 5 million people diagnosed with cancer of the gastrointestinal tract worldwide in 2019, about half of whom are eligible for radiotherapy. Radiotherapy is typically delivered in sessions of 10–15 minutes, daily, for one to six weeks. The radiation beams are aimed at the tumour and away from the stomach and intestines, which are sensitive to radiation and change position from day to day as they fill, empty and contract.
 
-An **MR-Linac** combines an MRI scanner with a linear accelerator, so the tumour and surrounding organs can be imaged at every session and the treatment plan adapted to that day's anatomy. The University of Wisconsin–Madison Carbone Cancer Center has used one since 2015. The bottleneck is contouring: a radiation oncologist must outline the stomach and bowel on the day's scan before treatment, which, according to the host, can stretch a 15-minute session to an hour. Automatic segmentation would shorten this to a quick review.
+An **MR-Linac** combines an MRI scanner with a linear accelerator. The tumour and the surrounding organs can be imaged at every session, and the treatment plan adapted to that day's anatomy. The University of Wisconsin–Madison Carbone Cancer Center has used one since 2015. Before each adapted treatment, a radiation oncologist outlines (contours) the stomach and bowel on the day's scan; according to the host, this can extend a 15-minute session to an hour. Automatic segmentation would provide a draft contour for the oncologist to review and correct.
 
 <Foundation id="mri-basics" />
 
-## The data
+## Data
 
-Anonymised MRI scans of patients treated at UW-Madison, with 1 to 5 scans per patient on different days. Each scan is a 3D volume provided as individual 2D slices (PNG images, typically 144 slices per scan), and each slice has run-length-encoded masks for three organs: **large bowel**, **small bowel** and **stomach**. Many slices contain none of them (above or below the abdomen) or only one or two.
+The data are anonymised MRI scans of patients treated at UW-Madison, with 1 to 5 scans per patient, acquired on different days. Each scan is a 3D volume supplied as individual 2D slice images. Each slice has run-length-encoded masks for three organs: **large bowel**, **small bowel** and **stomach**. Many slices contain none of the three organs (those above or below the abdomen), or only one or two.
 
-## The metric
+## Evaluation metric
 
-The score combines overlap and boundary distance:
+The score combines an overlap measure and a boundary distance:
+
 $$
-\text{score} = 0.4 \times \overline{\text{Dice}} + 0.6 \times \big(1 - \overline{\text{HD}}_{\text{norm}}\big).
+\mathrm{score} = 0.4 \times \overline{\mathrm{Dice}} + 0.6 \times \big(1 - \overline{\mathrm{HD}}_{\mathrm{norm}}\big),
 $$
-Dice is computed on 2D slices; the Hausdorff distance on the 3D volume built by stacking the slices of a scan (with unit spacing between slices), with coordinates normalised by the image size so the distance lies in $[0, 1]$.
+
+where $\overline{\mathrm{Dice}}$ is the mean Dice coefficient and $\overline{\mathrm{HD}}_{\mathrm{norm}}$ the mean normalised Hausdorff distance. Dice is computed on 2D slices. The Hausdorff distance is computed on the 3D volume built by stacking the slices of a scan, with a spacing of 1 between slices, and with coordinates normalised by the image size so that the distance lies in $[0, 1]$.
 
 <Foundation id="dice-and-overlap" />
 
+**Slices without an organ.** For a slice on which the true mask $Y$ of an organ is empty and the prediction $X$ contains $|X| > 0$ pixels, the Dice coefficient is
+
+$$
+\mathrm{Dice} = \frac{2\,|X \cap Y|}{|X| + |Y|} = \frac{2 \times 0}{|X| + 0} = 0,
+$$
+
+whatever the size of $X$. Stray pixels on a slice where the organ is absent therefore give that slice the minimum Dice, and they also enter the Hausdorff distance of the volume (see below). The value for a slice on which both masks are empty, where the fraction is $0/0$, is set by the organisers' metric code.
+
 <Deep title="The Hausdorff distance" kind="math">
 
-For two non-empty finite sets of points $A$ and $B$ in $\mathbb{R}^3$ (here, the voxels of the predicted and true masks), the **directed** Hausdorff distance from $A$ to $B$ is the largest distance from a point of $A$ to its nearest point in $B$:
+Let $A$ and $B$ be non-empty finite sets of points in $\mathbb{R}^3$, here the voxels of the predicted and the true mask of one organ in one scan, and let $\|\cdot\|$ be the Euclidean norm. The **directed** Hausdorff distance from $A$ to $B$ is the largest distance from a point of $A$ to its nearest point in $B$:
+
 $$
 \vec d(A, B) = \max_{a \in A}\, \min_{b \in B}\, \|a - b\|.
 $$
-The **Hausdorff distance** is the larger of the two directions:
+
+The **Hausdorff distance** is the larger of the two directed distances:
+
 $$
 d_H(A, B) = \max\big(\vec d(A, B),\ \vec d(B, A)\big).
 $$
-It is a metric on non-empty compact sets: $d_H(A,B) = 0$ if and only if $A = B$, it is symmetric by construction, and it satisfies the triangle inequality. (The same construction defines a metric on the non-empty compact subsets of any metric space. It is due to Felix Hausdorff, as is the separation axiom that defines a Hausdorff topological space, from which the Hausdorff Space community takes its name.)
 
-The key property for this competition: **$d_H$ is determined by the single worst point.** Suppose the prediction matches the stomach perfectly but adds one small false-positive blob 100 voxels away. Dice barely changes, since the blob is a few voxels among thousands. But $\vec d(\text{pred}, \text{true}) = 100$ voxels, so $d_H = 100$. A single stray region anywhere in the volume dominates the score for that organ.
+On the non-empty compact subsets of a metric space, $d_H$ is a metric: $d_H(A, B) = 0$ if and only if $A = B$, it is symmetric by construction, and it satisfies the triangle inequality. The construction is due to Felix Hausdorff, after whom the Hausdorff separation axiom in topology is also named (and, from that, the Hausdorff Space community).
 
-The converse also holds: missing a distant part of the organ (a bowel loop in another slice) gives a large $\vec d(\text{true}, \text{pred})$.
+**Dependence on the worst point.** $d_H$ is a maximum, so it is determined by a single point. Suppose the prediction matches the stomach exactly but adds a false-positive region of a few voxels 100 voxels away from the stomach. Dice changes little, because the region is a few voxels among thousands, while $\vec d(\text{pred}, \text{true}) = 100$ voxels and therefore $d_H = 100$ voxels. In the other direction, a missed part of the organ far from the predicted part, such as a bowel loop several slices away, makes $\vec d(\text{true}, \text{pred})$ large.
 
-Since the Hausdorff term carries 60% of the weight, controlling false positives on slices where an organ is absent was worth more than refining boundaries.
+**Worked comparison of the two terms.** Consider one organ in one scan. If a stray region raises the normalised Hausdorff distance from 0.05 to 0.35, the Hausdorff term of the score falls by
+
+$$
+0.6 \times (0.35 - 0.05) = 0.6 \times 0.30 = 0.18 .
+$$
+
+A loss of 0.01 in mean Dice, by comparison, lowers the Dice term by $0.4 \times 0.01 = 0.004$. The numbers are illustrative; they show how much larger the effect of one distant false positive can be than that of a small boundary error.
 </Deep>
 
-<Deep title="Computing the Hausdorff distance efficiently" kind="code">
+<Deep title="Computing the Hausdorff distance with a distance transform" kind="code">
 
-Brute force compares every pair of points, $O(|A|\,|B|)$. A distance transform gives, for every voxel, the distance to the nearest voxel of a set, so each directed distance is one transform plus a maximum.
+A Nolad illustration. Comparing every pair of points costs $O(|A|\,|B|)$ operations. A Euclidean distance transform gives, for every voxel, the distance to the nearest voxel of a set, so each directed distance is one transform followed by a maximum.
 
 ```python
 import numpy as np
@@ -132,92 +150,128 @@ def hausdorff(pred: np.ndarray, true: np.ndarray, spacing=(1.0, 1.0, 1.0)) -> fl
     return max(dist_to_true[pred].max(), dist_to_pred[true].max())
 ```
 
-This is a Nolad illustration; the competition's metric notebook defines the exact normalisation and the handling of empty masks.
+The competition's metric notebook defines the exact normalisation and the handling of empty masks.
 </Deep>
 
-**Empty slices.** As implemented by the organisers, a slice where both the prediction and the truth are empty scores a perfect Dice; any false-positive pixels on an empty slice give that slice a Dice of 0. With many empty slices, predicting "empty" correctly is worth a lot on both parts of the score.
+## Winning solution
 
-## How the winning solution works
-
-The winning team combined three groups of models.
+The winning team, nccsm, combined three groups of models: classification models (CLS) that decide whether an organ is present on a slice, 2.5D segmentation models (SEG), and 3D segmentation models.
 
 <Pipeline steps={[
-  {tag: "CLS", title: "Is the organ on this slice?", detail: "4 U-Nets, EfficientNet-B4 to B7; >12 confident pixels"},
-  {tag: "SEG 2.5D", title: "Segment positive slices", detail: "5 U-Nets + 2 UPerNets; 3 slices as channels"},
+  {tag: "CLS", title: "Organ presence per slice", detail: "4 U-Nets, EfficientNet-B4 to B7; >12 pixels above 0.6"},
+  {tag: "SEG 2.5D", title: "Segmentation of positive slices", detail: "5 U-Nets + 2 UPerNets; 3 slices as channels"},
   {tag: "3D", title: "Volumetric models", detail: "3 MONAI SegResNets"},
   {tag: "Fuse", title: "0.6 × 2.5D + 0.4 × 3D logits", detail: "threshold 0.4"},
-  {tag: "Mask", title: "Zero the slices CLS rejects", detail: "and skip their segmentation"}
+  {tag: "Mask", title: "Empty mask on rejected slices", detail: "segmentation skipped there"}
 ]} caption="The winning pipeline." />
 
 <Foundation id="models-and-loss" />
 
-### The classification stage
+### Stage 1: slice classification
 
-Four U-Nets with EfficientNet-B4 to B7 encoders (in mmsegmentation), trained on the whole dataset, predict the masks, but their only job is to decide which slices contain each organ. A slice is declared positive for an organ if **more than 12 pixels** have probability above 0.6; otherwise its mask is set to zero, and the segmentation models are not even run on it, which also saves time. Some classifiers were trained without cases known to be mis-annotated (identified in a public discussion).
+Four U-Nets with EfficientNet-B4 to B7 encoders, built with mmsegmentation and trained on the whole dataset without folds, predict masks. Their output is used only to decide which slices contain each organ. A slice is declared positive for an organ if **more than 12 pixels** have a predicted probability above 0.6. Otherwise its mask for that organ is set to zero and the segmentation models are not run on it, which also reduces inference time. Some of the classifiers were trained without cases identified in a public discussion as mis-annotated.
 
-The team credits this two-stage idea to the winning solutions of the 2019 SIIM-ACR pneumothorax competition, where the same logic (an empty mask is perfect, a false positive is fatal) applied.
+The team credits the two-stage design, classification followed by segmentation, to winning solutions of the 2019 SIIM-ACR pneumothorax competition, whose metric also gave a Dice of 0 to any predicted pixel on an image without the target structure.
 
-<Deep title="Why a separate classifier beats thresholding the segmentation" kind="detail">
+<Deep title="The minimum-area rule" kind="detail">
 
-A segmentation model trained on all slices must spend capacity on two tasks: finding boundaries on positive slices and suppressing everything on negative slices. The pixel-level loss is dominated by background pixels, so the model learns a conservative boundary but may still produce small spurious blobs on negative slices.
+The rule has two thresholds, a probability of 0.6 and a count of 12 pixels. A prediction on a negative slice survives only if at least 13 pixels exceed probability 0.6, so small scattered detections are removed. These are the errors that raise the Hausdorff distance by a large amount while hardly changing Dice.
 
-A dedicated decision with a **minimum area** (12 pixels at probability > 0.6) is a morphological filter: it removes isolated small detections, exactly the kind of error that inflates the Hausdorff distance. Segmentation models can then be trained **only on positive slices**, where their loss is focused on boundaries.
+The two kinds of classifier error cost the same on the Dice term. If the organ is present and the slice is rejected, the prediction is empty, and
 
-The cost of a classifier false negative (a missed organ on a slice) is a Dice of 0 on that slice and possibly a large Hausdorff distance; the cost of a false positive is the same. The area threshold and the probability threshold trade these off and were tuned on validation.
+$$
+\mathrm{Dice} = \frac{2 \times 0}{0 + |Y|} = 0 .
+$$
+
+If the organ is absent and the slice is accepted with a non-empty prediction, Dice is also 0, as computed above. On the Hausdorff term, a rejected slice can remove part of the organ from the prediction, and an accepted slice can add a distant false-positive region.
+
+With the classifier in front, the five segmentation U-Nets were trained only on annotated slices, where every training image contains at least one organ.
 </Deep>
 
-### The 2.5D segmentation stage
+### Stage 2: 2.5D segmentation
 
-Following a public notebook by Awsaf, three slices with a **stride of 2** (slice $i-2$, $i$, $i+2$) are stacked as channels. Images were resized to 640 and randomly cropped to 448 or 512.
+Following a public notebook by Awsaf, the input for slice $i$ stacks slices $i-2$, $i$ and $i+2$ as three channels (a **stride of 2**), so the three channels span five slice positions. Images were resized to 640 pixels and randomly cropped to 448 or 512.
 
 <Foundation id="unet" />
 
-- **Five U-Nets** (EfficientNet-B4, two B5, B6, B7) trained only on annotated slices.
-- **Two UPerNets** with ConvNeXt-base and ConvNeXt-small backbones, trained on all slices except the five slices after the last annotated slice of the large and small bowel, where annotation had stopped and the labels are ambiguous.
+- **Five U-Nets** (encoders EfficientNet-B4, two B5, B6 and B7), trained only on annotated slices.
+- **Two UPerNets** with ConvNeXt-base and ConvNeXt-small backbones, trained on all slices except the five slices after the last annotated slice of the large and of the small bowel. The team regarded the labels there as ambiguous, because the annotation had stopped.
 
 <Foundation id="cnn-backbones" />
 
-Losses: binary cross-entropy for the classification models; for segmentation, BCE and Dice in the ratio 1:3 (combinations of Dice, cross-entropy and Dice-plus-CE across models). Augmentation: flips, rotations, elastic deformation ($\alpha = 120$, $\sigma = 6$), grid distortion and optical distortion. Horizontal-flip TTA added 0.001–0.002; mixed precision halved memory. A single U-Net scored about 0.883 public, the fused 2.5D group about 0.889.
+**Losses.** The classification models used binary cross-entropy (BCE). The segmentation models used BCE and Dice loss in the ratio 1:3; across the models, the team used Dice-plus-cross-entropy, cross-entropy and Dice losses.
+
+**Augmentation.** Random flips, rotations, elastic deformation ($\alpha = 120$, $\sigma = 6$, affine parameter 3.6), grid distortion and optical distortion.
+
+**Results.** Horizontal-flip test-time augmentation added 0.001–0.002. Mixed precision (FP16) halved memory use. A single U-Net scored about 0.883 on the public leaderboard, and the fused 2.5D group about 0.889.
 
 <Foundation id="data-augmentation" />
 
 <Deep title="Elastic deformation" kind="math">
 
-Elastic augmentation (Simard et al., 2003) simulates soft-tissue deformation, which suits bowel and stomach. For each pixel, draw random displacements $\Delta x, \Delta y \sim \mathcal{U}(-1, 1)$ independently, smooth each displacement field with a Gaussian of standard deviation $\sigma$, and scale by $\alpha$:
+Elastic augmentation (Simard et al., 2003) warps an image with a smooth random displacement field, which imitates the deformation of soft tissue. For each pixel $(x, y)$, independent random values $\Delta x(x, y)$ and $\Delta y(x, y)$ are drawn from the uniform distribution $\mathcal{U}(-1, 1)$. Each field is convolved with a normalised Gaussian kernel $G_\sigma$ of standard deviation $\sigma$ pixels and scaled by $\alpha$:
+
 $$
 u(x, y) = \alpha\,(G_\sigma * \Delta x)(x, y), \qquad v(x, y) = \alpha\,(G_\sigma * \Delta y)(x, y).
 $$
-The warped image is $I'(x, y) = I(x + u, y + v)$ with interpolation; the mask is warped identically (nearest-neighbour interpolation). Small $\sigma$ gives noisy, unrealistic warps; large $\sigma$ gives nearly rigid shifts. With $\sigma = 6$ and $\alpha = 120$, the smoothing reduces the random field's amplitude substantially, so the resulting displacements are a few pixels, varying smoothly over tens of pixels.
+
+The warped image is $I'(x, y) = I(x + u, y + v)$, with interpolation, and the mask is warped with the same field using nearest-neighbour interpolation.
+
+**Size of the displacements.** A value drawn from $\mathcal{U}(-1, 1)$ has variance $1/3$. Convolving independent noise of variance $s^2$ with a kernel $G$ gives a field of variance $s^2 \sum G^2$, and for a 2D Gaussian with $\sigma$ of several pixels the sum is close to the integral
+
+$$
+\int_{\mathbb{R}^2} G_\sigma(\mathbf{r})^2\, d\mathbf{r} = \frac{1}{4\pi\sigma^2}.
+$$
+
+The standard deviation of $u$ is therefore
+
+$$
+\mathrm{sd}(u) = \alpha \sqrt{\tfrac{1}{3}} \sqrt{\tfrac{1}{4\pi\sigma^2}} = \frac{\alpha}{\sigma\sqrt{12\pi}} .
+$$
+
+With $\alpha = 120$ and $\sigma = 6$,
+
+$$
+\mathrm{sd}(u) = \frac{120}{6 \times 6.14} = \frac{120}{36.8} = 3.3 \ \text{pixels}.
+$$
+
+The autocorrelation of the smoothed field is a Gaussian with standard deviation $\sigma\sqrt 2 \approx 8.5$ pixels, so the displacements vary smoothly over distances of about ten pixels. A smaller $\sigma$ gives a rough, less realistic field; a much larger $\sigma$ gives a nearly uniform shift of the whole image.
 </Deep>
 
-### The 3D stage
+### Stage 3: 3D segmentation
 
-Three **SegResNets** from MONAI (initial filters 12, 20 and 32; PReLU activations, batch normalisation), based on a public MONAI pipeline by yiheng that scored 0.877 public by itself, were trained on whole volumes, with a second stage of 20 epochs at a cosine-decayed learning rate from $10^{-4}$ to $10^{-6}$. SegResNet is an encoder–decoder with residual blocks, proposed for brain-tumour segmentation.
+Three **SegResNets** from MONAI, with 12, 20 and 32 initial filters, PReLU activations and batch normalisation, were trained on whole volumes. They were based on a public MONAI pipeline by yiheng, which scored 0.877 on the public leaderboard by itself. A second training stage ran for 20 epochs with a cosine learning-rate decay from $10^{-4}$ to $10^{-6}$. SegResNet (Myronenko, 2018) is an encoder–decoder with residual blocks, proposed for brain-tumour segmentation.
 
 <Foundation id="convolution" />
 
 ### Fusion
 
-The final logits are $0.6 \times$ the 2.5D ensemble plus $0.4 \times$ the 3D ensemble, thresholded at 0.4, and zeroed on slices the classifier rejected.
+Let $z_{2.5\mathrm{D}}$ and $z_{3\mathrm{D}}$ be the averaged logits of the 2.5D and 3D ensembles at a pixel. The fused logit is
 
-The two families have complementary errors. The 2.5D models see only five slices of context and can be inconsistent from slice to slice; the 3D models see the whole organ and produce coherent shapes, but at lower in-plane resolution. Averaging logits reduces both kinds of error.
+$$
+z = 0.6\, z_{2.5\mathrm{D}} + 0.4\, z_{3\mathrm{D}},
+$$
+
+which is thresholded at 0.4. Slices that the classifiers rejected keep an empty mask.
+
+The two families receive different context. The 2.5D models see three slices spanning five slice positions around the slice being segmented, and their predictions for neighbouring slices are made independently. The 3D models process the whole volume. The write-ups report the fusion weights but not a separate score for the 3D group within the final ensemble.
 
 <Foundation id="ensembling-tta" />
 
-## How this compares with other competitions
+## Comparison with other competitions
 
-- **SIIM-ACR pneumothorax (2019)** set the pattern this winner followed: classify for emptiness, then segment, with a minimum-area rule. Both metrics reward empty predictions on empty images.
-- **HuBMAP organ segmentation** is the other segmentation competition in the collection, on histology instead of MRI; there the challenge was transfer between tissue sources, not empty images.
-- **The 2.5D representation** appears across the collection (haemorrhage, cervical spine, abdominal trauma). The cervical-spine runner-up adapted the same public UW-Madison 2.5D notebook for vertebra segmentation.
+- **SIIM-ACR pneumothorax (2019).** The winners of that competition also separated the decision that an image is empty from the segmentation, with a minimum pixel count, and the UW-Madison winners credit their design to those solutions. In both metrics a single predicted pixel on an image without the structure gives a Dice of 0.
+- **HuBMAP + HPA organ segmentation** is the other segmentation competition in the collection. It uses histology images, and its main difficulty was the transfer between tissue sources in training and test.
+- **The 2.5D input** also appears in the haemorrhage, cervical spine and abdominal trauma reports. The second-place team in the cervical spine competition adapted the same public UW-Madison 2.5D notebook for vertebra segmentation.
 
 ## Compute and deployment
 
-| Setting | What the solution needs |
+| Setting | Requirements |
 | --- | --- |
-| Competition | Kaggle GPU notebook for 14 models; the classifier saves time by skipping empty slices. |
-| Radiotherapy department | A GPU next to the MR-Linac; a reduced ensemble gives contours in seconds for clinician review. |
-| Product | Integration with the treatment planning system; commercial auto-contouring tools exist for CT, and MR-Linac vendors provide their own. |
+| Competition | Kaggle GPU notebook for 14 models; the classifiers reduce inference time by excluding empty slices from segmentation. |
+| Radiotherapy department | A GPU next to the MR-Linac, running a reduced ensemble that produces draft contours for clinician review. |
+| Product | Integration with the treatment planning system, validation on local scanners and sequences, and regulatory approval. |
 
-<Callout kind="deploy" title="The minimum useful version">
-One classification U-Net for organ presence (with a minimum-area rule), one 2.5D U-Net trained on positive slices with BCE plus Dice, and one 3D SegResNet, fused by averaging logits. The contours are a draft for the radiation oncologist to edit, not a replacement for review.
+<Callout kind="deploy" title="Reduced configuration">
+One classification U-Net for organ presence with the minimum-area rule, one 2.5D U-Net trained on positive slices with BCE plus Dice loss, and one 3D SegResNet, fused by averaging logits. The contours are a draft for the radiation oncologist to edit.
 </Callout>

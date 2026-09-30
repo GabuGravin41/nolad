@@ -1,48 +1,93 @@
 ---
 id: cnn-backbones
-title: "CNN backbones: ResNet, SE blocks, EfficientNet and ConvNeXt"
+title: "Convolutional backbone networks"
 kind: ml
-summary: "Most solutions start from a published image network pretrained on ImageNet. The families differ in how they keep deep networks trainable and how they trade accuracy against compute."
+summary: "Covers the convolutional networks most often used as pretrained feature extractors: residual networks, batch, group and layer normalisation, squeeze-and-excitation blocks, EfficientNet and ConvNeXt, and the ImageNet pretraining from which they are usually initialised."
 ---
+
+A **backbone** is the part of an image network that converts an input image into feature maps. A task-specific **head** is attached to it: a pooling layer and a linear layer for classification, or a decoder for segmentation. Most solutions in the reports use a published backbone with published pretrained weights. The architectures below are built from convolutional layers, described in the foundation on convolutions.
 
 ### Residual connections (ResNet)
 
-He et al. (2016) added the input of a block to its output:
+In a plain deep network, each block computes $y = F(x)$ from its input $x$. He et al. (2016) observed that very deep plain networks trained worse than shallower ones, and added the input of each block to its output:
 
 $$
-y = x + F(x).
+y = x + F(x),
 $$
 
-In the backward pass, $\partial y/\partial x = I + \partial F/\partial x$. The identity term gives the gradient a direct path through every block, so gradients neither vanish nor explode as depth grows, and networks of 50 to 150 layers train reliably. If a block has nothing useful to add, it can learn $F \approx 0$ and pass its input through.
+where $x, y \in \mathbb{R}^{C\times H\times W}$ have the same shape and $F$ is a few convolutional layers. The connection that carries $x$ past $F$ is the **residual** or **skip connection**.
 
-### Normalisation
-
-**Batch normalisation** standardises each channel using the mean and variance over the current batch, then applies a learned scale and shift:
+**Effect on the gradient.** Let $\mathcal{L}$ be the loss. By the chain rule, with $J_F = \partial F/\partial x$ the Jacobian of the block and $I$ the identity,
 
 $$
-\hat x = \frac{x-\mu_B}{\sqrt{\sigma_B^2+\epsilon}}, \qquad y = \gamma\hat x + \beta .
+\frac{\partial \mathcal{L}}{\partial x} = \frac{\partial \mathcal{L}}{\partial y}\,\big(I + J_F\big) = \frac{\partial \mathcal{L}}{\partial y} + \frac{\partial \mathcal{L}}{\partial y}\,J_F .
 $$
 
-It stabilises training but depends on batch statistics, so it degrades when the batch is tiny. The HuBMAP winner, forced to batch size one by memory, replaced it with **group normalisation**, which normalises over groups of channels within each example and does not depend on the batch. **Layer normalisation** does the same over all channels and is standard in transformers and ConvNeXt.
+The first term passes the gradient through the block unchanged. Through a stack of $B$ blocks the gradient is multiplied by the product $\prod_{b}(I + J_{F_b})$, whose expansion contains the identity, so there is always a path along which the gradient is not attenuated by the blocks. In a plain network the product is $\prod_b J_{F_b}$, which can shrink towards zero as $B$ grows. A block that has nothing useful to add can learn $F \approx 0$ and pass its input on unchanged.
+
+He et al. trained residual networks with 50, 101 and 152 layers. ResNet-50 has about 25.6 million parameters.
+
+### Normalisation layers
+
+A normalisation layer rescales activations to zero mean and unit variance over some set of values, then applies a learned scale $\gamma$ and shift $\beta$. For a set of values $x_1, \dots, x_M$ with mean $\mu$ and variance $\sigma^2$,
+
+$$
+\hat x_m = \frac{x_m-\mu}{\sqrt{\sigma^2+\epsilon}}, \qquad y_m = \gamma\,\hat x_m + \beta ,
+$$
+
+with a small $\epsilon > 0$. For example, the values $1, 2, 3, 6$ have mean 3 and variance $(4+1+0+9)/4 = 3.5$, so with $\epsilon \approx 0$ they normalise to $-1.07,\ -0.53,\ 0,\ 1.60$. The normalisation layers differ in which values form the set.
+
+- **Batch normalisation** uses, for each channel, all values of that channel in the current mini-batch: $B \times H \times W$ values for a batch of $B$ feature maps of size $H \times W$. At inference it uses running averages of $\mu$ and $\sigma^2$ collected during training. When $B$ is small, the batch statistics are noisy estimates.
+- **Group normalisation** divides the $C$ channels of one example into $G$ groups and normalises each group over its channels and spatial positions. It does not depend on the batch.
+- **Layer normalisation** normalises over all channels of one example (or, in transformers and ConvNeXt, over the channels at each spatial position).
+
+The HuBMAP winner trained with a batch size of 1 and group normalisation with 32 groups in the decoder, and reports that this worked better than a batch size of 4 with batch normalisation.
 
 ### Squeeze-and-excitation (SE)
 
-An SE block (Hu et al., 2018) lets a network reweight its own channels. It averages each channel over space (squeeze), passes the resulting vector through a small two-layer network ending in a sigmoid (excitation), and multiplies each channel by its weight:
+An **SE block** (Hu et al., 2018) rescales the channels of a feature map $x \in \mathbb{R}^{C\times H\times W}$ by weights computed from the map itself.
+
+1. **Squeeze.** Average each channel over space: $\bar x_c = \frac{1}{HW}\sum_{i,j} x_c[i,j]$, giving $\bar x \in \mathbb{R}^C$.
+2. **Excitation.** Pass $\bar x$ through two linear layers, $W_1 \in \mathbb{R}^{(C/r)\times C}$ and $W_2 \in \mathbb{R}^{C\times (C/r)}$, with a reduction ratio $r$, a ReLU between them and a sigmoid $\sigma$ at the end:
 
 $$
-s = \sigma\big(W_2\,\mathrm{ReLU}(W_1\,\bar x)\big), \qquad y_c = s_c\,x_c .
+s = \sigma\big(W_2\,\mathrm{ReLU}(W_1\,\bar x)\big) \in (0,1)^C .
 $$
 
-SE-ResNeXt networks, common in 2019–2020 solutions, combine this with grouped convolutions.
+3. **Scale.** Multiply each channel by its weight: $y_c = s_c\,x_c$.
+
+The block adds $2C^2/r$ weights. With $C = 256$ and $r = 16$, the ratio used by Hu et al., this is $2 \times 65{,}536/16 = 8{,}192$. **SE-ResNeXt** networks combine SE blocks with ResNeXt blocks, which use grouped convolutions; SE-ResNeXt-50 appears in the 2019 pneumothorax and 2020 pulmonary embolism solutions.
 
 ### EfficientNet
 
-Tan and Le (2019) scaled depth, width and input resolution together by fixed ratios, producing a family B0 to B7 whose accuracy per FLOP was far better than earlier networks. EfficientNet-B0 has about 5 million parameters; B7 about 66 million. Because B0 and B3 are cheap, they dominate solutions with tight inference budgets such as BirdCLEF's CPU limit.
+A network can be enlarged by adding layers (depth), channels (width) or input pixels (resolution). Tan and Le (2019) scaled all three together with a single coefficient $\phi \ge 0$:
+
+$$
+\text{depth} \propto \alpha^{\phi},\qquad \text{width} \propto \beta^{\phi},\qquad \text{resolution} \propto \gamma^{\phi},
+$$
+
+with $\alpha = 1.2$, $\beta = 1.1$ and $\gamma = 1.15$ found by a small search.
+
+**Why the constraint $\alpha\beta^2\gamma^2 \approx 2$.** The cost of a convolutional layer is proportional to $C_{\mathrm{in}}\,C_{\mathrm{out}}\,H\,W$. Multiplying the width by $\beta$ multiplies both $C_{\mathrm{in}}$ and $C_{\mathrm{out}}$ by $\beta$, so the cost grows by $\beta^2$. Multiplying the resolution by $\gamma$ multiplies $H$ and $W$ by $\gamma$, a factor $\gamma^2$. Multiplying the depth by $\alpha$ multiplies the number of layers by $\alpha$. The total cost therefore grows by $(\alpha\beta^2\gamma^2)^{\phi}$ per unit of $\phi$, and
+
+$$
+\alpha\beta^2\gamma^2 = 1.2 \times 1.21 \times 1.3225 \approx 1.92 \approx 2,
+$$
+
+so each unit increase of $\phi$ roughly doubles the computation. The family runs from EfficientNet-B0 (about 5.3 million parameters) to B7 (about 66 million). Its building block is the inverted residual block of MobileNetV2 with a depthwise convolution and an SE block.
+
+The BirdCLEF 2024 competition allowed only CPU inference within 120 minutes, and the winning team used EfficientNet-B0 and RegNetY-800MF, which are small enough for that budget.
 
 ### ConvNeXt
 
-Liu et al. (2022) modernised the ResNet design with ideas borrowed from vision transformers: large $7\times7$ depthwise convolutions, layer normalisation, GELU activations and fewer normalisation layers. ConvNeXt-Small and ConvNeXt-Tiny appear in the mammography, lumbar spine and HMS winners, often outperforming larger models on small medical datasets.
+Liu et al. (2022) modified the ResNet design using choices taken from vision transformers: $7\times7$ depthwise convolutions, layer normalisation, the GELU activation, fewer normalisation and activation layers, and an inverted bottleneck in which the channel count expands by 4 inside each block.
+
+A **depthwise convolution** applies one $k\times k$ filter to each channel separately, without mixing channels. On $C$ channels it has $k^2C$ weights, compared with $k^2C^2$ for a standard convolution from $C$ to $C$ channels. With $C = 96$, a $7\times7$ depthwise layer has $49 \times 96 = 4{,}704$ weights and a standard $3\times3$ layer has $9 \times 96^2 = 82{,}944$. Channel mixing is done by the $1\times1$ convolutions that follow.
+
+ConvNeXt models appear in several winning solutions: ConvNeXt-Small in the mammography and lumbar spine winners, and ConvNeXt-Atto among the HMS winner's models. The lumbar spine winners report that larger ConvNeXt variants performed worse than ConvNeXt-Small, and the HMS winning team report that smaller models performed better in their experiments.
 
 ### Pretraining
 
-Every one of these backbones is usually initialised from weights trained on ImageNet (1.3 million natural photographs, 1,000 classes) or ImageNet-21k. Medical images look nothing like photographs, yet pretrained low-level filters (edges, textures) transfer and training converges faster and generalises better than from random weights. When pretrained weights carry a licence (for example non-commercial), that licence follows every model fine-tuned from them.
+Backbones are usually initialised from weights trained on ImageNet-1k (about 1.28 million training photographs in 1,000 classes) or on the larger ImageNet-21k (about 14 million images in about 21,000 classes). Medical images differ from photographs, but the early layers of an ImageNet-trained network detect edges, textures and simple shapes that occur in both, and fine-tuning from these weights usually converges faster and generalises better on small datasets than training from random initialisation. The foundation on transfer learning describes this in more detail.
+
+Pretrained weights carry licences, and a licence restriction applies to every model fine-tuned from those weights. In the HuBMAP competition the pretrained SegFormer weights used by the winner were licensed for non-commercial use only.

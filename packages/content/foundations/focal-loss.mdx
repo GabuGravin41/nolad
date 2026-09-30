@@ -2,33 +2,94 @@
 id: focal-loss
 title: "Focal loss and class imbalance"
 kind: math
-summary: "When positives are rare, most of the loss comes from easy negatives. Focal loss down-weights examples the model already classifies confidently, and sampling schemes change how often each class is seen."
+summary: "When one class is rare, the loss of a classifier is dominated by the many easy examples of the common class. Focal loss reduces the weight of confidently classified examples, and resampling changes how often each class is seen, which shifts the predicted probabilities by an amount that Bayes' rule corrects."
 ---
 
-### The imbalance problem
+### Class imbalance
 
-In ISIC 2024 about one lesion in a thousand is malignant. With plain cross-entropy the gradient is dominated by hundreds of thousands of easy negatives, each contributing a little, and the rare positives barely move the model.
+In a binary problem with $N$ examples, of which $N_+$ are positive, the **prevalence** is $\pi = N_+/N$. In the ISIC 2024 skin-lesion data, about 393 of about 401,000 training images were malignant, so $\pi \approx 0.001$: one positive per thousand examples.
+
+A classifier outputs $p \in (0,1)$, the predicted probability that the label $y \in \{0,1\}$ equals 1. The binary cross-entropy of one example is
+
+$$
+\ell_{\mathrm{CE}}(y, p) = -\big[\, y \log p + (1-y)\log(1-p) \,\big],
+$$
+
+and training minimises the sum over all examples.
+
+Suppose a model assigns $p = 0.01$ to each of 400,000 negatives and $p = 0.3$ to each of 393 positives. Each negative is almost correctly classified and contributes $-\log 0.99 = 0.0101$. Each positive contributes $-\log 0.3 = 1.204$. The totals are
+
+$$
+400{,}000 \times 0.0101 \approx 4{,}020 \qquad \text{and} \qquad 393 \times 1.204 \approx 473 .
+$$
+
+The easy negatives account for about 89% of the loss, although improving them further would hardly change the model's decisions.
 
 ### Focal loss
 
-Lin et al. (2017) multiplied the cross-entropy of each example by a factor that vanishes as the example becomes easy. Writing $p_t$ for the probability assigned to the true class ($p_t = p$ if $y=1$, $1-p$ if $y=0$),
+Write $p_t$ for the probability that the model assigns to the true class:
 
 $$
-\ell_{\text{focal}} = -\,\alpha_t\,(1-p_t)^{\gamma}\log p_t .
+p_t = \begin{cases} p & \text{if } y = 1, \\ 1 - p & \text{if } y = 0. \end{cases}
 $$
 
-With $\gamma = 0$ this is weighted cross-entropy. With $\gamma = 2$, an example classified with $p_t = 0.9$ has its loss multiplied by $(0.1)^2 = 0.01$, while a hard example with $p_t = 0.1$ keeps $0.81$ of its loss.
+In both cases the cross-entropy equals $-\log p_t$. Lin et al. (2017), working on dense object detection, multiplied it by a factor that tends to zero as the example becomes easy:
 
-<Plot series={[{fn: "bce-pos", label: "cross-entropy (γ = 0)"}, {fn: "focal", params: {gamma: 1}, label: "focal, γ = 1"}, {fn: "focal", params: {gamma: 2}, label: "focal, γ = 2"}, {fn: "focal", params: {gamma: 5}, label: "focal, γ = 5"}]} x={[0.01, 1]} y={[0, 4]} xLabel="probability of the true class, p_t" yLabel="loss" caption="Focal loss flattens the loss for well-classified examples." />
+$$
+\ell_{\mathrm{focal}}(y, p) = -\,\alpha_t\,(1-p_t)^{\gamma}\log p_t .
+$$
 
-Focal loss does not produce calibrated probabilities; its optimum is not at the true frequency. Solutions scored by log loss therefore usually avoid it or recalibrate afterwards.
+Here $\gamma \ge 0$ is the **focusing parameter**, and $\alpha_t = \alpha$ for positives and $1 - \alpha$ for negatives, with $\alpha \in [0,1]$ a fixed class weight. With $\gamma = 0$ the focal loss is class-weighted cross-entropy. Lin et al. used $\gamma = 2$ and $\alpha = 0.25$.
 
-### Sampling instead of reweighting
+Worked numbers with $\gamma = 2$ and $\alpha_t = 1$:
 
-Most winners handle imbalance by changing what the model sees rather than the loss:
+- An easy example with $p_t = 0.9$ has cross-entropy $0.105$. The factor $(1 - 0.9)^2 = 0.01$ reduces it to $0.00105$.
+- A hard example with $p_t = 0.1$ has cross-entropy $2.303$. The factor $(1-0.1)^2 = 0.81$ reduces it to $1.865$.
 
-- **Oversampling positives**, so that every batch contains at least one. The mammography winner used a positive-to-negative ratio of 1:7 and stressed that every batch should hold a positive.
-- **Undersampling negatives** each epoch (ISIC 2024, 1:3 to 1:5), which also makes epochs much faster.
-- **Balanced batches** (1:1) for image models whose outputs are later recalibrated by a downstream model.
+The ratio of the hard to the easy loss rises from about 22 under cross-entropy to about 1,770 under focal loss. In the imbalanced example above, each negative ($p_t = 0.99$) is multiplied by $10^{-4}$ and each positive ($p_t = 0.7$) by $0.49$. The negatives then contribute $0.40$ in total and the positives $232$.
 
-Sampling changes the prior the model learns. A model trained on 1:1 batches will output probabilities around 0.5 for ambiguous cases even if the true rate is 0.1%. That is harmless for ranking metrics such as AUC and harmful for log loss unless corrected. Bayes' rule gives the correction: if positives were sampled at rate $r_1$ and negatives at $r_0$, the model's odds must be multiplied by $r_0/r_1$ to recover the odds under the original distribution.
+<Plot series={[{fn: "bce-pos", label: "cross-entropy (γ = 0)"}, {fn: "focal", params: {gamma: 1}, label: "focal, γ = 1"}, {fn: "focal", params: {gamma: 2}, label: "focal, γ = 2"}, {fn: "focal", params: {gamma: 5}, label: "focal, γ = 5"}]} x={[0.01, 1]} y={[0, 4]} xLabel="probability of the true class, p_t" yLabel="loss" caption="Loss of one example as a function of the probability assigned to its true class, with α_t = 1. Larger γ lowers the loss of well-classified examples (p_t near 1) more than that of misclassified ones." />
+
+### Calibration under focal loss
+
+A model is **calibrated** if, among inputs for which it predicts $p$, the fraction of positives is $p$. Consider an input whose true probability of being positive is $q$. The expected loss of predicting $p$ is
+
+$$
+E(p) = -\,q\,(1-p)^{\gamma}\log p \;-\; (1-q)\,p^{\gamma}\log(1-p),
+$$
+
+taking $\alpha_t = 1$. For $\gamma = 0$, setting the derivative $-q/p + (1-q)/(1-p)$ to zero gives $p = q$, so cross-entropy is minimised by the true probability. For $\gamma > 0$ the minimiser lies between $q$ and $0.5$. Minimising $E$ numerically for $q = 0.9$ gives $p = 0.774$ at $\gamma = 1$ and $p = 0.694$ at $\gamma = 2$; for $q = 0.3$ it gives $0.383$ and $0.422$. A model trained with focal loss therefore produces probabilities that are too close to 0.5. The ranking of inputs is not affected, but a metric such as log loss penalises the distortion, and the probabilities have to be recalibrated on held-out data if they are used as probabilities.
+
+### Resampling
+
+Imbalance can also be addressed by changing how often each class is presented during training.
+
+- **Oversampling positives.** The RSNA mammography winner used a sampler with a positive-to-negative ratio of 1:7 and ensured that each batch contained at least one positive.
+- **Undersampling negatives.** A random subset of negatives is drawn in each epoch, which also shortens the epoch. The second-place team in ISIC 2024 undersampled negatives to ratios of 1:3 or 1:5.
+- **Balanced batches.** The ISIC 2024 winner trained its image models on batches with equal numbers of positives and negatives, and used their predictions as input features to a gradient-boosted model.
+
+### Correcting the prior after resampling
+
+Resampling changes the class prior that the model learns but not the appearance of each class. Suppose each positive is included in training with relative rate $r_1$ and each negative with relative rate $r_0$. The class-conditional densities $P(x \mid y)$ are unchanged, and the class probabilities become proportional to $r_1 \pi$ and $r_0(1-\pi)$.
+
+By Bayes' rule, the odds of the positive class given $x$ under the original distribution are
+
+$$
+O(x) = \frac{P(y=1 \mid x)}{P(y=0 \mid x)} = \frac{P(x \mid y=1)\,\pi}{P(x \mid y=0)\,(1-\pi)} .
+$$
+
+Under the resampled distribution the priors are multiplied by $r_1$ and $r_0$, so
+
+$$
+O_s(x) = \frac{P(x \mid y=1)\,r_1\pi}{P(x \mid y=0)\,r_0(1-\pi)} = \frac{r_1}{r_0}\,O(x).
+$$
+
+A model trained on the resampled data estimates $O_s(x)$. The odds under the original distribution are recovered as
+
+$$
+O(x) = \frac{r_0}{r_1}\,O_s(x), \qquad p = \frac{O(x)}{1 + O(x)} .
+$$
+
+Worked example: with $\pi = 0.001$, balanced batches correspond to $r_1/r_0 = 999$. A prediction $p_s = 0.5$ has odds $O_s = 1$, so $O = 1/999$ and $p = 0.001$. A prediction $p_s = 0.9$ has $O_s = 9$, so $O = 9/999 = 0.00901$ and $p = 0.00893$.
+
+On the logit scale the correction subtracts the constant $\log(r_1/r_0)$ from every prediction. The transformation is strictly increasing, so it does not change the ranking of the inputs, and ROC AUC is unaffected. Log loss and other metrics that use the probabilities themselves require the correction.

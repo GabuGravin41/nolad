@@ -1,6 +1,6 @@
 ---
 slug: rsna-breast-cancer-detection
-title: "RSNA Screening Mammography Breast Cancer Detection (2023): high-resolution classifiers and the threshold"
+title: "RSNA Screening Mammography Breast Cancer Detection (2023)"
 shortTitle: RSNA Breast Cancer Detection
 kaggleSlug: rsna-breast-cancer-detection
 kaggleUrl: https://www.kaggle.com/competitions/rsna-breast-cancer-detection
@@ -25,10 +25,10 @@ techniques:
   - ensembling
 metric:
   name: Probabilistic F1 score
-  summary: "An F1 score computed from predicted probabilities rather than hard labels, per breast, on a dataset where about 2% of breasts have cancer."
+  summary: "An F1 score per breast in which the counts of true and false positives are replaced by sums of predicted probabilities. About 2% of breasts in the training data have cancer."
 constraints: { runtime: "Code competition: notebook inference within the Kaggle time limit", hardware: "Kaggle GPU notebook", internet: false }
-summary: "Decide from a woman's screening mammograms whether each breast has cancer. The winner cropped the breast with a small detector, trained four ConvNeXt-small models on 2048 × 1024 crops with five external mammography datasets and a softened positive target, and binarised the averaged prediction at a threshold chosen on out-of-fold data. Both top write-ups report that the final ranking depended heavily on the threshold."
-winningIdea: "Keep the image resolution very high (2048 × 1024) on a tight breast crop, add every public mammography dataset, and treat the decision threshold as part of the model."
+summary: "The competition asked participants to estimate, from the screening mammograms of each breast, whether the breast has cancer. The winning solution crops the breast with a small object detector, classifies each image with four ConvNeXt-small networks at 2048 × 1024 pixels trained with five external mammography datasets and a positive target of 0.8, and binarises the averaged prediction at a fixed threshold. It scored a probabilistic F1 of 0.55 on the private leaderboard; moving its threshold from 0.31 to 0.34 would have lowered this to 0.53."
+winningIdea: "A YOLOX-nano detector crops the breast, and four ConvNeXt-small classifiers with global max pooling process the crop at 2048 × 1024 pixels. Training adds five public mammography datasets and uses a positive target of 0.8. The per-breast mean prediction is converted to 0 or 1 at a threshold of 0.31."
 solutions:
   - rank: 1
     team: Đăng Nguyễn Hồng
@@ -43,19 +43,19 @@ solutions:
     writeup: https://www.kaggle.com/competitions/rsna-breast-cancer-detection/writeups/cancerdetectman-2nd-place-solution
 deployability:
   score: 4
-  verdict: "A single ConvNeXt-small at 2048 × 1024 plus a nano-sized detector is a modest model by clinical-AI standards, and the second-place team states that its single model reproduces on one RTX 3090. The main open question is calibration and threshold choice on a new population, which the competition itself showed to be fragile."
-  inference: "Per image: one YOLOX-nano detection at 416 px, then one ConvNeXt-small pass at 2048 × 1024 per model (four in the winning ensemble); predictions averaged over the images of each breast."
+  verdict: "The winning pipeline consists of a nano-sized detector and ConvNeXt-small classifiers, and the second-place team states that its single model can be reproduced on one RTX 3090. The choice of threshold remains open for a new population: in the winner's own table, a change of 0.03 in the threshold changed the private score by 0.02."
+  inference: "Per image: one YOLOX-nano detection at 416 px, then one ConvNeXt-small pass at 2048 × 1024 per model (four in the winning ensemble); predictions averaged over the images of each breast. DICOM decoding runs on the GPU."
   models: "YOLOX-nano breast detector; 4 × ConvNeXt-v1-small classifiers."
-  training: "About 75,000 training images per fold (competition plus external), 24–30 epochs at 2048 × 1024 with batch size 8 and mixed precision; days on a single high-memory GPU per fold."
+  training: "About 75,400 training images per fold (competition plus external), 24–30 epochs at 2048 × 1024 with batch size 8 and mixed precision. The write-up does not report training time."
   externalData: "VinDr-Mammo, MiniDDSM, CMMD, CDD-CESM and BMCD (winner); the second-place team pre-trained on an external collection and fine-tuned without it."
   licences:
     code: "Public GitHub repository (see its licence file)."
     data: "Competition data under RSNA competition terms; each external dataset has its own licence, some restricting commercial use."
-    weights: "Not released as a separate artefact; reproducible from the training code."
+    weights: "The write-up does not mention released weights; the repository contains the training code."
   risks:
-    - "The probabilistic F1 metric rewards precision; a screening programme sets its operating point by recall and recall rate, so the threshold must be re-derived."
-    - "Mammography appearance varies strongly by vendor and machine; the second-place team used machine id as an input, which does not transfer to unseen machines."
-    - "A per-breast classifier gives no location; radiologists need a heat map or box to review the finding."
+    - "The probabilistic F1 metric favours precision. A screening programme sets its operating point by sensitivity and recall rate, so the threshold has to be chosen again for that purpose."
+    - "Mammograms differ in appearance between vendors and machines. The second-place model receives the machine id as an input, and a machine absent from the training data has no learned value for it."
+    - "A per-breast classifier does not localise the finding. Radiologists reviewing a flagged study need a heat map or a box."
 related:
   - isic-2024-challenge
   - siim-isic-melanoma-classification
@@ -71,16 +71,16 @@ dataLinks:
   - { label: "VinDr-Mammo (PhysioNet)", url: "https://physionet.org/content/vindr-mammo/" }
   - { label: "CMMD (The Cancer Imaging Archive)", url: "https://www.cancerimagingarchive.net/collection/cmmd/" }
 priority: 11
-updated: "2026-09-28"
+updated: "2026-09-29"
 ---
 
-## The problem in its field
+## Clinical background
 
-According to the World Health Organization, breast cancer is the most commonly diagnosed cancer worldwide: about 2.3 million women were diagnosed in 2020 and about 685,000 died of it. In high-income countries, breast cancer mortality has fallen by around 40% since the 1980s, a decline attributed to screening combined with better treatment. Screening means that women without symptoms receive a **mammogram** every one to three years, and radiologists look for small, early cancers.
+According to the World Health Organization, breast cancer is the most commonly diagnosed cancer worldwide: about 2.3 million women were diagnosed in 2020 and about 685,000 died of it. In high-income countries, breast cancer mortality has fallen by about 40% since the 1980s, which the competition description attributes to screening combined with better treatment. In screening, women without symptoms receive a **mammogram** at regular intervals, typically every one to three years, and radiologists look for small, early cancers.
 
-Screening is difficult for two reasons. Cancers are rare in a screened population, a few per thousand examinations, so a reader examines many normal studies for each cancer. And false positives are common: women are recalled for more imaging or biopsies that turn out benign, which causes anxiety and cost. Many countries also lack breast radiologists; some use double reading (two independent readers per study), which doubles the workload. An automated reader that is accurate enough could act as a second reader or triage normal studies.
+Cancers are rare in a screened population, of the order of a few per thousand examinations, so a reader examines many normal studies for each cancer. False positives are common: women are recalled for further imaging or biopsies that turn out benign, which causes anxiety and cost. The competition description also cites a shortage of radiologists. Some programmes use double reading, in which two radiologists read each study independently. An automated reader of sufficient accuracy could act as the second reader, or could sort out studies that are clearly normal.
 
-<Deep title="What a screening mammogram contains" kind="domain">
+<Deep title="Contents of a screening mammogram" kind="domain">
 
 A standard screening examination has **four images**: two views of each breast.
 
@@ -89,144 +89,215 @@ A standard screening examination has **four images**: two views of each breast.
 
 Radiologists compare the two views of the same breast (a real mass appears in both), compare left with right (the breasts should be roughly symmetric), and compare with earlier examinations. Signs of cancer include masses with irregular or spiculated margins, clusters of fine calcifications, architectural distortion and new asymmetries.
 
-The target features are small. Microcalcifications are a fraction of a millimetre across, and a mammogram detector has pixels of roughly 0.07–0.1 mm, so the original images are several thousand pixels on each side. Downsampling to typical ImageNet resolution erases these features, which is why resolution dominates this competition.
+The target features are small. Microcalcifications are a fraction of a millimetre across, and a mammography detector has pixels of roughly 0.07–0.1 mm, so the original images are several thousand pixels on each side. A calcification 0.3 mm across covers 3–4 pixels at full resolution. At 384 pixels across a 250 mm image, one pixel spans about 0.65 mm, and the same calcification covers less than one pixel.
 
 **Breast density** (the proportion of fibroglandular tissue, which appears white) both raises cancer risk and hides tumours, which also appear white. **BI-RADS** is the standard reporting scale for how suspicious a finding is.
 </Deep>
 
-## The data
+## Data
 
-The training set has about 54,000 images from about 12,000 patients, provided as DICOM files. Each image carries the patient, breast side (laterality), view, age, whether an implant is present, machine id, and for training only: the cancer label, biopsy and invasiveness, BI-RADS, density, and a "difficult negative case" flag.
+The training set has 54,706 images from about 11,900 patients, provided as DICOM files. Each image carries the patient, breast side (laterality), view, age, whether an implant is present and the machine id. The training data also give the cancer label, biopsy and invasiveness, BI-RADS, density, and a "difficult negative case" flag.
 
-Predictions are made per **breast**: a `prediction_id` such as `10006_L` combines the patient and laterality, and each breast has two or more images. About 2% of breasts in the training data are cancer-positive.
+Predictions are made per **breast**. A `prediction_id` such as `10006_L` combines the patient and laterality, and each breast has two or more images. About 2% of breasts in the training data are cancer-positive. With about 11,900 patients and two breasts each, this is roughly $0.02 \times 23{,}800 \approx 480$ positive breasts.
 
 <Foundation id="dicom-and-volumes" />
 
-## The metric
+## Evaluation metric
 
-The probabilistic F1 score replaces counts of true and false positives with sums of predicted probabilities. For breasts $i$ with labels $y_i \in \{0,1\}$ and predictions $p_i \in [0,1]$:
-
-$$
-\text{pTP} = \sum_{i:\,y_i=1} p_i, \qquad \text{pFP} = \sum_{i:\,y_i=0} p_i,
-$$
+The probabilistic F1 score replaces the counts of true and false positives with sums of predicted probabilities. Let breasts be indexed by $i$, with label $y_i \in \{0,1\}$ and prediction $p_i \in [0,1]$, and let $P = \#\{i : y_i = 1\}$ be the number of positive breasts. Define
 
 $$
-\text{pPrecision} = \frac{\text{pTP}}{\text{pTP} + \text{pFP}}, \qquad
-\text{pRecall} = \frac{\text{pTP}}{\#\{i : y_i = 1\}}, \qquad
-\text{pF1} = \frac{2\,\text{pPrecision}\cdot\text{pRecall}}{\text{pPrecision} + \text{pRecall}}.
+\mathrm{pTP} = \sum_{i:\,y_i=1} p_i, \qquad \mathrm{pFP} = \sum_{i:\,y_i=0} p_i .
 $$
 
-If every $p_i$ is 0 or 1, this is the ordinary F1 score.
+Probabilistic precision and recall are
+
+$$
+\mathrm{pPrec} = \frac{\mathrm{pTP}}{\mathrm{pTP} + \mathrm{pFP}}, \qquad
+\mathrm{pRec} = \frac{\mathrm{pTP}}{P},
+$$
+
+and pF1 is their harmonic mean:
+
+$$
+\mathrm{pF1} = \frac{2\,\mathrm{pPrec}\cdot\mathrm{pRec}}{\mathrm{pPrec} + \mathrm{pRec}} .
+$$
+
+If every $p_i$ is 0 or 1, pTP and pFP are the counts TP and FP, and pF1 is the ordinary F1 score. The recall denominator $P$ counts every positive breast as 1, whatever its prediction.
 
 <Foundation id="precision-recall-fbeta" />
 
 <Deep title="Why binarising the predictions raises pF1" kind="math">
 
-Take a model whose ranking is fixed and consider what the metric does with its probabilities.
+Consider a model whose ranking of the breasts is fixed, and the effect of the metric on its probabilities.
 
-Every negative breast adds its probability to pFP. With 98% negatives, many small probabilities add up: 10,000 negatives with an average prediction of 0.02 contribute pFP = 200, which may be several times the number of positives. Thresholding sets these to 0.
+Every negative breast adds its probability to pFP. With 98% negatives, many small probabilities accumulate: 10,000 negatives with a mean prediction of 0.02 contribute $\mathrm{pFP} = 200$, which can be several times the number of positives. Thresholding sets these probabilities to 0.
 
 Every positive breast adds only its probability to pTP, while the recall denominator counts it as a full positive. A positive predicted at 0.6 counts as 0.6 of a true positive. Thresholding raises it to 1.
 
-A small worked example. Suppose there are 20 positives and 980 negatives.
+A worked example with 20 positives and 980 negatives:
 
-- **Soft predictions.** Positives average 0.5, so pTP = 10. Negatives average 0.03, so pFP = 29.4. Then pPrecision = 10/39.4 = 0.254 and pRecall = 10/20 = 0.5, giving pF1 = 2(0.254)(0.5)/(0.754) = 0.337.
-- **Binarised at a threshold** that keeps 12 of the positives and 18 of the negatives. Now pTP = 12 and pFP = 18, so precision = 0.4, recall = 0.6 and F1 = 2(0.4)(0.6)/1.0 = 0.48.
+- **Soft predictions.** Positives average 0.5, so $\mathrm{pTP} = 10$. Negatives average 0.03, so $\mathrm{pFP} = 29.4$. Then $\mathrm{pPrec} = 10/39.4 = 0.254$ and $\mathrm{pRec} = 10/20 = 0.5$, giving $\mathrm{pF1} = 2(0.254)(0.5)/0.754 = 0.337$.
+- **Binarised** at a threshold above which lie 12 of the positives and 18 of the negatives. Now $\mathrm{TP} = 12$ and $\mathrm{FP} = 18$, so precision is 0.4, recall is 0.6 and $\mathrm{F1} = 2(0.4)(0.6)/1.0 = 0.48$.
 
-The ranking is the same; only the conversion to a decision changed. Because of this, the competition was decided largely by the choice of threshold, which is estimated from a small number of positives (a few hundred) and is therefore noisy. Both top write-ups make this point.
+The winning write-up and the competition discussion report the same effect: binarising the predictions often raised pF1. The threshold is estimated from the out-of-fold predictions on roughly 480 positive breasts, so its estimate is noisy.
 
-At the optimum, F1 behaves as follows. With counts TP, FP, FN, $F_1 = 2\text{TP}/(2\text{TP} + \text{FP} + \text{FN})$. Lowering the threshold to admit one more case increases F1 if it is a positive and decreases it if it is a negative; so the optimal threshold is where the local fraction of positives among newly admitted cases falls to about $F_1^*/2$ (a known result for F1-optimal thresholds, Lipton et al., 2014). With $F_1^* \approx 0.5$, the model should flag cases whose chance of cancer exceeds about 25%, far above the 2% base rate: the metric favours precision.
+**Optimal threshold for F1.** Write the ordinary F1 score with counts TP, FP and FN (false negatives) as
+
+$$
+F_1 = \frac{2\,\mathrm{TP}}{D}, \qquad D = 2\,\mathrm{TP} + \mathrm{FP} + \mathrm{FN}.
+$$
+
+Suppose the threshold is lowered just enough to admit one more breast, which has probability $c \in [0,1]$ of being positive. If it is positive, TP increases by 1 and FN decreases by 1, so the numerator becomes $2\,\mathrm{TP} + 2$ and $D$ becomes $D + 1$. If it is negative, FP increases by 1, so the numerator stays $2\,\mathrm{TP}$ and $D$ becomes $D + 1$. The expected new numerator is $2\,\mathrm{TP} + 2c$ in both cases over the same denominator $D + 1$. The change improves F1 in expectation if
+
+$$
+\frac{2\,\mathrm{TP} + 2c}{D + 1} > \frac{2\,\mathrm{TP}}{D} .
+$$
+
+Multiplying both sides by $D(D+1) > 0$:
+
+$$
+2\,\mathrm{TP}\cdot D + 2cD > 2\,\mathrm{TP}\cdot D + 2\,\mathrm{TP} .
+$$
+
+Cancelling $2\,\mathrm{TP}\cdot D$ and dividing by $2D$:
+
+$$
+c > \frac{\mathrm{TP}}{D} = \frac{F_1}{2} .
+$$
+
+A case should therefore be flagged when its probability of cancer exceeds half of the attainable F1 score, a result also derived by Lipton et al. (2014). With $F_1 \approx 0.5$, this threshold is about 0.25, more than ten times the 2% base rate. The metric favours precision.
 </Deep>
 
-The winner notes that pF1 favours precision over recall, and that he would not use it to choose an operating point for real screening, where missing a cancer is the more serious error.
+The winner notes that pF1 favours precision over recall, and that he would not use it to choose an operating point for real screening.
 
-## How the winning solution works
+## Winning solution
 
-Đăng Nguyễn Hồng won alone, with his first gold medal. He describes the pipeline as simple.
+Đăng Nguyễn Hồng competed alone; this was his first gold medal and his first write-up. He describes the pipeline as simple.
 
 <Pipeline steps={[
   {tag: "Detect", title: "Crop the breast", detail: "YOLOX-nano at 416 px; Otsu fallback"},
   {tag: "Resize", title: "2048 × 1024 crop", detail: "keeps aspect ratio of the breast"},
   {tag: "Classify", title: "4 × ConvNeXt-small", detail: "max pooling, soft positive target 0.8"},
   {tag: "Aggregate", title: "Mean over images of a breast", detail: "then mean over models"},
-  {tag: "Decide", title: "Binarise at 0.31", detail: "threshold from out-of-fold predictions"}
+  {tag: "Decide", title: "Binarise at 0.31", detail: "threshold from out-of-fold predictions and public leaderboard"}
 ]} caption="The winning pipeline." />
 
 <Foundation id="models-and-loss" />
 
-### Step 1: crop the breast
+### Stage 1: breast cropping
 
-Much of a mammogram is black background, and the breast position varies. Cropping to the breast lets the network spend its pixels on tissue. The winner trained a **YOLOX-nano** detector at 416 × 416 on 571 boxes: 472 from a public dataset published by another competitor (Remek Kinas) and 99 he labelled himself. The detector reaches an average precision around 94–96%. If it finds nothing, an Otsu threshold with contour detection provides the crop; if that fails, the whole image is used.
+Much of a mammogram is black background, and the position of the breast varies. Cropping to the breast gives more of the network's input pixels to tissue. The winner trained a **YOLOX-nano** detector at 416 × 416 on 571 images with boxes: 472 from a public dataset published by another competitor (Remek Kinas) and 99 that he labelled himself, split into 521 for training and 50 for validation. The detector reached an average precision of 94.2–96.3% on the validation images. If it finds no breast, an Otsu threshold with contour detection provides the crop; if that also fails, the whole image is used.
 
 <Foundation id="detection-basics" />
 
-Inference decodes the DICOM images on the GPU to meet the time limit: the images are large (often JPEG 2000 compressed), and CPU decoding alone would take most of the allowed time.
+The winner's inference notebook decodes the DICOM images on the GPU.
 
-### Step 2: the classifier
+### Stage 2: classifier
 
-The backbone is **ConvNeXt-v1-small**, ImageNet-22k pretrained and fine-tuned on ImageNet-1k at 384 (`convnext_small.fb_in22k_ft_in1k_384` in timm). He also tried EfficientNet-B2/B4 and EfficientNetV2-S; ConvNeXt-small was the best and the most stable. Input size is **2048 × 1024**, about 14 times as many pixels as a 384 × 384 input.
+The backbone is **ConvNeXt-v1-small**, pretrained on ImageNet-22k and fine-tuned on ImageNet-1k at 384 pixels (`convnext_small.fb_in22k_ft_in1k_384` in timm). He also tried EfficientNet-B2 and B4 and EfficientNetV2-S; ConvNeXt-small gave the best and most stable results. The input size is **2048 × 1024**, which has $2{,}097{,}152 / 147{,}456 \approx 14.2$ times as many pixels as a 384 × 384 input.
 
 <Foundation id="cnn-backbones" />
 
-Heavy regularisation: dropout 0.5 before the classifier and stochastic depth (drop path) 0.2. Augmentation: a custom random crop without resizing, horizontal and vertical flips, downscaling, tone curve and brightness-contrast changes, shift-scale-rotate, elastic and grid distortion, and coarse dropout.
+Regularisation consisted of dropout 0.5 before the classifier and stochastic depth (drop path) 0.2. Augmentation consisted of a custom random crop without resizing (scale 0.5–1, aspect ratio 0.5–0.8, probability 0.4), horizontal and vertical flips, downscaling, tone-curve and brightness–contrast changes, shift-scale-rotate, elastic and grid distortion, and coarse dropout.
 
 <Foundation id="data-augmentation" />
 
-**Global max pooling** replaces the usual average pooling before the classifier. A cancer occupies a tiny region of the image; average pooling dilutes its features with those of thousands of normal locations, while max pooling passes on the strongest local response. The winner ranked generalised-mean and max pooling above average pooling and used max pooling in the final models.
+**Global max pooling** replaces the usual average pooling before the classifier. A cancer occupies a small region of the image. Average pooling mixes its features with those of all other locations, while max pooling passes on the strongest local response. The winner's expectation was that generalised-mean pooling would be best, followed by max and then average pooling; the final models used max pooling.
 
 <Deep title="Average, max and generalised-mean pooling" kind="math">
 
-A backbone produces a feature map $F \in \mathbb{R}^{C \times H \times W}$. Pooling reduces each channel $c$ to one number.
+A backbone produces a feature map $F \in \mathbb{R}^{C \times H \times W}$ with $C$ channels on an $H \times W$ grid. Pooling reduces each channel $c \in \{1, \dots, C\}$ to one number $z_c$:
 
-- Average: $z_c = \frac{1}{HW}\sum_{h,w} F_{c,h,w}$.
-- Max: $z_c = \max_{h,w} F_{c,h,w}$.
-- Generalised mean (GeM), for non-negative features and $q \ge 1$: $z_c = \left(\frac{1}{HW}\sum_{h,w} F_{c,h,w}^{\,q}\right)^{1/q}$.
+$$
+z_c^{\mathrm{avg}} = \frac{1}{HW}\sum_{h,w} F_{c,h,w},
+\qquad
+z_c^{\max} = \max_{h,w} F_{c,h,w} .
+$$
+
+For non-negative features and an exponent $q \ge 1$, the generalised mean (GeM) is
+
+$$
+z_c^{\mathrm{GeM}} = \Big(\frac{1}{HW}\sum_{h,w} F_{c,h,w}^{\,q}\Big)^{1/q}.
+$$
 
 GeM equals average pooling at $q = 1$ and tends to max pooling as $q \to \infty$, because the largest term dominates the sum of $q$-th powers.
 
-Suppose one location out of $HW = 2048$ (a 64 × 32 feature map from a 2048 × 1024 input at stride 32) has a strong response $a$ for a cancer channel and the rest have a small background value $b$. Average pooling gives $b + (a-b)/2048$, almost indistinguishable from a normal image. Max pooling gives $a$. With a lesion covering several feature-map cells, the ratio improves, but only by a factor of a few. For a small target in a large image, some form of max-like pooling is the natural choice; this is the same reasoning as multiple-instance learning, where a bag is positive if any instance is.
+At stride 32, a 2048 × 1024 input gives a feature map of $64 \times 32$, so $HW = 2048$. Suppose one location has a strong response $a$ in a channel that responds to cancer, and the other 2,047 locations have a background value $b$. Average pooling gives
+
+$$
+z^{\mathrm{avg}} = \frac{a + 2047\,b}{2048} = b + \frac{a - b}{2048},
+$$
+
+which differs from the value $b$ of a normal image by $(a-b)/2048$. Max pooling gives $a$. If the lesion covers $k$ cells, the difference under average pooling becomes $k(a-b)/2048$, which is still small for a few cells. Treating the image as a bag of locations that is positive if any location is positive is the assumption of multiple-instance learning, and max pooling implements it within one network.
 </Deep>
 
 <Foundation id="multiple-instance-learning" />
 
-### Step 3: imbalance and the soft positive target
+### Class imbalance and the soft positive target
 
-With 2% positives and batches of only 8 images (the memory limit at 2048 × 1024), many batches would contain no positive at all. The winner used a sampler with a positive-to-negative ratio of 1:7, which gives on average one positive per batch, and added a guarantee of at least one positive in each batch. He reports preferring the smallest positive fraction that still achieved this. Heavier oversampling shows the model the same few hundred cancers many more times per epoch, which encourages memorising them.
+The winner trained with batches of 8 images. With 2% positives, many such batches would contain no positive. If positives occurred at their natural rate, the probability that a batch of 8 contains none would be
+
+$$
+(1 - 0.02)^8 = 0.98^8 \approx 0.85 .
+$$
+
+The winner used a sampler with a positive-to-negative ratio of 1:7, which gives on average $8 \times \tfrac18 = 1$ positive per batch, and required at least one positive in every batch. He reports preferring the smallest positive fraction that achieved this.
 
 <Foundation id="soft-labels" />
 
-The positive label was **softened to 0.8** while negatives stayed at 0. His fold-0 comparison:
+The positive target was **softened to 0.8**, and negatives kept the target 0. His fold-0 comparison:
 
 | Target | PR-AUC | ROC-AUC | best pF1 | best threshold |
 | --- | --- | --- | --- | --- |
 | Label smoothing 0.1 (both classes) | 0.4755 | 0.9278 | 0.497 | 0.66 |
 | Positive target 0.8, negative 0 | 0.5401 | 0.9281 | 0.5714 | 0.49 |
 
-His later ablation reported the soft positive target was not clearly better than ordinary label smoothing across all folds, so the table should be read as one fold, not a general law.
+In a later update to the write-up, he reported that across folds the soft positive target was not clearly better than ordinary label smoothing. The table above describes one fold.
 
-<Deep title="What a soft target does to the optimum" kind="math">
+<Deep title="Effect of a soft target on the optimum of cross-entropy" kind="math">
 
-For one example with target $t \in [0,1]$ and prediction $p = \sigma(z)$, the binary cross-entropy is
+For one example with target $t \in [0,1]$, logit $z \in \mathbb{R}$ and prediction $p = \sigma(z) \in (0,1)$, the binary cross-entropy is
+
 $$
-L(p) = -\big[t \log p + (1-t)\log(1-p)\big].
+L(p) = -\big[\, t \log p + (1-t)\log(1-p) \,\big].
 $$
+
 Its derivative with respect to $p$ is
+
 $$
 \frac{dL}{dp} = -\frac{t}{p} + \frac{1-t}{1-p}.
 $$
-Setting this to zero: $t(1-p) = (1-t)p$, so $t - tp = p - tp$, and $p^* = t$. With respect to the logit, using $dp/dz = p(1-p)$:
+
+Setting this to zero and multiplying by $p(1-p)$:
+
 $$
-\frac{dL}{dz} = \frac{dL}{dp}\cdot p(1-p) = -t(1-p) + (1-t)p = p - t.
+-t(1-p) + (1-t)p = 0 .
 $$
-With $t = 1$, the gradient $p - 1$ is non-zero for every finite logit, so training keeps pushing positive logits upwards and the model becomes overconfident on the few training positives it has memorised. With $t = 0.8$, the gradient vanishes at $p = 0.8$ ($z = \ln 4 \approx 1.39$), and positives that are already well classified stop pulling on the weights. Negatives keep target 0, so the model is still pushed to be confident about normal breasts, which make up 98% of the data and where confident zeros directly reduce pFP.
+
+Expanding, the terms $\pm tp$ cancel, which leaves $p - t = 0$, so the minimum is at $p^* = t$.
+
+With respect to the logit, the chain rule with $dp/dz = p(1-p)$ gives
+
+$$
+\frac{dL}{dz} = \frac{dL}{dp}\cdot p(1-p) = -t(1-p) + (1-t)p = p - t .
+$$
+
+With $t = 1$, the gradient $p - 1$ is non-zero for every finite logit, so training continues to push the logits of positive examples upwards, including those of the few training positives the model already classifies correctly. With $t = 0.8$, the gradient vanishes at $p = 0.8$, which corresponds to the logit
+
+$$
+z = \ln\frac{0.8}{0.2} = \ln 4 \approx 1.39 .
+$$
+
+Negatives keep the target 0, so training still pushes the predictions for normal breasts towards 0, and these predictions make up pFP.
 </Deep>
 
-<Deep title="The training configuration" kind="code">
+<Deep title="Training configuration" kind="code">
 
-From the winner's write-up and repository. Model name as in timm; the other values as listed there.
+A Nolad illustration: a summary of the settings listed in the winner's write-up, written in the form of timm and PyTorch calls. The repository holds the actual configuration files.
 
 ```python
-# Nolad summary of the winner's configuration (see the repository for the actual config files)
+# A Nolad illustration of the winner's configuration (not the authors' code)
 model = timm.create_model(
     "convnext_small.fb_in22k_ft_in1k_384",
     pretrained=True, num_classes=1,
@@ -238,17 +309,18 @@ batch_size   = 8
 sampler      = "balanced, pos:neg = 1:7, at least one positive per batch"
 loss         = "BCE with positive target 0.8, negative target 0"
 optimizer    = SGD(momentum=0.9)
-schedule     = "cosine, 24 epochs, lr 1e-3 -> 1e-5, 4 warm-up epochs"   # later folds: 30 epochs, lr 3e-3, target 0.9
+schedule     = "cosine, 24 epochs, lr 1e-3 -> 1e-5, 4 warm-up epochs"
+# later folds: 30 epochs, lr 3e-3, positive target 0.9; folds 0 and 1 fine-tuned with target 0.9
 extras       = ["mixed precision (AMP)", "EMA of weights"]
 ```
-<Source href="https://github.com/dangnh0611/kaggle_rsna_breast_cancer">dangnh0611/kaggle_rsna_breast_cancer</Source>
+<Source href="https://github.com/dangnh0611/kaggle_rsna_breast_cancer">dangnh0611/kaggle_rsna_breast_cancer (settings summarised from the write-up and repository)</Source>
 </Deep>
 
 <Foundation id="weight-averaging" />
 
-### Step 4: external data
+### External data
 
-The winner added every public mammography dataset he could find:
+The winner added five public mammography datasets:
 
 | Dataset | Patients | Images | Positive images |
 | --- | --- | --- | --- |
@@ -259,15 +331,15 @@ The winner added every public mammography dataset he could find:
 | BMCD | 82 | 328 | 22 |
 | **Total** | 9,135 | 34,341 | 4,691 (13.7%) |
 
-Each training fold combined three folds of competition data with all external data, about 75,400 images of which about 7.4% were positive, against about 2% in the competition data alone. The external sets are much richer in cancers: they come from diagnostic collections, not screening. His ablation credits external data with about +0.02 F1 both out-of-fold and on the private leaderboard.
+Validation used four folds of the competition data. Each training split combined three competition folds with all external data: about 75,400 images, of which about 5,560 ($5{,}560 / 75{,}400 \approx 7.4\%$) were positive, against about 2% in the competition data alone. In his ablation, external data improved F1 by about 0.02, both out of fold and on the private leaderboard.
 
 <Foundation id="transfer-learning" />
 
-### Step 5: choosing checkpoints and the threshold
+### Checkpoint and threshold selection
 
-Four folds gave four models, each with several saved checkpoints. He evaluated 525 combinations of checkpoints on the out-of-fold predictions; the best combination scored pF1 0.5187 and the worst 0.4951. Per breast, the mean over its images gave the best aggregation.
+The four folds gave four models, each with several saved checkpoints. He evaluated 525 combinations of checkpoints on the out-of-fold predictions; the best combination scored pF1 0.5187 and the worst 0.4951. For each breast, the mean over its images gave the best aggregation.
 
-Then the threshold. His table:
+The threshold was chosen last:
 
 | Threshold | OOF pF1 | Public LB | Private LB |
 | --- | --- | --- | --- |
@@ -276,29 +348,27 @@ Then the threshold. His table:
 | 0.37 | 0.50 | 0.55 | 0.52 |
 | 0.40 | 0.4896 | 0.54 | 0.50 |
 
-The threshold with the best out-of-fold score (0.34) was not the one he submitted. He chose 0.31 because it scored best on the public leaderboard, and it turned out also to be best on the private set. He writes that he was lucky and that many teams had better models that they did not select.
+The threshold with the best out-of-fold score was 0.34. He submitted 0.31, which scored best on the public leaderboard, and it was also the best of the four on the private leaderboard. He writes that he was lucky and that many teams had better models that they did not select.
 
 <Foundation id="cross-validation" />
 
-<Callout kind="caution" title="What this means for the ranking">
-A difference of 0.02 in private pF1, which separates several places near the top, is the size of the change produced by moving the threshold by 0.03. The positive class in the private test set contains a few hundred breasts, so the leaderboard ranks are uncertain at this scale. The technical content of the top solutions is more informative than their order.
-</Callout>
+Across the four thresholds in the table, the private score ranges from 0.50 to 0.55. Moving the threshold by 0.03, from 0.31 to 0.34, lowers the private score by 0.02, and the out-of-fold score, which is computed on roughly 480 positive breasts, ranks the two thresholds in the opposite order.
 
-## Second place: pre-train, fine-tune, then combine views
+## Second place: pre-training, fine-tuning and multi-view models
 
-The CancerDetectMan team (sakaku and kapenon of Rist Inc.) also used ConvNeXt-v1-small, via mmclassification, and built models in stages:
+The CancerDetectMan team (sakaku and kapenon of Rist Inc.) also used ConvNeXt-v1-small, implemented in mmclassification, and trained in stages:
 
-1. **Single-view pre-training** at 1280 × 1280 with external data.
+1. **Single-view pre-training** at 1280 × 1280 with an external dataset (the collection published by the competitor pourchot).
 2. **Fine-tuning** at 1536 × 1536 on competition data only.
-3. **Dual-view and four-view models** that combine the CC and MLO images of a breast, and in the "multi-laterality" variant compare the left and right breast.
+3. **Dual-view and four-view models** that combine the CC and MLO images of a breast. The "multi-laterality" variant also compares the left and right breast of the same patient, whose images come from the same machine.
 
-A Faster R-CNN trained on about 300 hand-drawn boxes (tight around the breast, excluding the nipple) supplied crops, although the final model used no cropping because the size of the breast itself may carry information.
+A Faster R-CNN trained on about 300 hand-drawn boxes (tight around the breast, excluding the nipple) supplied crops. The final model used no cropping, because the team considered that the size of the breast may carry information. Augmentation consisted of shift-scale-rotate at any angle, random flips, RandAugment and random erasing.
 
-**Auxiliary targets.** The main loss was Equalization Loss (Tan et al., 2020), designed for long-tailed class distributions, on the cancer label. Auxiliary heads with weight 0.1 predicted BI-RADS, density, the "difficult negative" flag, the view, and invasiveness for positive cases. The dual-view model also received age, implant status and machine id.
+**Auxiliary targets.** The main loss on the cancer label was the Equalization Loss (Tan et al., 2020), designed for long-tailed class distributions. Auxiliary heads with weight 0.1 predicted BI-RADS, density and the "difficult negative" flag (each with Equalization Loss), and the view and, for positive cases, invasiveness (each with cross-entropy). The dual-view model also received age, implant status and machine id.
 
 <Foundation id="softmax-cross-entropy" />
 
-**Large batch.** AdamW at learning rate $1.5 \times 10^{-4}$, cosine schedule, 24 epochs and an effective batch size of 192 through gradient accumulation, which they describe as important. EMA of weights; test-time augmentation with a diagonal flip.
+**Training.** AdamW at learning rate $1.5 \times 10^{-4}$, cosine schedule, 24 epochs and an effective batch size of 192 through gradient accumulation; the team describes the large batch as important. Weights were averaged by EMA, and test-time augmentation used a diagonal flip. Inference used Theo Viel's public notebook for fast DICOM decoding with DALI.
 
 | Model | Public | Private |
 | --- | --- | --- |
@@ -307,24 +377,24 @@ A Faster R-CNN trained on about 300 hand-drawn boxes (tight around the breast, e
 | Dual view | 0.57 | 0.52 |
 | Multi-laterality dual view | 0.52 | 0.53 |
 
-They submitted a single high-resolution model rather than an ensemble at lower resolution, and state that it reproduces on one RTX 3090. Their list of things that did not help is long: external data in the fine-tuning stage, rule-based cropping, upsampling positives, EfficientNet, SE-ResNeXt and Swin backbones, mixup, max pooling, the Lion optimiser, pseudo-labels for BI-RADS and density, per-machine models and SWA.
+They submitted a single high-resolution model in preference to an ensemble at lower resolution, and state that it can be reproduced on one RTX 3090. The following did not help them: external data in the fine-tuning stage, concatenated crops, rule-based cropping, upsampling of positives, EfficientNet, SE-ResNeXt and Swin backbones, mixup, max pooling, the Lion optimiser, pseudo-labels for BI-RADS and density, per-machine models, and SWA.
 
 <Foundation id="ensembling-tta" />
 
-## How this compares with other competitions
+## Comparison with other competitions
 
-- **ISIC 2024 (skin lesion crops)** faced the same extreme imbalance but worked with small images and many tabular features; gradient-boosted trees on image-model outputs won there. Mammograms carry the evidence in fine detail within one large image, so the image model itself had to carry the result.
-- **UBC-OCEAN and prostate grading (PANDA)** also work with very large images, but there the images are too big even for 2048-pixel inputs and must be tiled, which turns the problem into multiple-instance learning. Mammograms fit into one GPU pass at 2048 × 1024, and max pooling approximates the MIL "any instance" rule inside a single network.
-- **The metric** is the largest difference. Competitions scored by AUC (ISIC, melanoma 2020) reward ranking; pF1 rewards the choice of operating point, which made the leaderboard noisy.
+- **ISIC 2024 (skin lesion crops)** had a similar class imbalance, but its images are small crops accompanied by many tabular features, and the winner combined gradient-boosted trees with image-model predictions used as features. In mammography the evidence lies in fine detail within one large image, and both top solutions here are image models without a tabular stage.
+- **UBC-OCEAN and prostate grading (PANDA)** also involve very large images, which are too large even for a 2048-pixel input and were divided into tiles, making the problem one of multiple-instance learning. A mammogram fits into one GPU pass at 2048 × 1024, and max pooling applies the multiple-instance rule within a single network.
+- **The metric.** SIIM-ISIC 2020 was scored by ROC AUC and ISIC 2024 by partial AUC above 80% sensitivity; both depend only on the ranking of the predictions. pF1 depends also on the conversion of probabilities into decisions, and the winner's threshold table shows the size of that effect.
 
 ## Compute and deployment
 
-| Setting | What the solution needs |
+| Setting | Requirements |
 | --- | --- |
-| Competition | A Kaggle GPU notebook for inference with GPU image decoding; training on a single 24 GB-class GPU per fold. |
-| Hospital research group | One RTX 3090/4090 or A100 suffices to reproduce a single model on local data. |
-| Screening programme | Validation on local vendors and populations, calibration, and a threshold set for recall rate and sensitivity; regulatory approval. |
+| Competition | A Kaggle GPU notebook for inference, with GPU decoding of the DICOM images. Training at 2048 × 1024 with batch size 8 and mixed precision. |
+| Hospital research group | The second-place team reports that its single model can be reproduced on one RTX 3090. |
+| Screening programme | Validation on local vendors and populations, calibration, a threshold set for recall rate and sensitivity, and regulatory approval. |
 
-<Callout kind="deploy" title="The minimum useful version">
-A breast-cropping step, one ConvNeXt-small at 2048 × 1024 with max pooling, external data, and a balanced sampler reproduces most of the result. The threshold must be chosen for the clinical purpose (for example, a target sensitivity), not for pF1, and should be re-estimated on local data.
+<Callout kind="deploy" title="Reduced configuration">
+A breast-cropping step, one ConvNeXt-small at 2048 × 1024 with max pooling, external data and a balanced sampler form a single-model version of the winning pipeline. The threshold has to be chosen for the clinical purpose, for example a target sensitivity, and estimated on local data.
 </Callout>

@@ -2,28 +2,110 @@
 id: quadratic-weighted-kappa
 title: "Quadratic weighted kappa"
 kind: math
-summary: "Quadratic weighted kappa measures agreement between two graders on an ordered scale, correcting for chance and penalising disagreements by the square of their distance."
+summary: "Quadratic weighted kappa measures agreement between two sets of grades on an ordered scale, corrected for the agreement expected by chance, with each disagreement penalised by the square of its distance. The primer defines the observed and expected matrices, works through a small example, and relates the metric to squared error."
 ---
 
-For ordered grades $0,\dots,N-1$ (diabetic retinopathy 0–4, ISUP grade 0–5), let:
+### Setting
 
-- $O_{ij}$ be the number of cases the reference graded $i$ and the model graded $j$ (the confusion matrix);
-- $E_{ij}$ be the count expected if the two graders were independent: the outer product of the two marginal histograms, scaled so that $\sum E = \sum O$;
-- $w_{ij} = \dfrac{(i-j)^2}{(N-1)^2}$ be the disagreement weight.
+Quadratic weighted kappa (QWK) compares two gradings of the same $n$ cases on an ordered scale of $N$ grades, labelled $0, 1, \dots, N-1$. In a competition the two gradings are the reference labels and the model's predictions. Examples are diabetic retinopathy severity (grades 0–4, $N = 5$) and the ISUP grade group of prostate biopsies (grades 0–5, $N = 6$).
 
-Then
+### Definition
+
+Three $N \times N$ matrices are needed, indexed by the reference grade $i$ and the predicted grade $j$.
+
+**Observed matrix.** $O_{ij}$ is the number of cases with reference grade $i$ and predicted grade $j$. This is the confusion matrix, and $\sum_{i,j} O_{ij} = n$.
+
+**Expected matrix.** Let $r_i = \sum_j O_{ij}$ be the number of cases with reference grade $i$ (row totals) and $c_j = \sum_i O_{ij}$ the number predicted as grade $j$ (column totals). If the predictions were independent of the reference but kept the same totals, the expected count in cell $(i,j)$ would be
 
 $$
-\kappa = 1 - \frac{\sum_{i,j} w_{ij}\,O_{ij}}{\sum_{i,j} w_{ij}\,E_{ij}} .
+E_{ij} = \frac{r_i\, c_j}{n}.
 $$
 
-$\kappa = 1$ is perfect agreement, $\kappa = 0$ is chance agreement, and negative values are worse than chance.
+The entries of $E$ also sum to $n$.
 
-<Plot series={[{fn: "qwk-weight", params: {n: 5}, label: "N = 5 grades"}, {fn: "qwk-weight", params: {n: 6}, label: "N = 6 grades"}]} x={[0, 5]} y={[0, 1]} xLabel="distance between the two grades |i − j|" yLabel="weight w" caption="A two-grade error costs four times a one-grade error." />
+**Weight matrix.** The penalty for a disagreement grows with the square of its size:
+
+$$
+w_{ij} = \frac{(i-j)^2}{(N-1)^2}, \qquad 0 \le w_{ij} \le 1 .
+$$
+
+The diagonal has weight 0, and the largest disagreement, between grades $0$ and $N-1$, has weight 1.
+
+**Kappa.** With the two weighted sums
+
+$$
+D_O = \sum_{i,j} w_{ij}\,O_{ij}, \qquad D_E = \sum_{i,j} w_{ij}\,E_{ij},
+$$
+
+the metric is
+
+$$
+\kappa = 1 - \frac{D_O}{D_E}.
+$$
+
+$D_O$ is the observed weighted disagreement and $D_E$ the disagreement expected by chance. $\kappa = 1$ when every prediction equals its reference ($D_O = 0$), $\kappa = 0$ when the observed disagreement equals the chance level, and $\kappa \lt 0$ when predictions disagree more than chance.
+
+<Plot series={[{fn: "qwk-weight", params: {n: 5}, label: "N = 5 grades"}, {fn: "qwk-weight", params: {n: 6}, label: "N = 6 grades"}]} x={[0, 5]} y={[0, 1]} xLabel="distance between the two grades |i − j|" yLabel="weight w" caption="Quadratic disagreement weight as a function of the distance between grades. A disagreement of two grades has four times the weight of a disagreement of one grade." />
+
+### Worked example
+
+Take $N = 3$ grades and $n = 12$ cases with the observed matrix (rows are reference grades, columns predicted grades)
+
+$$
+O = \begin{pmatrix} 4 & 1 & 0 \\ 1 & 2 & 1 \\ 0 & 1 & 2 \end{pmatrix}.
+$$
+
+The row totals are $r = (5, 4, 3)$ and the column totals $c = (5, 4, 3)$. The weights are $w_{ij} = (i-j)^2/4$: 0 on the diagonal, $\tfrac14$ for neighbouring grades, and 1 for grades 0 and 2.
+
+*Observed disagreement.* Four cases are one grade off and none are two grades off:
+
+$$
+D_O = 4 \times \tfrac14 + 0 \times 1 = 1 .
+$$
+
+*Expected matrix.* Each entry is $r_i c_j / 12$:
+
+$$
+E = \begin{pmatrix} 2.083 & 1.667 & 1.250 \\ 1.667 & 1.333 & 1.000 \\ 1.250 & 1.000 & 0.750 \end{pmatrix}.
+$$
+
+*Expected disagreement.* The one-grade-off cells sum to $1.667 + 1.667 + 1.000 + 1.000 = 5.333$, and the two-grade-off cells to $1.250 + 1.250 = 2.500$:
+
+$$
+D_E = 5.333 \times \tfrac14 + 2.500 \times 1 = 1.333 + 2.500 = 3.833 .
+$$
+
+*Kappa.*
+
+$$
+\kappa = 1 - \frac{1}{3.833} = 1 - 0.261 = 0.739 .
+$$
+
+### Relation to squared error
+
+Write $a_t$ and $b_t$ for the reference and predicted grades of case $t$, $t = 1, \dots, n$. Each case contributes $w_{a_t b_t}$ to $D_O$, so
+
+$$
+D_O = \sum_{t=1}^{n} \frac{(a_t - b_t)^2}{(N-1)^2}.
+$$
+
+Dividing by $n$ gives the mean squared error between the gradings, scaled by $(N-1)^{-2}$:
+
+$$
+\frac{D_O}{n} = \frac{\mathrm{MSE}}{(N-1)^2}, \qquad \mathrm{MSE} = \frac{1}{n}\sum_{t=1}^{n}(a_t - b_t)^2 .
+$$
+
+By the same argument, $D_E/n$ is the scaled mean squared difference between a reference grade and a predicted grade drawn independently from their marginal distributions. The factor $n (N-1)^2$ cancels in the ratio, so
+
+$$
+\kappa = 1 - \frac{\mathrm{MSE}}{\mathrm{MSE}_{\mathrm{chance}}} .
+$$
+
+For fixed marginal distributions, maximising QWK is therefore equivalent to minimising the squared error between integer grades.
 
 ### Consequences for modelling
 
-- **Regression beats classification.** Because the penalty grows with distance, predicting a continuous grade and rounding it is natural. The APTOS winner trained with a smooth L1 regression loss; PANDA solutions combined regression heads with classification heads.
-- **Thresholds are tunable.** Continuous predictions are converted to grades by thresholds, initially $0.5, 1.5, 2.5, \dots$. Moving them changes the confusion matrix and can raise $\kappa$. The APTOS winner moved the first threshold from 0.5 to 0.7 hours before the deadline.
-- **Small test sets make kappa noisy.** The denominator depends on the marginal distribution of grades. In PANDA, with about 500 images in each of the public and private test sets, the Kaggle leaderboard moved by 0.005 when only the random seed changed.
-- **A differentiable version can be trained directly.** Replacing counts by expected counts under the model's predicted probabilities gives a "kappa loss", which the PANDA 11th-place solution found better than cross-entropy, mean squared error or binning losses.
+- **Regression outputs.** Because the penalty depends on squared distance, a common approach predicts a continuous grade with a regression loss and rounds it. The APTOS 2019 winner trained with a smooth L1 regression loss on the grade. Several PANDA solutions combined regression heads with classification heads.
+- **Thresholds.** A continuous prediction $s$ is converted to a grade by thresholds $t_1 \lt t_2 \lt \dots \lt t_{N-1}$: grade $g$ is assigned when $t_g \le s \lt t_{g+1}$, with $t_0 = -\infty$ and $t_N = +\infty$. The default thresholds are $0.5, 1.5, 2.5, \dots$. Moving them changes the confusion matrix and can raise $\kappa$. The APTOS 2019 winner moved only the first threshold, from 0.5 to 0.7, and his private score rose from 0.935 to 0.936.
+- **Variance on small test sets.** $D_E$ depends on the marginal distributions of grades, which vary between small samples. The PANDA public and private test sets had about 500 slides each, and participants in that competition noted that this is small for a stable QWK estimate.
+- **A differentiable form.** $\kappa$ computed from rounded grades is piecewise constant in the model's outputs and has no useful gradient. One smooth version replaces the counts $O_{ij}$ by sums of predicted probabilities: case $t$ adds its predicted probability of grade $j$ to cell $(a_t, j)$. Another uses the relation to squared error with continuous predictions in place of $b_t$. Either way, $1 - \kappa$ can be minimised as a loss. In PANDA, the 11th-place solution (iafoss) trained with such a kappa loss and reported that it worked better than sorted binning, binning, mean squared error and cross-entropy.

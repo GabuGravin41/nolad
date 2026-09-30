@@ -2,59 +2,143 @@
 id: binary-cross-entropy
 title: "Sigmoid outputs and binary cross-entropy"
 kind: math
-summary: "For a yes/no label, the model outputs a probability through a sigmoid and is trained by maximising the likelihood of the observed labels. The resulting loss is binary cross-entropy, also called log loss."
+summary: "Covers how a network outputs a probability for a yes/no label through the sigmoid function, and derives the binary cross-entropy (log loss) from the likelihood of the observed labels, with its minimiser, its gradient and its numerically stable form."
 ---
 
 ### From a score to a probability
 
-A network's last layer produces an unbounded real number $z$, the **logit**. The **sigmoid** maps it into $(0,1)$:
+For a binary label $y \in \{0, 1\}$, the last layer of a network produces a real number $z \in \mathbb{R}$, the **logit**. The **sigmoid** function maps it to a probability $p \in (0,1)$:
 
 $$
 p = \sigma(z) = \frac{1}{1+e^{-z}} .
 $$
 
-Its inverse is the log-odds, $z = \log\frac{p}{1-p}$, so the logit is literally the logarithm of the odds that the label is positive.
+Solving for $z$ gives the inverse,
+
+$$
+z = \log\frac{p}{1-p},
+$$
+
+the logarithm of the odds $p/(1-p)$. A logit of 0 corresponds to $p = 0.5$, a logit of 2 to $p = 1/(1+e^{-2}) \approx 0.881$, and a logit of $-2$ to $p \approx 0.119$.
 
 <Plot series={[{fn: "sigmoid", label: "σ(z)"}]} x={[-8, 8]} y={[0, 1]} xLabel="logit z" yLabel="probability p" markers={[{x: 0, label: "p = 0.5"}]} />
 
+The derivative of the sigmoid, used below, is
+
+$$
+\sigma'(z) = \frac{e^{-z}}{(1+e^{-z})^2} = \sigma(z)\,\big(1-\sigma(z)\big) .
+$$
+
 ### From likelihood to loss
 
-Model the label $y \in \{0,1\}$ as a Bernoulli random variable with success probability $p$. The probability of observing $y$ is
+Model the label as a Bernoulli random variable that equals 1 with probability $p$. The probability of the observed value $y$ is
 
 $$
 P(y \mid p) = p^{\,y}(1-p)^{1-y},
 $$
 
-which equals $p$ when $y=1$ and $1-p$ when $y=0$. For $N$ independent examples, the likelihood of all labels is the product $\prod_i p_i^{y_i}(1-p_i)^{1-y_i}$. Maximising a product is awkward; its logarithm turns it into a sum and has the same maximiser. Maximising the log-likelihood is the same as minimising its negative, averaged over examples:
+which equals $p$ when $y=1$ and $1-p$ when $y=0$. For $N$ independent examples with labels $y_i$ and predicted probabilities $p_i$, the likelihood of all the labels is the product
+
+$$
+\prod_{i=1}^{N} p_i^{\,y_i}(1-p_i)^{1-y_i} .
+$$
+
+The logarithm is increasing, so the log-likelihood has the same maximiser as the likelihood, and it turns the product into a sum:
+
+$$
+\sum_{i=1}^{N}\Big[\,y_i\log p_i + (1-y_i)\log(1-p_i)\Big] .
+$$
+
+Maximising this is the same as minimising its negative. Dividing by $N$ gives the mean loss per example:
 
 $$
 \mathcal{L}_{\text{BCE}} = -\frac{1}{N}\sum_{i=1}^{N}\Big[\,y_i\log p_i + (1-y_i)\log(1-p_i)\Big].
 $$
 
-This is **binary cross-entropy (BCE)**, or **log loss**. Several RSNA competitions use it, weighted, as the leaderboard metric.
+This is **binary cross-entropy (BCE)**, also called **log loss**. Logarithms are natural logarithms throughout.
 
-<Plot series={[{fn: "bce-pos", label: "loss when y = 1: −log p"}, {fn: "bce-neg", label: "loss when y = 0: −log(1 − p)"}]} x={[0.001, 0.999]} y={[0, 5]} xLabel="predicted probability p" yLabel="loss" caption="Log loss is small for confident correct predictions and grows without bound for confident wrong ones." />
+<Plot series={[{fn: "bce-pos", label: "loss when y = 1: −log p"}, {fn: "bce-neg", label: "loss when y = 0: −log(1 − p)"}]} x={[0.001, 0.999]} y={[0, 5]} xLabel="predicted probability p" yLabel="loss" caption="Log loss for a single example. The loss is small for confident correct predictions and grows without bound as a wrong prediction becomes more confident." />
 
-### What the loss rewards
+For a positive example ($y = 1$) the loss is $-\log p$:
 
-Consider many examples that look identical to the model, of which a fraction $\pi$ are positive. If the model predicts the same $q$ for all of them, the expected loss is
+| Predicted $p$ | Loss $-\log p$ |
+| --- | --- |
+| 0.99 | 0.010 |
+| 0.9 | 0.105 |
+| 0.5 | 0.693 |
+| 0.1 | 2.303 |
+| 0.001 | 6.908 |
+
+One positive example predicted at $p = 0.001$ costs as much as $6.908/0.105 \approx 66$ positive examples predicted at $p = 0.9$.
+
+### The minimiser is the true frequency
+
+Consider many examples that the model cannot distinguish, of which a fraction $\pi \in (0,1)$ are positive. If the model predicts the same probability $q \in (0,1)$ for all of them, the mean loss is
 
 $$
 L(q) = -\big[\pi\log q + (1-\pi)\log(1-q)\big].
 $$
 
-Setting $\frac{dL}{dq} = -\frac{\pi}{q} + \frac{1-\pi}{1-q} = 0$ gives $q = \pi$. Log loss is minimised by predicting the true frequency: it is a **proper scoring rule**, and it trains outputs that are calibrated probabilities. It also punishes overconfidence severely. Predicting $q = 0.001$ for an example that turns out positive costs $-\log 0.001 \approx 6.9$, as much as about ten confident correct predictions earn back. This is why competitions scored by log loss reward averaging, label smoothing and clipping predictions away from 0 and 1.
-
-### The gradient
-
-With respect to the logit, the gradient is (see the worked example under gradient descent)
+Its derivative is
 
 $$
-\frac{\partial \ell}{\partial z} = p - y .
+L'(q) = -\frac{\pi}{q} + \frac{1-\pi}{1-q} .
 $$
 
-In PyTorch, `BCEWithLogitsLoss` takes $z$ rather than $p$ and computes the loss in a numerically stable way, which is why solutions pass raw logits to the loss.
+Setting $L'(q) = 0$ and multiplying by $q(1-q)$ gives $-\pi(1-q) + (1-\pi)q = 0$, which simplifies to $q = \pi$. The second derivative, $\pi/q^2 + (1-\pi)/(1-q)^2$, is positive, so this is the minimum.
+
+For $\pi = 0.2$:
+
+- $L(0.2) = -[0.2\log 0.2 + 0.8\log 0.8] = 0.322 + 0.179 = 0.500$,
+- $L(0.1) = -[0.2\log 0.1 + 0.8\log 0.9] = 0.461 + 0.084 = 0.545$,
+- $L(0.5) = \log 2 = 0.693$.
+
+A loss that is minimised in expectation by the true probability is called a **proper scoring rule**. Training with log loss therefore pushes outputs towards calibrated probabilities.
+
+Log loss penalises overconfidence heavily, and competitions scored by it reward measures that keep predictions away from 0 and 1. Clipping predictions to $[0.01, 0.99]$ bounds the loss of any single example by $-\log 0.01 = 4.61$, at a cost of $-\log 0.99 = 0.010$ on each example that would otherwise have been predicted with certainty. Averaging the predictions of several models also helps: $-\log$ is convex, so by Jensen's inequality the loss of an averaged prediction is at most the average of the individual losses.
+
+### The gradient with respect to the logit
+
+For one example, write the loss as a function of the logit, $\ell(z) = -[\,y\log\sigma(z) + (1-y)\log(1-\sigma(z))\,]$. Using $\sigma' = \sigma(1-\sigma)$,
+
+$$
+\frac{d}{dz}\log\sigma(z) = 1-\sigma(z), \qquad \frac{d}{dz}\log\big(1-\sigma(z)\big) = -\sigma(z) .
+$$
+
+Substituting these,
+
+$$
+\frac{d\ell}{dz} = -\big[\,y\,(1-\sigma(z)) - (1-y)\,\sigma(z)\,\big] .
+$$
+
+Expanding the bracket, the terms $y\,\sigma(z)$ cancel:
+
+$$
+\frac{d\ell}{dz} = \sigma(z) - y = p - y .
+$$
+
+The gradient is the prediction error. It is bounded between $-1$ and $1$, and it is largest when the prediction is confidently wrong.
+
+### Numerically stable computation
+
+Computing $\sigma(z)$ first and then taking logarithms fails for large $|z|$. For $z = 20$, the exact value is $1 - p \approx 2.1 \times 10^{-9}$, but $p$ rounds to exactly 1 in 32-bit arithmetic, so for $y = 0$ the computed loss $-\log(1-p)$ is infinite, although the true loss is about 20. The loss can instead be written directly in terms of $z$. From $\log\sigma(z) = -\log(1+e^{-z})$ and $\log(1-\sigma(z)) = -z - \log(1+e^{-z})$,
+
+$$
+\ell(z) = (1-y)\,z + \log\big(1+e^{-z}\big) .
+$$
+
+For $z < 0$ the exponential $e^{-z}$ can overflow. Rewriting $\log(1+e^{-z}) = -z + \log(1+e^{z})$ for negative $z$ gives a single expression valid for all $z$:
+
+$$
+\ell(z) = \max(z, 0) - y\,z + \log\big(1+e^{-|z|}\big) ,
+$$
+
+in which the exponential never exceeds 1. PyTorch's `BCEWithLogitsLoss` computes this form, which is why solutions pass raw logits to the loss rather than probabilities.
 
 ### Multi-label problems
 
-When several labels can be true at once (a CT slice can show both subdural and subarachnoid haemorrhage), each label gets its own logit and its own sigmoid, and the losses are summed. This differs from softmax classification, where exactly one class is true.
+When several labels can be true at once, each label $j$ receives its own logit $z_j$, its own sigmoid and its own binary cross-entropy, and the losses are summed or averaged over labels. A head CT slice can show both subdural and subarachnoid haemorrhage, and the aneurysm competition had 14 binary labels per series. This differs from multi-class classification, where exactly one class is true and a softmax is used.
+
+### Use in the reports
+
+Binary cross-entropy is the standard training loss for binary and multi-label outputs in the reports. Several RSNA competitions also used a weighted version of log loss as the leaderboard metric, described in the foundation on weighted log loss.

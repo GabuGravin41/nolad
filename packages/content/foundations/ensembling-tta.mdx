@@ -2,31 +2,94 @@
 id: ensembling-tta
 title: "Ensembles and test-time augmentation"
 kind: math
-summary: "Averaging the predictions of several models, or of one model on several transformed copies of the input, reduces the variance of the errors. The gain depends on how correlated the models' errors are."
+summary: "An ensemble averages the predictions of several models, and test-time augmentation averages the predictions of one model on transformed copies of the input. The reduction in error variance depends on the number of predictions averaged and on the correlation between their errors."
 ---
 
-### Why averaging helps
+### Definitions
 
-Suppose $M$ models each predict $\hat y_m = y + \varepsilon_m$, with errors of variance $\sigma^2$ and pairwise correlation $\rho$. The average has error $\bar\varepsilon = \frac1M\sum_m\varepsilon_m$ with variance
+An **ensemble** of $M$ models $f_1, \dots, f_M$ predicts, for an input $x$, the average
 
 $$
-\mathrm{Var}(\bar\varepsilon) = \frac{1}{M^2}\Big(M\sigma^2 + M(M-1)\rho\sigma^2\Big) = \rho\,\sigma^2 + \frac{1-\rho}{M}\,\sigma^2 .
+\bar f(x) = \frac{1}{M}\sum_{m=1}^{M} f_m(x).
 $$
 
-As $M$ grows, the second term vanishes but the first does not. Ten copies of the same model trained with different seeds ($\rho$ high) give less than ten different architectures or input representations ($\rho$ lower). This is why winners assemble models that differ in backbone, resolution, input representation or training data, and why the HMS winners emphasised diversity.
+A **weighted ensemble** uses weights $w_m \ge 0$ with $\sum_m w_m = 1$ and predicts $\sum_m w_m f_m(x)$. The members may differ in architecture, input resolution, input representation, training data or only in the random seed.
 
-### Averaging on different scales
+**Test-time augmentation (TTA)** applies one model to several transformed copies of the same input (flips, rotations, small shifts) and averages the results. It is an ensemble whose members share their weights.
 
-Models trained with different losses or samplers output scores on different scales. Three normalisations appear in these reports:
+### Variance of an averaged prediction
 
-- **Rank averaging** replaces each model's scores by their ranks before averaging. Suitable for AUC.
-- **Quantile matching** (CZII): sort the values of model A and model B, then replace each value of B by the value of A at the same rank, so both have A's distribution before averaging voxel maps.
-- **Stacking**: a second-stage model (a linear regression, a GBDT, a small neural network) learns how to combine OOF predictions. The HMS winners used non-negative least squares per target.
+Let $y \in \mathbb{R}$ be the target and let model $m$ predict $\hat y_m = y + \varepsilon_m$, where the error $\varepsilon_m$ is a random variable with mean $0$ and variance $\sigma^2$. Assume every pair of distinct errors has the same correlation $\rho$, so that $\mathrm{Cov}(\varepsilon_m, \varepsilon_n) = \rho\,\sigma^2$ for $m \ne n$. The error of the average is $\bar\varepsilon = \frac1M\sum_m \varepsilon_m$.
+
+A constant factor comes out of a variance squared:
+
+$$
+\mathrm{Var}(\bar\varepsilon) = \frac{1}{M^2}\,\mathrm{Var}\Big(\sum_{m=1}^{M}\varepsilon_m\Big).
+$$
+
+The variance of a sum is the sum of the $M$ variances plus the $M(M-1)$ covariances between distinct pairs:
+
+$$
+\mathrm{Var}\Big(\sum_{m=1}^{M}\varepsilon_m\Big) = M\sigma^2 + M(M-1)\,\rho\,\sigma^2 .
+$$
+
+Substituting and dividing by $M^2$:
+
+$$
+\mathrm{Var}(\bar\varepsilon) = \frac{\sigma^2}{M} + \frac{M-1}{M}\,\rho\,\sigma^2 .
+$$
+
+Collecting the terms in $\rho$:
+
+$$
+\mathrm{Var}(\bar\varepsilon) = \rho\,\sigma^2 + \frac{1-\rho}{M}\,\sigma^2 .
+$$
+
+As $M$ grows, the second term tends to zero and the first remains. The variance of the ensemble therefore cannot fall below $\rho\,\sigma^2$, however many members are added. With $\rho = 0$ the variance is $\sigma^2/M$; with $\rho = 1$ averaging has no effect.
+
+Worked numbers, with $\sigma^2 = 1$ and $M = 10$:
+
+- $\rho = 0.8$ (for example, the same architecture trained with ten seeds): $0.8 + 0.2/10 = 0.82$.
+- $\rho = 0.4$ (members that differ more): $0.4 + 0.6/10 = 0.46$.
+
+If every member has the same systematic error (bias) $b$, the averaged error also has mean $b$. Averaging reduces the variance of the errors and leaves a shared bias unchanged.
+
+Members that differ in architecture, resolution, input representation or training data tend to have less correlated errors than members that differ only in the random seed, and by the formula above they reduce the variance more. The winning team in the HMS brain-activity competition wrote that diversity among its models mattered because the competition metric, a KL divergence, is sensitive to extreme errors.
+
+### Combining predictions on different scales
+
+Models trained with different losses or sampling schemes produce scores on different scales, and a plain average is then dominated by the model with the widest range. Three remedies appear in the reports.
+
+**Rank averaging.** For $N$ test cases, let $s_m(i)$ be the score of model $m$ for case $i$, and let $r_m(i) \in \{1, \dots, N\}$ be its rank among model $m$'s scores (1 for the lowest). The ensemble score is the average of the normalised ranks $r_m(i)/N$. For example, with scores $(0.90, 0.60, 0.10)$ from model A and $(0.020, 0.030, 0.010)$ from model B, the plain average $(0.460, 0.315, 0.055)$ follows model A almost entirely. The ranks are $(3, 2, 1)$ and $(2, 3, 1)$, and their average $(2.5, 2.5, 1)$ gives both models equal influence. ROC AUC depends only on the order of the scores, so rank averaging is suited to it. The ISIC 2024 winner combined 150 gradient-boosted models by averaging their percentile ranks with equal weights.
+
+**Quantile matching.** Sort the $n$ values predicted by model A, $a_{(1)} \le a_{(2)} \le \dots \le a_{(n)}$, and replace the value of model B with rank $k$ by $a_{(k)}$. The mapped values of B keep B's ordering and have exactly A's distribution, and the two sets of values can then be averaged. The CZII cryo-ET winners applied this mapping per particle class to the voxel-wise outputs of their segmentation and detection models before averaging them.
+
+**Stacking.** A second-stage model learns how to combine the members' predictions. It is trained on **out-of-fold (OOF)** predictions: in $K$-fold cross-validation each training example receives a prediction from the model trained on the other $K-1$ folds, which never saw that example. Predictions made on a model's own training data are more accurate than its predictions on new data, and a second stage trained on them would give too much weight to the members that overfit most. The HMS winners fitted a non-negative linear regression per target class, which chooses weights $w_m \ge 0$ to minimise
+
+$$
+\sum_{i} \Big( y_i - \sum_{m} w_m\, s_m(i) \Big)^2 .
+$$
 
 ### Test-time augmentation
 
-**TTA** predicts on several transformed copies of each input (flips, rotations, small shifts) and averages, which ensembles the model with itself. It helps when the transformations are ones the model was trained to be invariant to. For anatomy with left–right meaning, flipping requires swapping the left and right labels of the outputs, as in the aneurysm runner-up's 8-fold TTA.
+Let $T_1, \dots, T_K$ be transformations of the input. For an output that does not change under the transformations, such as the class of a whole image, the TTA prediction is
 
-### The cost
+$$
+\hat p(x) = \frac{1}{K}\sum_{k=1}^{K} f\big(T_k x\big).
+$$
 
-Every ensemble member and every TTA copy multiplies inference time. Under a fixed budget, a smaller single model at higher resolution can beat an ensemble at lower resolution; the mammography runner-up chose exactly that. The deployability card on each report records how large the winning ensemble was and whether a smaller configuration came close.
+For an output defined on the input grid, such as a segmentation mask, each prediction must be mapped back to the original geometry before averaging:
+
+$$
+\hat p(x) = \frac{1}{K}\sum_{k=1}^{K} T_k^{-1} f\big(T_k x\big).
+$$
+
+For a horizontal flip of an image of width $W$, $T$ moves column $j$ to column $W + 1 - j$, and $T^{-1} = T$.
+
+When outputs have a left–right meaning, a flip also exchanges the meaning of the outputs. If $\Pi$ is the permutation that swaps each left output with its right counterpart, the prediction on the flipped input enters the average as $\Pi f(Tx)$. The second-place team in the RSNA intracranial aneurysm competition used 8 TTA variants with this exchange of labels.
+
+TTA helps when the model has learned to be approximately invariant to the transformations, usually because they were used as training augmentations. The copies share one set of weights, so their errors are usually strongly correlated, and by the variance formula above the reduction is correspondingly limited.
+
+### Inference cost
+
+An ensemble of $M$ models, each applied with $K$ TTA copies, needs $M K$ forward passes per input. At 0.5 s per pass, four models with eight TTA copies take $4 \times 8 \times 0.5 = 16$ s per input. Under a fixed time limit, members and copies compete with input resolution for the same budget. The second-place team in the RSNA mammography competition chose a single model at high resolution over an ensemble at lower resolution, and the second-place team in the aneurysm competition reduced its ensemble to two folds to stay within the time limit.

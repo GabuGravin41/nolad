@@ -1,6 +1,6 @@
 ---
 slug: isic-2024-challenge
-title: "ISIC 2024 Skin Cancer Detection with 3D-TBP: gradient-boosted trees, small image models and the ugly duckling"
+title: "ISIC 2024 Skin Cancer Detection with 3D-TBP (2024)"
 shortTitle: ISIC 2024 Skin Cancer Detection
 kaggleSlug: isic-2024-challenge
 kaggleUrl: https://www.kaggle.com/competitions/isic-2024-challenge
@@ -26,10 +26,10 @@ techniques:
   - leaderboard-discipline
 metric:
   name: Partial AUC above 80% sensitivity
-  summary: "Area of the ROC curve lying above a true-positive rate of 0.8; scores range from 0 to 0.2."
+  summary: "The area between the ROC curve and the horizontal line at a true-positive rate of 0.8. The score ranges from 0 to 0.2."
 constraints: { runtime: "Kaggle code competition limit", hardware: "Kaggle notebook", internet: false }
-summary: "Decide which skin lesions, photographed by a whole-body imaging system at roughly phone-camera quality, are malignant. Only about one lesion in a thousand is. The winner combined gradient-boosted trees on lesion measurements with two small image models, and added features that describe how unusual a lesion is compared with the same patient's other lesions."
-winningIdea: "Feed image-model predictions into gradient-boosted trees as noisy, standardised features, and describe each lesion relative to the rest of the same patient's skin, the dermatologist's 'ugly duckling' sign expressed as local-outlier and patient-normalised features."
+summary: "The competition asked participants to identify malignant skin lesions among lesion crops from 3D total-body photographs, whose image quality resembles that of phone photographs, using the images and tabular measurements of each lesion; about one lesion in a thousand was malignant. The winning solution trains gradient-boosted trees on the tabular measurements, on out-of-fold predictions of two image models, and on features that compare each lesion with the same patient's other lesions. Adding a local outlier factor computed within each patient raised the winner's cross-validation score from 0.18149 to 0.18185."
+winningIdea: "Gradient-boosted trees (CatBoost, LightGBM and XGBoost) are trained on the lesion measurements together with out-of-fold predictions of two image models, which are standardised and perturbed with Gaussian noise during tree training. Further features compare each lesion with the same patient's other lesions, including a local outlier factor computed within each patient. Changes to the pipeline were accepted by a paired t-test over ten repetitions of cross-validation."
 solutions:
   - rank: 1
     team: Ilya Novoselskiy
@@ -49,7 +49,7 @@ solutions:
     writeup: https://www.kaggle.com/competitions/isic-2024-challenge/writeups/sinan-calisir-9th-place-solution
 deployability:
   score: 4
-  verdict: "Cheap to train and to run, built on phone-quality images and standard metadata; the open question is how the 3D total-body-photography features translate to a single phone photo."
+  verdict: "All 150 tree models together trained in under 20 minutes on a GPU, and the two image models are small. Most tabular features are computed by the Vectra WB360 total-body photography system, so a deployment without that device has fewer inputs than the competition models used."
   inference: "Gradient-boosted trees and two small image models (EVA02-Small, EdgeNeXt-Base) per lesion; far below a second per lesion on a GPU, and the trees run on CPU."
   models: "150 GBDT models (CatBoost, LightGBM, XGBoost × 5 folds × 10 seeds) plus several EVA02-Small and EdgeNeXt-Base image models."
   training: "All GBDTs together in under 20 minutes on a GPU; image models of the same scale as a standard Kaggle kernel."
@@ -59,8 +59,8 @@ deployability:
     data: "ISIC 2024 challenge data (check the ISIC archive licence for each image; many are CC-BY-NC)."
     weights: "Image backbones from timm (EVA02, EdgeNeXt) under their published licences."
   risks:
-    - "Most tabular features come from the Vectra WB360 total-body-photography system (colour and shape measurements, patient-level context). A deployment without that device has only the image."
-    - "With a few hundred positives in training, the private leaderboard reflects a small number of melanomas. Calibration and threshold must be set on local data before any triage use."
+    - "Most tabular features come from the Vectra WB360 total-body photography system (colour and shape measurements, and patient-level context). A deployment without that device has only the image."
+    - "The training set contains a few hundred malignant lesions, so leaderboard scores rest on a small number of positive cases. A decision threshold for triage has to be set on local data."
 related:
   - siim-isic-melanoma-classification
   - child-mind-institute-detect-sleep-states
@@ -72,187 +72,243 @@ dataLinks:
   - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/isic-2024-challenge/data" }
   - { label: "ISIC archive and isic-cli", url: "https://github.com/ImageMarkup/isic-cli" }
 priority: 4
-updated: "2026-09-28"
+updated: "2026-09-29"
 ---
 
-## The problem in its field
+## Clinical background
 
-Skin cancer is the most common cancer in many countries. Melanoma, the most dangerous type, is curable by a simple excision when found early and often fatal when found late. Basal cell and squamous cell carcinomas are more common and less lethal but still require treatment.
+Melanoma is the most dangerous common skin cancer. When found early it can usually be removed by excision; when found late it can spread and is often fatal. Basal cell and squamous cell carcinomas are more common and less often lethal, but also require treatment.
 
-Dermatologists examine suspicious lesions with a **dermatoscope**, a magnifier with polarised light that reveals pigment structures beneath the skin surface. Algorithms trained on dermoscopic images now match or exceed dermatologists on curated test sets. The ISIC 2024 challenge asked a different question: **who should see a dermatologist at all?** Most people never have a dermoscopic examination. A triage tool that works from ordinary photographs, in primary care or at home, could route the few malignant lesions to a specialist.
+Dermatologists examine suspicious lesions with a dermatoscope, a magnifier with polarised light that shows pigment structures beneath the surface of the skin. Earlier ISIC challenges used dermoscopic images. The 2024 challenge concerned triage before a dermatologist is involved: the competition description states the aim of identifying malignant lesions in primary care and non-clinical settings, including for underserved populations, where dermoscopy is not available. For that purpose a model has to work from images of lower quality than dermoscopic images.
 
 <Deep title="The ugly duckling sign" kind="domain">
 
-Most adults have dozens of moles, and a person's benign moles tend to resemble each other in colour, size and pattern. A melanoma often stands out: it is darker, larger, more irregular, or simply different from its neighbours. Dermatologists call this the **ugly duckling sign** and use it alongside the ABCDE rule (Asymmetry, Border irregularity, Colour variation, Diameter above about 6 mm, Evolution over time).
+Most adults have many naevi (moles), and a person's benign naevi tend to resemble each other in colour, size and pattern. A lesion that looks different from the same patient's other naevi is suspicious. Dermatologists call this the ugly duckling sign and use it together with the ABCDE criteria (asymmetry, border irregularity, colour variation, diameter above about 6 mm, evolution over time).
 
-The ugly duckling sign is relative: a lesion that would be unremarkable on one patient is suspicious on another whose moles are all small and uniform. It matters for modelling because it cannot be computed from one image alone. It requires comparing each lesion with the rest of the same patient's lesions. Both of the top two ISIC 2024 solutions built features that do exactly this.
+The sign is relative to the patient. A lesion that would be unremarkable on one patient can be suspicious on another whose naevi are all small and uniform. It therefore cannot be evaluated from one image alone; each lesion has to be compared with the same patient's other lesions. Both of the top two solutions in this competition built features that make this comparison.
 </Deep>
 
-## The data
+## Data
 
-The images came from **3D total body photography (3D-TBP)**: a booth with many cameras (the Vectra WB360 system) photographs a patient's entire skin surface at once and builds a 3D model. Every lesion is detected and cropped as a 15 × 15 mm tile. These crops have roughly the quality of phone photographs, not dermoscopy.
+The images come from 3D total-body photography (3D-TBP). The Vectra WB360 system photographs a patient's entire skin surface with many cameras at once and builds a 3D model of it. Each detected lesion is cropped as a tile covering 15 × 15 mm of skin. The competition description compares the quality of these crops with that of phone photographs, well below that of dermoscopy. The data include every lesion from patients on three continents.
 
-Each lesion comes with metadata: patient age and sex, anatomical site, and dozens of measurements computed by the TBP software (names beginning `tbp_lv_`), such as lesion area and perimeter, colour values in the L\*a\*b\* colour space inside and outside the lesion, contrast with surrounding skin, border irregularity and eccentricity. Diagnoses were confirmed by histology for malignant lesions and for a subset of benign ones.
+Each lesion comes with metadata: the patient's age and sex, the anatomical site, and many measurements computed by the TBP software (column names beginning `tbp_lv_`). These include the lesion's area and perimeter, colour values in the L\*a\*b\* colour space inside and outside the lesion, the contrast with the surrounding skin, border irregularity and eccentricity.
 
-The training set contains around 400,000 lesions from about a thousand patients, of which only a few hundred are malignant: roughly one in a thousand. Several patients contribute hundreds of lesions each.
+The training set contains about 400,000 lesion images, of which about 400 are malignant, roughly one in a thousand.
 
-## The metric: partial AUC above 80% sensitivity
+## Evaluation metric
 
-A screening tool that misses a fifth of melanomas is not acceptable, however good its average ranking. The organisers scored only the region of the ROC curve where the true-positive rate is at least 0.8: the area between the curve and the horizontal line TPR = 0.8. Its maximum is $1 \times 0.2 = 0.2$.
+The organisers required high sensitivity for a triage tool and scored only the part of the ROC curve in which the true-positive rate (TPR) is at least 0.8. The score is the area between the ROC curve and the horizontal line $\mathrm{TPR} = 0.8$. A perfect ranking has $\mathrm{TPR} = 1$ at every false-positive rate, so the maximum score is $1 \times (1 - 0.8) = 0.2$.
 
 <Foundation id="roc-auc" />
 
-<Deep title="What partial AUC above a TPR floor rewards" kind="math">
+<Deep title="Partial AUC above a true-positive rate of 0.8" kind="math">
 
-For a false-positive rate $f$, let $\mathrm{TPR}(f)$ be the ROC curve. The score is
+Let $f \in [0,1]$ be the false-positive rate and $\mathrm{TPR}(f) \in [0,1]$ the ROC curve. The score is
 
 $$
 \mathrm{pAUC} = \int_0^1 \max\big(\mathrm{TPR}(f) - 0.8,\ 0\big)\, df .
 $$
 
-Equivalently, flip the problem: let $f_{0.8}$ be the false-positive rate at which the model first reaches 80% sensitivity. The score counts area only for $f \ge f_{0.8}$, and within that region rewards reaching high sensitivity quickly. A model that ranks the easiest 80% of melanomas above almost all benign lesions, so that $f_{0.8}$ is tiny, collects nearly the whole available area. How the model orders the bottom half of benign lesions matters little; how it orders the hardest melanomas against the most suspicious benign lesions matters a great deal.
+**An upper bound.** Let $f_{0.8}$ be the smallest false-positive rate at which $\mathrm{TPR}(f) \ge 0.8$. The integrand is zero for $f < f_{0.8}$ and at most $0.2$ elsewhere, so
 
-Because only the ranking matters, predictions need not be calibrated, and combining models by averaging their ranks is natural.
+$$
+\mathrm{pAUC} \le 0.2\,(1 - f_{0.8}) .
+$$
+
+A model that has to flag 5% of benign lesions to reach 80% sensitivity can score at most $0.2 \times 0.95 = 0.19$.
+
+**Which pairs are counted.** Let there be $n_+$ malignant and $n_-$ benign lesions with model scores, and assume no ties and that $0.2\,n_+$ is an integer. Let $B$ be the set of the $0.2\,n_+$ malignant lesions with the lowest scores. For a threshold $t$, the TPR is the fraction of malignant lesions with a score above $t$.
+
+1. If $\mathrm{TPR} \ge 0.8$ at threshold $t$, every malignant lesion outside $B$ has a score above $t$, so $\mathrm{TPR} - 0.8 = |\{ i \in B : s_i > t \}| / n_+$.
+2. If $\mathrm{TPR} < 0.8$, no lesion of $B$ has a score above $t$, and both sides of the same equation are zero after taking the positive part.
+3. Therefore $\max(\mathrm{TPR} - 0.8, 0) = |\{ i \in B : s_i > t \}| / n_+$ for every threshold.
+4. Integrating over $f$, the fraction of benign lesions above the threshold, each lesion $i \in B$ contributes the fraction of benign lesions that score below it, divided by $n_+$.
+
+The result is
+
+$$
+\mathrm{pAUC} = \frac{1}{n_+\, n_-} \sum_{i \in B} \big|\{\, j \text{ benign} : s_j < s_i \,\}\big| .
+$$
+
+The score therefore depends only on how the hardest fifth of the malignant lesions is ranked against the benign lesions. The order among benign lesions, and the order of the other malignant lesions, do not enter. As with the full AUC, only the ranking of the scores matters, so predictions need not be calibrated and models can be combined by averaging ranks.
 </Deep>
 
-## How the winning solution works
+## Winning solution
 
-Ilya Novoselskiy entered about three weeks before the end, starting from a public notebook by greysky that used tabular data only. His write-up names two sources of the win: careful validation, and features that describe lesions relative to their patient.
+Ilya Novoselskiy competed alone. He entered about three weeks before the end of the competition and started from a public notebook by greysky that used the tabular data only. The final model is an ensemble of gradient-boosted trees whose inputs are the tabular measurements, features that compare each lesion with the same patient's other lesions, and out-of-fold predictions of image models.
 
 <Pipeline steps={[
   {tag: "Images", title: "Small image models", detail: "EVA02-Small and EdgeNeXt-Base, balanced batches, 5 folds × seeds"},
   {tag: "Transfer", title: "Diagnosis model from past ISIC data", detail: "EVA02-Small, 3 classes: benign keratosis / melanoma / nevus"},
-  {tag: "Features", title: "Tabular + patient-relative features", detail: "TBP measurements, per-patient area, local outlier factor"},
+  {tag: "Features", title: "Tabular and patient-relative features", detail: "TBP measurements, per-patient area, local outlier factor"},
   {tag: "Combine", title: "Gradient-boosted trees", detail: "CatBoost, LightGBM, XGBoost; image predictions as noisy standardised features"},
   {tag: "Output", title: "Rank average", detail: "150 tree models, equal weights"}
-]} caption="The winner's pipeline. Image models do not produce the final answer; their out-of-fold predictions become columns for the trees." />
+]} caption="The winner's pipeline. The image models do not produce the final prediction; their out-of-fold predictions become input columns for the trees." />
 
 <Foundation id="models-and-loss" />
 
 ### Validation with paired statistical tests
 
-With a few hundred positives, a 5-fold cross-validation score moves by more than most improvements when only the random seed changes. The winner adopted a method described by daniel89 for an earlier competition:
+The winner adopted a validation procedure described by daniel89 in the earlier Mercedes-Benz competition:
 
-1. Use `StratifiedGroupKFold` with 5 folds, grouping by patient so no patient appears in both training and validation.
-2. Run the whole CV 10 times with different seeds, for both the old and the new configuration.
-3. Compare the two sets of 10 scores with a **paired t-test** (`scipy.stats.ttest_rel`), pairing runs that share a seed and therefore a data split.
-4. Keep the change only if the p-value is small, then confirm on the public leaderboard.
+1. Five-fold `StratifiedGroupKFold`, grouped by patient so that no patient appears in both the training and the validation folds.
+2. The whole cross-validation is repeated with 10 random seeds, for both the current and the proposed configuration.
+3. The two sets of 10 scores are compared with a paired t-test (`scipy.stats.ttest_rel`), pairing runs that share a seed and therefore a data split.
+4. A change is accepted if its p-value is small. Only changes that passed the test were then evaluated on the public leaderboard.
 
-<Deep title="Why a paired test" kind="math">
+Late in the competition the author relaxed the rule, accepting p-values up to 0.2 and relying more on the public leaderboard. He reports that this improved his public score and slightly lowered his private score.
 
-Let $a_k$ and $b_k$ be the CV scores of the old and new configurations under seed $k$. The seed decides the fold split, and some splits are easier than others for both configurations. The raw scores therefore share a large common component $s_k$ (split difficulty):
+<Deep title="The paired t-test for comparing two configurations" kind="math">
 
-$$
-a_k = s_k + \mu_a + \varepsilon^a_k, \qquad b_k = s_k + \mu_b + \varepsilon^b_k .
-$$
-
-Comparing the means of $a$ and $b$ as independent samples leaves $s_k$ in both variances and hides small real differences. The differences $d_k = b_k - a_k = (\mu_b - \mu_a) + (\varepsilon^b_k - \varepsilon^a_k)$ cancel $s_k$ exactly. The paired t-statistic
+Let $a_k$ and $b_k$ be the cross-validation scores of the current and proposed configurations under seed $k = 1, \dots, K$. The seed determines the fold split, and some splits give higher scores than others for both configurations. Model this with a common split effect $s_k$:
 
 $$
-t = \frac{\bar d}{s_d/\sqrt{K}}
+a_k = s_k + \mu_a + \varepsilon^a_k, \qquad b_k = s_k + \mu_b + \varepsilon^b_k ,
 $$
 
-tests whether the mean difference is zero, with $K - 1$ degrees of freedom. With $K = 10$, a change that improves the score on 9 of 10 splits by a consistent small amount is detected even when the split-to-split spread is ten times larger than the improvement.
+where $\mu_a, \mu_b$ are the mean scores of the two configurations and $\varepsilon^a_k, \varepsilon^b_k$ are the remaining random variation. The difference for seed $k$ is
 
-To limit false discoveries from many tests, the winner tested only the changes he judged most significant. Late in the competition he relaxed the rule (p-values up to 0.2, more reliance on the public leaderboard), and reports that this improved his public score and slightly worsened his private one.
+$$
+d_k = b_k - a_k = (\mu_b - \mu_a) + (\varepsilon^b_k - \varepsilon^a_k) ,
+$$
+
+in which $s_k$ has cancelled. With the mean difference $\bar d$ and the sample standard deviation of the differences $s_d$, the paired t-statistic is
+
+$$
+t = \frac{\bar d}{s_d / \sqrt{K}} ,
+$$
+
+which has $K - 1$ degrees of freedom under the hypothesis $\mu_a = \mu_b$.
+
+Illustrative numbers (not from the write-up): let $K = 10$, $\bar d = 0.0004$ and $s_d = 0.0003$, while the scores of each configuration vary across seeds with a standard deviation of $0.003$ because of the split effect. The paired statistic is
+
+$$
+t = \frac{0.0004}{0.0003 / \sqrt{10}} = \frac{0.0004}{0.0000949} \approx 4.22 ,
+$$
+
+with a two-sided p-value of about 0.002 at 9 degrees of freedom. A two-sample test that ignores the pairing uses the standard error $\sqrt{2 \times 0.003^2 / 10} \approx 0.00134$ and gives $t \approx 0.30$, with a p-value of about 0.77. The pairing removes the split effect from the comparison.
 </Deep>
 
 <Foundation id="cross-validation" />
 
 ### Gradient-boosted trees
 
-The core model is an ensemble of CatBoost, LightGBM and XGBoost, each trained with 5-fold group splits and 10 seeds (150 models in all), using default parameters and sampling from daniel89's public notebook. CatBoost used parameters found by Optuna on the tabular data (learning rate 0.026, depth 6, L2 regularisation 18, loss-guided growth, early stopping after 100 rounds without improvement). The 150 predictions are converted to percentile ranks and averaged with equal weights. All tree models together trained in under 20 minutes on a GPU; the author notes that 45 models were almost as good as 150.
+The final model is an ensemble of CatBoost, LightGBM and XGBoost. Each library was trained with five group folds and 10 seeds, giving $3 \times 5 \times 10 = 150$ models. Default parameters and the under- and oversampling scheme came from daniel89's public notebook. The CatBoost parameters were found with Optuna on the tabular data: learning rate 0.026, L2 regularisation 18, random strength 4.7, depth 6, bagging temperature 0.874, border count 256, loss-guided tree growth, at least 38 samples per leaf, and up to 1000 iterations with early stopping after 100 rounds without improvement.
+
+The 150 predictions are converted to percentile ranks and averaged with equal weights. All tree models together trained in under 20 minutes on a GPU. The author reports that 150 models gave little gain over 45.
 
 <Foundation id="gradient-boosting" />
 
 ### Patient-relative features
 
-On top of features from public notebooks, the winner added:
+In addition to features from public notebooks, the winner added:
 
-- the **total lesion area per patient**, and per patient and body site;
-- the **local outlier factor (LOF)** of each lesion among the same patient's lesions, computed on the most important features according to CatBoost.
+- the total lesion area per patient, and per patient and anatomical site;
+- the local outlier factor (LOF) of each lesion among the same patient's lesions, computed on the most important features according to CatBoost. The author describes it as a measure of how abnormal a lesion is for this patient.
 
 <Deep title="The local outlier factor" kind="math">
 
-LOF (Breunig et al., 2000) compares the density around a point with the density around its neighbours. For a point $a$ with $k$ nearest neighbours $N_k(a)$:
+The local outlier factor (Breunig et al., 2000) compares the density of points around a point with the density around its neighbours. Let $d(a, b)$ be the distance between points $a$ and $b$ in feature space, $N_k(a)$ the set of the $k$ nearest neighbours of $a$, and $d_k(b)$ the distance from $b$ to its own $k$-th nearest neighbour.
 
-1. The **reachability distance** from $a$ to a neighbour $b$ is $\max(d_k(b),\ d(a,b))$, where $d_k(b)$ is the distance from $b$ to its own $k$-th neighbour. This smooths distances for points inside dense clusters.
-2. The **local reachability density** is the inverse of the mean reachability distance from $a$ to its neighbours:
+1. The reachability distance from $a$ to a neighbour $b$ is
 $$
-\mathrm{lrd}(a) = \left(\frac{1}{k}\sum_{b\in N_k(a)} \mathrm{reach}_k(a,b)\right)^{-1}.
+\mathrm{reach}_k(a, b) = \max\big(d_k(b),\ d(a,b)\big) .
 $$
-3. The **LOF** is the average ratio of the neighbours' densities to $a$'s own:
+Points closer to $b$ than $b$'s $k$-th neighbour are all assigned the distance $d_k(b)$, which reduces fluctuations inside dense clusters.
+2. The mean reachability distance of $a$ is
 $$
-\mathrm{LOF}(a) = \frac{1}{k}\sum_{b\in N_k(a)}\frac{\mathrm{lrd}(b)}{\mathrm{lrd}(a)} .
+R(a) = \frac{1}{k} \sum_{b \in N_k(a)} \mathrm{reach}_k(a, b) ,
+$$
+and the local reachability density is its reciprocal, $\mathrm{lrd}(a) = 1 / R(a)$.
+3. The local outlier factor is the mean ratio of the neighbours' densities to the density of $a$:
+$$
+\mathrm{LOF}(a) = \frac{1}{k} \sum_{b \in N_k(a)} \frac{\mathrm{lrd}(b)}{\mathrm{lrd}(a)} = \frac{1}{k} \sum_{b \in N_k(a)} \frac{R(a)}{R(b)} .
 $$
 
-A lesion that sits in a region of feature space as dense as its neighbours' has LOF near 1. A lesion that is isolated from the patient's other lesions has low density relative to them and LOF well above 1. Computed within each patient, this is a quantitative ugly duckling sign.
+The second form follows from $\mathrm{lrd} = 1/R$. A point whose neighbourhood is as dense as its neighbours' has $\mathrm{LOF} \approx 1$. If the mean reachability distance of a lesion is 3 and that of each of its neighbours is 1, its LOF is $3/1 = 3$. Computed separately within each patient's lesions, a high LOF marks a lesion that differs from that patient's other lesions, a quantitative counterpart of the ugly duckling sign.
 </Deep>
 
-Adding LOF raised the winner's CV from 0.18149 to 0.18185, and the leaderboard improved as well. A related idea, clustering lesions and computing z-scores within clusters, improved CV and public score but not the private score, and was dropped.
+Adding LOF raised the winner's cross-validation score from 0.18149 to 0.18185. A related feature, a z-score of each lesion within clusters of lesions, did not improve the private score.
 
 ### Image models as features
 
-Two image backbones were trained on the lesion crops: **EVA02-Small** (a vision transformer pretrained with masked image modelling) and **EdgeNeXt-Base** (a hybrid convolution–attention network designed for efficiency). The author chose them for their balance of accuracy and inference time.
+Two image backbones from the `timm` library were trained on the lesion crops: EVA02-Small (`eva02_small_patch14_336.mim_in22k_ft_in1k`), a vision transformer pretrained with masked image modelling on ImageNet-22k and fine-tuned on ImageNet-1k, and EdgeNeXt-Base (`edgenext_base.in21k_ft_in1k`), a network that combines convolution and attention.
 
-- Batches were balanced 1:1 between malignant and benign.
-- Each architecture was trained with several seeds under the same 5-fold group split, with early stopping on validation (up to 200 epochs; most stopped before 100). Validation was run every 5 epochs at first and more often later, because evaluating on hundreds of thousands of validation lesions takes longer than a balanced training epoch.
-- Augmentations came from a previous ISIC competition winner.
+- Batches were balanced 1:1 between malignant and benign lesions.
+- Each architecture was trained with several seeds under the same five-fold group split, with early stopping on validation: at most 200 epochs, patience of 10 validation checks, and validation run more frequently as training progressed.
 
-The image models' **out-of-fold predictions** became features for the trees. Three details made this work:
+The out-of-fold predictions of the image models became features for the trees, in three forms:
 
-1. **Standardisation.** Each image model's predictions were standardised separately, giving a feature that ranged from about −0.44 (1st percentile) to 4.99 (99th).
-2. **Noise.** Out-of-fold predictions are slightly optimistic, because early stopping selected each image model's epoch using the very fold it then predicted. Trees trained on those features would trust them more than they deserve on test data. Adding Gaussian noise with standard deviation 0.1 to the image features during tree training counteracts this. The value was chosen by leaderboard probing among 0.02, 0.05, 0.08, 0.10 and 0.12, one of the few choices the author made without cross-validation.
-3. **Patient-relative image features.** The ratio of a lesion's image prediction to the mean prediction over all of the patient's lesions (also with noise). This consistently improved both CV and leaderboard.
+1. **Standardisation.** The predictions of each image model were standardised separately. The resulting feature ranged from about −0.44 at the 1st percentile to 4.99 at the 99th.
+2. **Noise.** Gaussian noise with a standard deviation of 0.1 was added to the image features during tree training. The author states that this counters the optimism of out-of-fold predictions. The standard deviation was chosen on the public leaderboard among values between 0.02 and 0.12.
+3. **Ratio to the patient mean.** The ratio of a lesion's image prediction to the mean prediction over all of the patient's lesions, also with noise added.
 
-<Deep title="Why OOF predictions are optimistic after early stopping" kind="math">
+<Deep title="Optimism of out-of-fold predictions after early stopping" kind="math">
 
-Each image model for fold $f$ is trained on the other folds and stopped at the epoch $e^\star_f$ that maximises its score on fold $f$. The model's predictions on fold $f$ are then used as features. But $e^\star_f$ was chosen *because* those predictions happened to score well; the selection used the same data it now describes. On new data, the model at epoch $e^\star_f$ will on average score a little lower. The gap is the same winner's-curse bias that affects any choice made by maximising a noisy estimate.
+The image model for fold $m$ is trained on the other folds and stopped at the epoch $e^\star_m$ with the best validation score on fold $m$. Its predictions on fold $m$ then become features. Let $\hat S_e$ be the score measured on fold $m$ at epoch $e$, a noisy estimate of the model's expected score $S_e$ on new data. Since $\max_{e'} \hat S_{e'} \ge \hat S_e$ for every $e$, taking expectations gives
 
-The trees see OOF features that are slightly cleaner than the test features will be. Adding noise to the training features narrows the difference, so the trees learn to rely on them only as much as test-time quality justifies.
+$$
+\mathbb{E}\big[\max_{e'} \hat S_{e'}\big] \ \ge\ \max_e\, \mathbb{E}\big[\hat S_e\big] = \max_e S_e .
+$$
+
+The score measured at the selected epoch is therefore, on average, at least as high as the best expected score, and it exceeds it whenever the noise in $\hat S_e$ affects which epoch is chosen. The trees are trained on out-of-fold features that are slightly more accurate on their fold than the same models will be on test data. Adding noise to these features during tree training makes them less reliable as inputs, which reduces how strongly the trees depend on them.
 </Deep>
 
-### Knowledge from earlier ISIC competitions
+### Features from earlier ISIC data
 
-Positives are so rare that borderline lesions are nearly absent from training. Before using this year's images, the winner trained an EVA02-Small classifier on earlier ISIC archive images (downloaded with `isic-cli`) to separate three classes: benign keratosis-like lesions, melanoma and nevus, mapping the archive's diagnoses into these groups. Its predictions on the 2024 lesions became tabular features. On the tabular-only model this raised CV from 0.1756 to 0.1760, public from 0.180 to 0.182 and private from 0.163 to 0.165; in the final model the gain was smaller but positive.
+The winner trained an EVA02-Small classifier on images from the ISIC archive of earlier years, downloaded with `isic-cli`, to separate three classes: benign keratosis-like lesions, melanoma and naevus, after mapping the archive's diagnoses into these groups. Its predictions on the 2024 lesions became tabular features.
+
+| Model | Change | Before | After |
+| --- | --- | --- | --- |
+| Tabular only | cross-validation | 0.1756 | 0.1760 |
+| Tabular only | public leaderboard | 0.180 | 0.182 |
+| Tabular only | private leaderboard | 0.163 | 0.165 |
+| Final model | cross-validation | 0.18185 | 0.18195 |
 
 ### Synthetic images
 
-Most of the author's time went into generating synthetic malignant lesions with a Stable Diffusion model, following the Derm-T2IM approach. Image models trained with synthetic data scored better on CV and slightly better on both leaderboards on average (an ensemble reached 0.142 private against 0.140 without), but adding them to the final ensemble did not improve it, so they were left out. He published the synthetic image dataset for others.
+The author generated synthetic images of malignant lesions with a Stable Diffusion model, following the Derm-T2IM approach (Farooq et al., 2024). Image models trained with the synthetic images improved: an ensemble of image models scored 0.142 on the private leaderboard with them, against 0.140 without. Adding these models to the final ensemble did not improve it, and they were excluded.
 
-### What did not work
+### Changes that did not help
 
-Sampling hard negatives more often (by out-of-fold log loss); pretraining image models on previous years' data; test-time augmentation.
+The write-up lists sampling hard negatives more often (selected by out-of-fold log loss), pretraining the image models on data from previous ISIC competitions, and test-time augmentation. In the last part of the competition the author's scores stayed at about 0.185–0.186 on the public leaderboard, corresponding to about 0.173 private.
 
-## The runner-up
+## Second place: patient-wise standardisation and diverse image models
 
-Team yakiniku used the same overall structure (image model outputs as features for LightGBM, XGBoost and CatBoost) with different emphases:
+Team yakiniku also used image-model outputs as features for LightGBM, XGBoost and CatBoost.
 
-- **Patient-wise standardisation** of features: by patient, by patient and TBP location, by patient and simplified location, by patient and anatomical site. Also a "tabular ugly ducklings" feature proposed in the competition forum.
-- **Diversity by design**: 18 variants of each boosting library (54 models), differing in which features and how many image features (0 to 3) they use.
-- **Nine image models under five training set-ups**, including an auxiliary loss that predicts the tabular features from the image, and an auxiliary loss that predicts distances to clusters of the free-text diagnosis field (vectorised with TF-IDF and clustered with k-means), and self-supervised pretraining that pairs images with tabular data.
-- **No early stopping** for image models, to avoid the optimistic OOF bias described above; each was trained for a fixed 50 to 200 epochs.
+- **Patient-wise standardisation of features.** Features were standardised within each patient, within each patient and TBP location (`tbp_lv_location`), within each patient and simplified location, and within each patient and general anatomical site. The team also used a "tabular ugly ducklings" technique proposed in the competition forum.
+- **Tree ensemble.** 18 variants of each boosting library, 54 models in total, differing in their features and in how many image-model predictions (0 to 3) they use as inputs. Each variant was averaged over 5 seeds trained on the full data, with 200–300 boosting rounds.
+- **Image models.** Nine image models under five training set-ups, with private scores given for each model:
+
+| Set-up | Models (score) |
+| --- | --- |
+| Standard training | EVA02-Small (0.1537), DeiT3-Small (0.1534) |
+| Mixup | BEiTv2-Base (0.1594) |
+| Auxiliary loss predicting the tabular features | ConvNeXtV2-Tiny (0.1548) |
+| Auxiliary loss predicting distances to k-means clusters of TF-IDF vectors of the free-text diagnosis field `iddx_full` | SwinV2-Small (0.1612), EVA02-Small (0.1580), ResNeXt-50 (0.1515) |
+| Self-supervised pretraining with the tabular data | ConvNeXtV2-Nano (0.1607), Swin-Tiny (0.1596) |
+
+- **Image-model training.** Undersampling of benign lesions at 1:3 or 1:5, a fixed 50–200 epochs without early stopping, augmentation from the ISIC 2020 winning solution, AdamW with learning rates of $10^{-5}$ to $8 \times 10^{-6}$ for the backbone and $10^{-3}$ for the head, warm-up followed by a cosine schedule, and automatic mixed precision.
+- **Validation.** A triple-stratified, leak-free k-fold split, following an idea by Chris Deotte from the ISIC 2020 competition.
 
 <Foundation id="transfer-learning" />
 
-## Why trees beat end-to-end image models here
+## Comparison with other competitions
 
-Three properties of the data favoured gradient-boosted trees as the final model:
-
-1. **The strongest signals were tabular.** The TBP system already measures colour, size and border irregularity for every lesion, and patient-level context (how a lesion compares with the patient's others) is naturally a tabular computation.
-2. **Extreme imbalance and small positive count.** Trees on a few hundred informative features overfit less than a network with millions of parameters trained on a few hundred positives.
-3. **Cheap diversity.** Hundreds of tree models train in minutes, so averaging over seeds and folds to stabilise the ranking cost nothing.
-
-The image models still mattered, but as feature extractors. The contrast with the 2020 SIIM-ISIC melanoma competition, which provided dermoscopic images and little metadata and was won by large image ensembles, shows how the best method follows the data rather than the disease.
+The 2020 SIIM-ISIC melanoma competition provided dermoscopic images with age, sex and anatomical site, and was won by an ensemble of convolutional networks. In 2024 the images were of lower quality and each lesion came with many tabular measurements from the TBP system. The top two solutions of 2024 used gradient-boosted trees as the final model, with image models contributing features, and both represented the comparison of a lesion with the patient's other lesions as tabular features. Both years' winners averaged percentile ranks of model predictions.
 
 ## Compute and deployment
 
-| Setting | What the solution needs |
+| Setting | Requirements |
 | --- | --- |
-| Kaggle | Standard GPU notebook; the tree models are the cheap part. |
+| Kaggle | A standard GPU notebook; the tree models train in under 20 minutes. |
 | Clinic with 3D-TBP | The full pipeline applies, since the device produces every feature used. |
-| Primary care or phone app | Only the image and basic demographics are available. The image models and the patient-relative image feature can be computed from several photographs of one patient; the TBP measurements cannot. Expect lower performance and re-validate. |
+| Primary care or phone application | Only the image and basic demographic data are available. The image models and the ratio of a lesion's image prediction to the patient mean can be computed from several photographs of one patient; the TBP measurements cannot. Performance has to be measured again for this setting. |
 
-<Callout kind="deploy" title="Setting a triage threshold">
-The metric rewards ranking, not calibration. For triage, a threshold must be chosen to achieve a target sensitivity (for example 90% of melanomas referred) on local data. The number of benign referrals at that threshold is what determines whether the tool is usable, and the leaderboard does not report it.
-</Callout>
+### Considerations for deployment
+
+1. **Threshold.** The metric depends only on ranking. For triage, a threshold has to be chosen on local data to reach a target sensitivity, for example referral of 90% of melanomas. The number of benign lesions referred at that threshold determines the workload, and the leaderboard does not report it.
+2. **Device dependence.** Most tabular features are computed by the Vectra WB360 system. Without it, the model has only the image and demographic data.
+3. **Small number of positives.** With a few hundred malignant lesions in training, estimates of sensitivity at a fixed threshold have wide confidence intervals and should be confirmed on local data.

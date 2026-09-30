@@ -2,48 +2,87 @@
 id: softmax-cross-entropy
 title: "Softmax and categorical cross-entropy"
 kind: math
-summary: "When exactly one of K classes is true, a softmax turns K scores into a probability distribution, and the negative log-probability of the true class is the loss."
+summary: "When exactly one of K classes is correct, the softmax function converts K real-valued scores into a probability distribution, and the categorical cross-entropy is the negative log-probability assigned to the correct class. The primer derives the gradient of this loss, extends it to soft targets, and compares softmax with independent sigmoids."
 ---
 
-### Softmax
+### Logits and the softmax
 
-The network outputs $K$ logits $z_1,\dots,z_K$. The **softmax** converts them into probabilities that are positive and sum to one:
+A classifier for $K$ mutually exclusive classes ends in a layer that outputs $K$ real numbers $z = (z_1, \dots, z_K) \in \mathbb{R}^K$, called **logits**. The **softmax** function converts them into a probability vector $p \in (0,1)^K$:
 
 $$
-p_k = \frac{e^{z_k}}{\sum_{j=1}^{K} e^{z_j}} .
+p_k = \frac{e^{z_k}}{Z}, \qquad Z = \sum_{j=1}^{K} e^{z_j}, \qquad k = 1, \dots, K .
 $$
 
-Adding the same constant to every logit leaves the probabilities unchanged, which is why implementations subtract $\max_j z_j$ before exponentiating to avoid overflow. With $K=2$, the softmax reduces to a sigmoid of the logit difference $z_1 - z_2$.
+Each $p_k$ is positive because the exponential is positive, and $\sum_k p_k = Z/Z = 1$. A larger logit gives a larger probability.
+
+**Worked example.** For $K = 3$ and $z = (2.0,\ 1.0,\ 0.1)$: $e^{2.0} = 7.389$, $e^{1.0} = 2.718$, $e^{0.1} = 1.105$, so $Z = 11.212$ and
+
+$$
+p = (0.659,\ 0.242,\ 0.099).
+$$
+
+**Invariance to a shift.** Adding a constant $a$ to every logit multiplies every exponential, and therefore $Z$, by $e^{a}$:
+
+$$
+\frac{e^{z_k + a}}{\sum_j e^{z_j + a}} = \frac{e^{a}\,e^{z_k}}{e^{a}\,Z} = p_k .
+$$
+
+Implementations use this with $a = -\max_j z_j$, so that the largest exponent is 0 and no exponential overflows.
+
+**Two classes.** For $K = 2$, dividing numerator and denominator of $p_1$ by $e^{z_1}$ gives
+
+$$
+p_1 = \frac{e^{z_1}}{e^{z_1} + e^{z_2}} = \frac{1}{1 + e^{-(z_1 - z_2)}} = \sigma(z_1 - z_2),
+$$
+
+where $\sigma(t) = 1/(1 + e^{-t})$ is the logistic sigmoid. A two-class softmax is a sigmoid of the logit difference.
 
 ### Categorical cross-entropy
 
-With a one-hot label $y$ ($y_c = 1$ for the true class $c$, zero elsewhere), the likelihood of the observation is $p_c$, and the negative log-likelihood is
+Let the true class be $c$ and represent it by the one-hot vector $y$ with $y_c = 1$ and $y_k = 0$ for $k \ne c$. The model assigns probability $p_c$ to the observed class, so the negative log-likelihood of one example is
 
 $$
-\ell_{\text{CE}} = -\sum_{k=1}^{K} y_k \log p_k = -\log p_c .
+\ell_{\mathrm{CE}} = -\sum_{k=1}^{K} y_k \log p_k = -\log p_c .
 $$
 
-<Deep title="Gradient of softmax cross-entropy with respect to the logits" kind="math">
+The loss is 0 when $p_c = 1$ and grows without bound as $p_c \to 0$. In the worked example with true class $c = 1$, $\ell_{\mathrm{CE}} = -\log 0.659 = 0.417$. Over a dataset, the loss is averaged over examples.
 
-Write $\log p_c = z_c - \log\sum_j e^{z_j}$. Then
+### Gradient with respect to the logits
 
-$$
-\ell = -z_c + \log\sum_j e^{z_j}.
-$$
-
-Differentiate with respect to $z_k$:
+*Step 1: take the logarithm of the softmax.* From $p_c = e^{z_c}/Z$,
 
 $$
-\frac{\partial \ell}{\partial z_k} = -\mathbb{1}[k=c] + \frac{e^{z_k}}{\sum_j e^{z_j}} = p_k - y_k .
+\log p_c = z_c - \log Z, \qquad\text{so}\qquad \ell = -z_c + \log Z .
 $$
 
-As with the sigmoid, the gradient is prediction minus target, now for every class at once. The model raises the true class's logit and lowers the others in proportion to the probability it wrongly assigned to them.
-</Deep>
+*Step 2: differentiate $\log Z$.* Only the $k$-th term of $Z$ depends on $z_k$, and its derivative is $e^{z_k}$:
+
+$$
+\frac{\partial \log Z}{\partial z_k} = \frac{1}{Z}\,\frac{\partial Z}{\partial z_k} = \frac{e^{z_k}}{Z} = p_k .
+$$
+
+*Step 3: differentiate $-z_c$.* This gives $-1$ if $k = c$ and 0 otherwise, which is $-y_k$.
+
+*Step 4: add the two parts.*
+
+$$
+\frac{\partial \ell}{\partial z_k} = p_k - y_k .
+$$
+
+The gradient is the prediction minus the target, for every class at once. Gradient descent subtracts a multiple of it, which raises the logit of the true class (where $p_c - 1 \lt 0$) and lowers every other logit in proportion to the probability wrongly assigned to it. In the worked example the gradient is $(0.659 - 1,\ 0.242,\ 0.099) = (-0.341,\ 0.242,\ 0.099)$. Its components sum to zero, consistent with the invariance to a common shift of the logits.
 
 ### Soft targets
 
-Nothing in the derivation requires $y$ to be one-hot. If $y$ is any probability vector (the fraction of experts who voted for each EEG pattern, or a smoothed label), the same formula $-\sum_k y_k\log p_k$ is the cross-entropy between the target distribution and the prediction, and its gradient is still $p - y$. Minimising it pushes $p$ towards $y$.
+The derivation used only $\sum_k y_k = 1$ in step 3 once it is written for a general $y$: the derivative of $-\sum_k y_k \log p_k = -\sum_k y_k z_k + \big(\sum_k y_k\big)\log Z$ with respect to $z_k$ is $-y_k + p_k$. The loss
+
+$$
+\ell = -\sum_{k=1}^{K} y_k \log p_k
+$$
+
+is therefore defined, with the same gradient $p - y$, for any probability vector $y$: a smoothed label, or the fraction of experts who chose each class. It is the cross-entropy between the target distribution $y$ and the prediction $p$, and it equals the KL divergence $\mathrm{KL}(y \,\Vert\, p)$ plus the entropy of $y$, which does not depend on the model. Its minimum over $p$ is at $p = y$, where the gradient vanishes.
 
 ### Softmax versus independent sigmoids
 
-Softmax assumes the classes are mutually exclusive: raising one probability lowers the others. Independent sigmoids assume nothing about co-occurrence. The BirdCLEF 2024 winners found softmax cross-entropy clearly better than binary cross-entropy for 182 bird species, even though a recording can contain several species, because almost every training clip had one dominant label. At inference they applied sigmoids to the same logits to score each species independently.
+A softmax couples the classes: raising one logit lowers every other probability, because the probabilities sum to one. It models a single class per example. Independent sigmoids $p_k = \sigma(z_k)$, each trained with binary cross-entropy, model each class as a separate yes-or-no question and allow several classes to be present at once.
+
+The choice depends on the training labels as well as on the task. In BirdCLEF 2024 a test recording could contain several of the 182 bird species, which suggests independent sigmoids. The winners reported that softmax cross-entropy worked much better than binary cross-entropy for training, because most training clips had a single label. At inference they applied a sigmoid to each logit of the softmax-trained model, which scores each species independently; in their ablation this raised the private score from 0.544 to 0.588 over the softmax readout.

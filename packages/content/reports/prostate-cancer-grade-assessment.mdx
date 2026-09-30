@@ -1,6 +1,6 @@
 ---
 slug: prostate-cancer-grade-assessment
-title: "PANDA Prostate Cancer Grade Assessment (2020): tile pooling and removing noisy labels"
+title: "PANDA Prostate Cancer Grade Assessment (2020)"
 shortTitle: PANDA Prostate Grading
 kaggleSlug: prostate-cancer-grade-assessment
 kaggleUrl: https://www.kaggle.com/competitions/prostate-cancer-grade-assessment
@@ -22,10 +22,10 @@ techniques:
   - ensembling
 metric:
   name: Quadratic weighted kappa
-  summary: "Agreement between predicted and reference ISUP grade (0–5), with disagreements penalised by the square of their distance."
+  summary: "Agreement between the predicted and the reference ISUP grade (0–5), corrected for chance agreement, with each disagreement penalised by the square of its distance in grades."
 constraints: { runtime: "Code competition; notebook inference within the Kaggle time limit", hardware: "Kaggle GPU notebook", internet: false }
-summary: "Grade prostate biopsies from whole-slide images on the six-level ISUP scale. Most top teams built on a public 'tile pooling' notebook: select the tiles with the most tissue, pass each through a CNN, pool the features over tiles, and regress the grade. The winning team's decisive step was removing training slides whose labels disagreed strongly with out-of-fold predictions, then retraining. The top algorithms were validated on external data and published in Nature Medicine."
-winningIdea: "Train, predict every training slide out-of-fold, drop the slides where prediction and label differ by more than about 1.6 grades, and train again on the cleaner set; use a duplicate-aware split so the out-of-fold predictions are honest."
+summary: "The competition asked participants to assign an ISUP grade from 0 (benign) to 5 to each prostate biopsy, from H&E-stained whole-slide images from two centres. The winning solution, like many others, selects the tiles with the most tissue, encodes each with a CNN, pools the features over tiles and regresses the grade; before final training it removes training slides whose labels differ strongly from out-of-fold predictions. The winning ensemble scored a quadratic weighted kappa of 0.940 on the private leaderboard."
+winningIdea: "Models are first trained with k-fold cross-validation on a split that keeps near-duplicate slides in the same fold. Training slides whose label differs from the out-of-fold prediction by more than a threshold (1.6 grades in the first version) are removed, and the models are retrained on the remaining slides. The winning submission averages an EfficientNet-B0 and an EfficientNet-B1 trained in this way."
 solutions:
   - rank: 1
     team: PND
@@ -39,19 +39,19 @@ solutions:
     note: "Author of the public tile-pooling notebook on which many top solutions were built."
 deployability:
   score: 4
-  verdict: "EfficientNet-B0/B1 and ResNeXt-50 on 64 tiles per slide are small models; the approach was externally validated in the Nature Medicine challenge paper. Grading is a well-defined clinical task with an established reporting scale, which makes the output directly usable."
-  inference: "Tile extraction from a low-resolution level of the slide, then one CNN pass over 64 tiles; seconds per slide on a GPU."
+  verdict: "The models are EfficientNet-B0, EfficientNet-B1 and ResNeXt-50 applied to 64 tiles per slide. The Nature Medicine challenge paper evaluated the top algorithms on external validation sets. The output is an ISUP grade, the scale pathologists already report."
+  inference: "Tile extraction from an intermediate-resolution level of the slide, then one CNN pass over 64 tiles. The write-ups do not report inference times."
   models: "EfficientNet-B0 and EfficientNet-B1 averaged 1:1 (winning submission)."
-  training: "About 10,000 slides; hours per fold on one GPU at the tile sizes used."
+  training: "About 11,000 slides, fewer after label denoising. The write-ups do not report training times."
   externalData: "None."
   licences:
     code: "Linked from the write-up; check each repository."
     data: "CC BY-NC-SA 4.0 (non-commercial), after the post-competition embargo."
-    weights: "Not released as a separate artefact."
+    weights: "The write-up does not state whether weights were released."
   risks:
-    - "Training labels are noisy (student annotators for one centre, a single pathologist for the other); denoising removes disagreement but also removes genuinely hard cases."
-    - "Two centres and two scanners in training; stain and scanner variation at a new site needs checking."
-    - "A slide-level grade gives no localisation of the tumour for the pathologist to verify."
+    - "Training labels are noisy: students graded the slides from one centre and a single pathologist those from the other. Denoising removes slides with disagreeing labels, and some of the removed slides may be difficult cases with correct labels."
+    - "Training data come from two centres. Performance under the staining and scanning of a new site has to be measured."
+    - "A slide-level grade does not show where the tumour is, so the pathologist cannot check the finding directly."
 related:
   - UBC-OCEAN
   - hubmap-organ-segmentation
@@ -64,14 +64,14 @@ papers:
 dataLinks:
   - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/prostate-cancer-grade-assessment/data" }
 priority: 12
-updated: "2026-09-28"
+updated: "2026-09-29"
 ---
 
-## The problem in its field
+## Clinical background
 
 Prostate cancer is the second most common cancer in men, with more than one million new diagnoses and more than 350,000 deaths each year. It is diagnosed from **needle biopsies**: thin cores of tissue taken from the prostate, stained with haematoxylin and eosin (H&E) and examined under a microscope by a pathologist.
 
-The pathologist does more than say "cancer" or "benign". Prostate cancers vary from indolent tumours that may never cause harm to aggressive ones that spread, and the treatment decision (active surveillance, surgery, radiotherapy) depends on the **grade**. Grading is subjective: pathologists disagree with one another substantially, especially between neighbouring grades, and expert uropathologists are scarce.
+The pathologist reports both whether cancer is present and how aggressive it is. Prostate cancers range from indolent tumours that may never cause harm to aggressive tumours that spread, and the choice between active surveillance, surgery and radiotherapy depends on the **grade**. Grading is subjective, and the competition organisers describe large variation between pathologists, especially between neighbouring grades.
 
 <Deep title="Gleason patterns, Gleason score and ISUP grade" kind="domain">
 
@@ -83,7 +83,7 @@ The pathologist does more than say "cancer" or "benign". Prostate cancers vary f
 
 Patterns 1 and 2 are no longer used in biopsies.
 
-The **Gleason score** is the sum of the most common pattern and the second most common (in biopsies, the worst) pattern, for example $3+4 = 7$. The order matters: $3+4$ (mostly pattern 3) has a better prognosis than $4+3$ (mostly pattern 4).
+The **Gleason score** is the sum of the most common pattern and the second most common pattern (in biopsies, the highest pattern present), for example $3+4 = 7$. The order matters: $3+4$ (mostly pattern 3) has a better prognosis than $4+3$ (mostly pattern 4).
 
 The **ISUP grade group** (International Society of Urological Pathology, 2014) maps Gleason scores onto five prognostic groups:
 
@@ -95,30 +95,30 @@ The **ISUP grade group** (International Society of Urological Pathology, 2014) m
 | 4 | $4+4$, $3+5$, $5+3 = 8$ |
 | 5 | $4+5$, $5+4$, $5+5 = 9$–$10$ |
 
-In the competition, grade 0 means no cancer, giving six classes that are **ordered**.
+In the competition, grade 0 means no cancer, which gives six **ordered** classes.
 </Deep>
 
 <Foundation id="digital-pathology" />
 
-## The data
+## Data
 
-About 11,000 whole-slide images of prostate biopsies from two centres, Radboud University Medical Center (Nijmegen) and Karolinska Institutet (Stockholm), roughly eight times the size of the CAMELYON17 pathology dataset. Each slide has a Gleason score and ISUP grade; many Radboud slides also have coarse pixel-level masks.
+The dataset contains about 11,000 whole-slide images of prostate biopsies from two centres, Radboud University Medical Center (Nijmegen) and Karolinska Institutet (Stockholm). The organisers state that it is about eight times the size of the CAMELYON17 pathology dataset. Each slide has a Gleason score and an ISUP grade.
 
-The **training labels are noisy**, and the noise differs by centre. At Radboud, labels came from trained students whose agreement with experts, reported by the organisers, was about 0.85 on the kappa scale; at Karolinska, a single experienced pathologist graded the slides. The test sets were graded by several expert uropathologists. Some slides also appear more than once in the training data, as near-duplicate images of the same biopsy.
+The **training labels are noisy**, and the noise differs by centre. At Radboud, labels came from trained students, whose agreement with experts the organisers reported as about 0.853 on the kappa scale; at Karolinska, a single experienced pathologist graded the slides. The test slides were graded by expert uropathologists, three per slide. Some biopsies appear more than once in the training data as near-duplicate images.
 
-Slides are stored as multi-resolution TIFF files with three levels; the full resolution is tens of thousands of pixels on each side, most of it white background.
+Slides are stored as multi-resolution TIFF files with three levels. At full resolution a slide is tens of thousands of pixels on each side, most of it white background.
 
-## The metric
+## Evaluation metric
 
 <Foundation id="quadratic-weighted-kappa" />
 
-QWK compares the confusion matrix of predictions and labels with what chance agreement would give, penalising each disagreement by $(i-j)^2$. Predicting grade 4 for a grade-5 slide costs little; predicting 1 for 5 costs sixteen times as much. This rewards models that output a continuous estimate of the grade and are rarely far off, which is why regression outperforms classification on this metric.
+Quadratic weighted kappa (QWK) compares the confusion matrix of predictions and labels with the matrix expected by chance, and penalises a disagreement between grades $i$ and $j$ in proportion to $(i-j)^2$. Predicting grade 4 for a grade-5 slide has weight $1^2 = 1$; predicting grade 1 for a grade-5 slide has weight $4^2 = 16$. In Iafoss's experiments, regression losses gave higher QWK than cross-entropy over the six classes (see the eleventh-place section).
 
-The public and private test sets each held roughly 500 slides. Iafoss noted that this is small for QWK: a few slides can move the score by 0.01, and many teams moved up or down the leaderboard substantially at the end.
+The public and private test sets each held about 500 slides. Iafoss noted that this is small for QWK and that the leaderboard scores were correspondingly noisy.
 
-## The shared starting point: tile pooling
+## Tile pooling
 
-Almost every top solution built on a public notebook by Iafoss. A whole-slide image is too large for a CNN, yet the grade is a property of the whole slide.
+Many top solutions, including the winner's, built on a public notebook by Iafoss. A whole-slide image is too large to pass through a CNN at once, and the grade is a property of the whole slide.
 
 <Pipeline steps={[
   {tag: "Level", title: "Read a lower-resolution level", detail: "intermediate level of the TIFF"},
@@ -131,67 +131,80 @@ Almost every top solution built on a public notebook by Iafoss. A whole-slide im
 
 <Foundation id="models-and-loss" />
 
-**Tile selection.** The slide is cut into a grid of square tiles, and the $N$ tiles with the most tissue are kept. On an H&E slide, background is white, so "most tissue" means the smallest sum of pixel intensities. This compresses a slide from hundreds of millions of pixels to, for example, 64 tiles of 256 × 256.
+**Tile selection.** The slide, read at an intermediate resolution level, is cut into a grid of square tiles, and the $N$ tiles with the most tissue are kept. On an H&E slide the background is white, so the tiles with the most tissue are those with the smallest sum of pixel intensities. For $N = 64$ tiles of 256 × 256 pixels, the input to the network is
 
-**Tile pooling.** Each tile passes through the same CNN. Iafoss's notebook concatenates the $N$ feature maps into one large map and then pools it. Mathematically this is pooling over tiles and positions together: with tile feature maps $F^{(n)} \in \mathbb{R}^{C\times h\times w}$,
 $$
-z_c = \operatorname{pool}\Big(\{F^{(n)}_{c,a,b} : n = 1..N,\; a=1..h,\; b=1..w\}\Big),
+64 \times 256 \times 256 = 4{,}194{,}304 \ \text{pixels},
 $$
-so the slide embedding does not depend on the order of the tiles. A head (in the public notebook, concatenated average and max pooling followed by a small MLP) maps $z$ to the prediction.
+
+against the hundreds of millions of pixels of a full-resolution slide.
+
+**Tile pooling.** Each tile passes through the same CNN. Let $F^{(n)} \in \mathbb{R}^{C \times h \times w}$ be the feature map of tile $n = 1, \dots, N$, with $C$ channels on an $h \times w$ grid. Iafoss's notebook concatenates the $N$ feature maps into one map and pools it, so each channel $c$ is pooled over all tiles and positions together:
+
+$$
+z_c = \operatorname{pool}\Big(\big\{\, F^{(n)}_{c,a,b} \ :\ n = 1, \dots, N;\ a = 1, \dots, h;\ b = 1, \dots, w \,\big\}\Big).
+$$
+
+Average and max pooling depend only on the set of values, so $z$ does not change if the tiles are reordered. In the public notebook, the head concatenates average and max pooling and applies a small multilayer perceptron (MLP) to obtain the prediction.
 
 <Foundation id="multiple-instance-learning" />
 
-This is **multiple-instance learning** with the slide as the bag and tiles as instances, but with the whole bag processed in one forward pass so that the network is trained end to end from slide labels. It works because 64 small tiles fit in GPU memory at once, which UBC-OCEAN's larger, more heterogeneous slides did not allow.
+In the terms of multiple-instance learning, the slide is the bag and the tiles are its instances. The whole bag is processed in one forward pass, so the network is trained end to end from slide labels. This requires that all selected tiles fit in GPU memory at once, which holds for 64 tiles of this size.
 
 <Foundation id="cnn-backbones" />
 
-## How the winning solution works
+## Winning solution
 
-Team PND (arutema47, poteman and fam_taro) submitted two ensembles. The one that won was an equal-weight average of an EfficientNet-B0 trained by arutema47 and an EfficientNet-B1 trained by fam_taro: public 0.904, private **0.940**. Their other selection, a ResNeXt-50 by poteman, scored higher on the public leaderboard (0.910) but lower privately (0.922).
+Team PND (arutema47, poteman and fam_taro) selected two submissions. The winning one was an equal-weight average of an EfficientNet-B0 trained by arutema47 and an EfficientNet-B1 trained by fam_taro: public 0.904, private **0.940**. The other selection, a ResNeXt-50 by poteman, scored higher on the public leaderboard (0.910) and lower on the private leaderboard (0.922).
 
-### Step 1: a duplicate-aware split
+### Duplicate-aware cross-validation split
 
-Near-duplicate slides must be in the same fold; otherwise the model sees the same biopsy during training and validation, and its out-of-fold predictions on those slides are too good. The team found duplicates with **image hashing** (a perceptual hash of a low-resolution thumbnail) and grouped slides whose hash similarity exceeded 0.90, then stratified folds by grade within these groups. fam_taro describes this as essential for the next step.
+If near-duplicate slides are placed in different folds, a model sees the same biopsy during training and validation, and its out-of-fold predictions on those slides are too accurate. The team found duplicates with **image hashing** (a perceptual hash of a low-resolution thumbnail), grouped slides whose hash similarity exceeded 0.90, and stratified the folds by grade with each group kept in one fold. fam_taro took the image-hash grouping from a public notebook by Appian, and describes the duplicate-aware split as essential for the denoising step below.
 
 <Foundation id="cross-validation" />
 
-### Step 2: label denoising
+### Label denoising
 
-The central idea, from arutema47:
+The procedure, proposed by arutema47:
 
 1. Train $k$-fold models (an EfficientNet-B1 similar to a public notebook by Qishen Ha) with **regression** on the ISUP grade.
-2. Predict each training slide with the model that did not train on it (out-of-fold).
-3. **Remove** slides where $|\text{label} - \text{prediction}| > 1.6$.
+2. Predict each training slide with the model that did not train on it (out-of-fold prediction).
+3. **Remove** slides with $|\text{label} - \text{prediction}| > 1.6$.
 4. Retrain on the remaining slides.
 
-A plain EfficientNet-B0 trained this way reached cross-validation QWK 0.94, public 0.90 and private 0.934, about the score that won the competition, without any other change.
+An EfficientNet-B0 based on Qishen Ha's public notebook, trained with 5-fold cross-validation after this denoising, reached a cross-validation QWK of 0.94, public 0.90 and private 0.934, against 0.940 for the winning ensemble.
 
-<Deep title="Why removing disagreeing labels can help, and when it hurts" kind="math">
-
-Consider a training label $\tilde y = y + \varepsilon$, where $y$ is the true grade and $\varepsilon$ is annotator error. For a squared-error regression, the population minimiser is the conditional mean:
-$$
-f^*(x) = \mathbb{E}[\tilde y \mid x] = \mathbb{E}[y\mid x] + \mathbb{E}[\varepsilon \mid x].
-$$
-If errors average to zero at every $x$, noise does not bias the optimum; it only adds variance. With about 10,000 slides and a flexible network, however, the network does not reach the population optimum: it fits individual training labels, including wrong ones, and the errors then influence its predictions on similar test slides.
-
-An out-of-fold prediction $\hat y_i$ is made by a model that never saw slide $i$. If $|\tilde y_i - \hat y_i|$ is large, then either the model is wrong or the label is. Removing such slides removes a mixture of true label errors and difficult cases. The trade-off:
-
-- If most large residuals are label errors, removal improves the training signal.
-- If many are genuinely hard slides (rare patterns, artefacts), removal teaches the model to ignore them, and it will fail on similar test slides.
-
-Here, the test labels came from expert panels, while training labels came from students (Radboud) or one pathologist (Karolinska). The residuals were therefore enriched for label errors, and denoising helped. fam_taro refined the rule with thresholds per grade and per centre, looser for grades 0 and 5 at the ends of the scale:
+fam_taro replaced the single threshold with thresholds per grade and per centre, larger for grades 0 and 5 at the ends of the scale:
 
 | Centre | Thresholds for grades 0–5 |
 | --- | --- |
 | Radboud | 1.3, 0.8, 0.8, 0.8, 0.8, 1.3 |
 | Karolinska | 1.5, 1.0, 1.0, 1.0, 1.0, 1.5 |
 
-The tighter Radboud thresholds reflect the noisier student labels there.
+The Radboud thresholds are smaller, so more Radboud slides are removed at a given residual.
 
-The duplicate-aware split matters here: if a slide's duplicate were in the training folds, its out-of-fold prediction would reproduce the (possibly wrong) label, the residual would be small, and the error would survive denoising.
+<Deep title="Effect of label noise on a regression model, and what the residual filter removes" kind="math">
+
+Let $x$ be a slide, $y \in \{0, \dots, 5\}$ its true grade and $\tilde y = y + \varepsilon$ its training label, where $\varepsilon$ is the annotator's error. For a squared-error loss, the function that minimises the expected loss over the data distribution is the conditional mean of the label:
+
+$$
+f^*(x) = \mathbb{E}[\tilde y \mid x] .
+$$
+
+Substituting $\tilde y = y + \varepsilon$ and using linearity of expectation:
+
+$$
+f^*(x) = \mathbb{E}[y \mid x] + \mathbb{E}[\varepsilon \mid x] .
+$$
+
+If the errors have mean zero at every $x$, the second term vanishes and noise does not shift the optimum. A network trained on about 11,000 slides does not reach this optimum: it can fit individual training labels, including wrong ones, and these fitted errors affect its predictions on similar slides.
+
+An out-of-fold prediction $\hat y_i$ comes from a model that did not see slide $i$. A large residual $|\tilde y_i - \hat y_i|$ means that the label or the prediction is wrong. Removing the slides with large residuals therefore removes both label errors and slides that are difficult for the model. If most removed slides carry label errors, the training labels become more accurate. If many are difficult slides with correct labels, such as rare patterns or artefacts, the retrained model sees fewer examples of them. The measured gains in this competition (above, and in the eleventh-place section) show that removal improved the score against the expert-graded test labels.
+
+The duplicate-aware split affects the filter directly. If a duplicate of slide $i$ were in the training folds, the model would have fitted the label of the duplicate, which is the same possibly wrong label; the out-of-fold prediction would reproduce it, the residual would be small, and the error would not be removed.
 </Deep>
 
-They also tried **confident learning** (CleanLab), a principled method for finding label errors from predicted class probabilities; it did worse than the simple residual threshold.
+The team also tried **confident learning** (the CleanLab library), which identifies label errors from predicted class probabilities; it gave worse results than the residual threshold.
 
 <Deep title="Out-of-fold denoising in code" kind="code">
 
@@ -218,69 +231,133 @@ clean = df[keep]                                  # retrain every fold on this s
 
 <Foundation id="pseudo-labelling" />
 
-### Step 3: the models
+### Models
 
-- **fam_taro**: EfficientNet-B1 with GeM pooling, 64 tiles of 192 × 192. Targets were the ISUP grade and the first Gleason pattern (as a 10-dimensional binned encoding). Stratified 5-fold on Gleason score with hash grouping; benign slides relabelled as "0+0".
-- **arutema47**: EfficientNet-B0 on the same tile scheme.
-- **poteman**: ResNeXt-50 (32×4d) on 64 tiles of 256 × 256 with three regression heads and one softmax head.
+- **fam_taro**: EfficientNet-B1 with generalised-mean (GeM) pooling, 64 tiles of 192 × 192. The targets were the ISUP grade and the first Gleason pattern (as a 10-dimensional binned encoding). Stratified 5-fold split on Gleason score with hash grouping; benign slides relabelled as "0+0".
+- **arutema47**: EfficientNet-B0.
+- **poteman**: ResNeXt-50 (32×4d) with Iafoss's tile method, 64 tiles of 256 × 256, stratified folds with hash grouping, and a head with three regression outputs and one softmax output.
 
-The regression output is converted to a grade by rounding with thresholds, which can be tuned on out-of-fold predictions to maximise QWK.
+A regression output is converted to an integer grade with thresholds between consecutive grades. The thresholds can be set at the half-integers or tuned on out-of-fold predictions to maximise QWK.
 
 <Foundation id="ensembling-tta" />
 
-What did not help: confident learning, CycleGAN stain transfer between centres, adaptive batch normalisation, and CutMix or mixup before denoising.
+The following did not help fam_taro: confident learning, CycleGAN stain transfer between centres, adaptive batch normalisation, and CutMix or mixup applied before denoising.
 
-## Eleventh place: a loss that is the metric
+## Eleventh place: a differentiable kappa loss
 
-Iafoss, whose public notebook many teams used, finished eleventh with a solo gold. His write-up adds three findings.
+Iafoss, whose public notebook many teams used, finished eleventh alone with a gold medal. His public notebook, with 36 tiles of 256 × 256 and a kappa loss, scored about 0.90 public and 0.91 private. In his final solution he used 128 tiles of 128 × 128 from an intermediate resolution level, with tile cutout and random tile selection as augmentation.
 
-**Denoising also helped him**: removing about 1,400 Radboud and 300 Karolinska slides (8,700 remaining) gained +0.005 public and +0.01 private. Relabelling the removed slides with model predictions did not help. He also experimented with noise-robust training methods (co-teaching, JoCoR, negative learning, progressive label distillation) but kept the simple removal.
+**Denoising.** Removing about 1,400 Radboud and 300 Karolinska slides, which left 8,700, improved his score by 0.005 on the public and 0.01 on the private leaderboard. Relabelling the removed slides with model predictions did not help. He also tried noise-robust training methods (co-teaching, JoCoR, negative learning, progressive label distillation).
 
-**A kappa loss** outperformed the alternatives in his experiments: kappa loss > sorted binning > binning > MSE > cross-entropy.
+**Kappa loss.** In his experiments the losses ranked as follows: kappa loss, then sorted binning, then binning, then mean squared error (MSE), then cross-entropy.
 
 <Deep title="From quadratic weighted kappa to a differentiable loss" kind="math">
 
-Write the labels $y_i$ and continuous predictions $\hat y_i$ for $i = 1..N$ as real numbers. Quadratic weighted kappa is one minus the ratio of observed to expected weighted disagreement:
-$$
-\kappa = 1 - \frac{\sum_i (y_i - \hat y_i)^2}{\frac{1}{N}\sum_i\sum_j (y_i - \hat y_j)^2}.
-$$
-The denominator is the disagreement expected if predictions were paired with labels at random, which is the continuous version of the product of marginal histograms in the discrete definition.
+Let $y_1, \dots, y_n$ be the labels and $\hat y_1, \dots, \hat y_n$ the predictions, treated as real numbers. With the observed and expected matrices of the Foundation block above, the weighted sums for integer grades are
 
-Expand the denominator. $\sum_i\sum_j (y_i - \hat y_j)^2 = N\sum_i y_i^2 + N\sum_j \hat y_j^2 - 2\big(\sum_i y_i\big)\big(\sum_j \hat y_j\big)$, so, with means $\bar y$ and $\bar{\hat y}$,
 $$
-D := \tfrac{1}{N}\textstyle\sum_i\sum_j (y_i - \hat y_j)^2 = \sum_i y_i^2 + \sum_i \hat y_i^2 - 2N\bar y\,\bar{\hat y}.
+\sum_{i,j} (i-j)^2\,O_{ij} = \sum_{k=1}^{n} (y_k - \hat y_k)^2,
+\qquad
+\sum_{i,j} (i-j)^2\,E_{ij} = \frac{1}{n}\sum_{k=1}^{n}\sum_{l=1}^{n} (y_k - \hat y_l)^2 .
 $$
-The numerator is $O := \sum_i y_i^2 + \sum_i \hat y_i^2 - 2\sum_i y_i\hat y_i$. Then
-$$
-\kappa = \frac{D - O}{D} = \frac{2\sum_i y_i \hat y_i - 2N\bar y\,\bar{\hat y}}{\sum_i y_i^2 + \sum_i \hat y_i^2 - 2N\bar y\,\bar{\hat y}}.
-$$
-Now centre: $\sum_i y_i\hat y_i - N\bar y\bar{\hat y} = \sum_i (y_i - \bar y)(\hat y_i - \bar{\hat y}) = N s_{y\hat y}$, and $\sum_i y_i^2 + \sum_i \hat y_i^2 - 2N\bar y\bar{\hat y} = N s_y^2 + N s_{\hat y}^2 + N(\bar y - \bar{\hat y})^2$, where $s$ denotes (biased) sample variances and covariance. So
-$$
-\kappa = \frac{2\,s_{y\hat y}}{s_y^2 + s_{\hat y}^2 + (\bar y - \bar{\hat y})^2}.
-$$
-This is **Lin's concordance correlation coefficient** (1989). It is a smooth function of the predictions and can be computed on each mini-batch; the loss is $1 - \kappa$. Unlike MSE, it does not reward shrinking all predictions towards the mean grade: shrinking reduces $s_{y\hat y}$ in the numerator, while MSE would reward it when the model is uncertain. Iafoss centred predictions and labels within the batch, as the formula requires.
 
-A caution: on a small batch, the covariance estimate is noisy, so the loss is noisier than MSE per step; batch sizes of tens of slides are needed.
+The first sum counts each slide once at its own pair of grades. The second follows from $E_{ij} = r_i c_j / n$: pairing every label with every prediction gives $r_i c_j$ pairs with grades $(i, j)$. The normalisation $(N-1)^2$ of the weights cancels in the ratio, so
+
+$$
+\kappa = 1 - \frac{O}{D},
+\qquad
+O = \sum_{k} (y_k - \hat y_k)^2,
+\qquad
+D = \frac{1}{n}\sum_{k}\sum_{l} (y_k - \hat y_l)^2 .
+$$
+
+The right-hand side is defined for real-valued predictions, which gives the continuous version of QWK.
+
+**Expanding $D$.** Expanding the square and summing over $k$ and $l$:
+
+$$
+\sum_{k}\sum_{l} (y_k - \hat y_l)^2 = n\sum_k y_k^2 + n\sum_l \hat y_l^2 - 2\Big(\sum_k y_k\Big)\Big(\sum_l \hat y_l\Big).
+$$
+
+With the means $\bar y = \tfrac1n \sum_k y_k$ and $\bar{\hat y} = \tfrac1n \sum_k \hat y_k$, dividing by $n$ gives
+
+$$
+D = \sum_k y_k^2 + \sum_k \hat y_k^2 - 2n\,\bar y\,\bar{\hat y} .
+$$
+
+**Expanding $O$:**
+
+$$
+O = \sum_k y_k^2 + \sum_k \hat y_k^2 - 2\sum_k y_k \hat y_k .
+$$
+
+**The difference.** The squared terms cancel in $D - O$:
+
+$$
+D - O = 2\sum_k y_k\hat y_k - 2n\,\bar y\,\bar{\hat y} .
+$$
+
+**Centring.** Let $s_y^2$ and $s_{\hat y}^2$ be the (biased) sample variances and $s_{y\hat y}$ the sample covariance. From the identities $\sum_k y_k\hat y_k - n\bar y\bar{\hat y} = n\,s_{y\hat y}$ and $\sum_k y_k^2 = n\,s_y^2 + n\,\bar y^2$ (and likewise for $\hat y$):
+
+$$
+D - O = 2n\,s_{y\hat y},
+\qquad
+D = n\,s_y^2 + n\,s_{\hat y}^2 + n\,(\bar y - \bar{\hat y})^2 .
+$$
+
+**Result.** Since $\kappa = (D - O)/D$, cancelling $n$:
+
+$$
+\kappa = \frac{2\,s_{y\hat y}}{s_y^2 + s_{\hat y}^2 + (\bar y - \bar{\hat y})^2} .
+$$
+
+This is **Lin's concordance correlation coefficient** (1989). It is a smooth function of the predictions and can be computed on each mini-batch; the loss is $1 - \kappa$. Iafoss centred the predictions and labels within the batch, as the covariance and variances require.
+
+**Difference from MSE.** Consider predictions with the correct mean, $\bar{\hat y} = \bar y$, and scale their deviations by a factor $\lambda > 0$, so that $\hat y_k = \bar y + \lambda u_k$ with $\bar u = 0$. Write $s_{yu}$ and $s_u^2$ for the covariance and variance of $u$. Then
+
+$$
+\kappa(\lambda) = \frac{2\lambda\,s_{yu}}{s_y^2 + \lambda^2 s_u^2} .
+$$
+
+Differentiating with respect to $\lambda$, the numerator of the derivative is proportional to
+
+$$
+(s_y^2 + \lambda^2 s_u^2) - 2\lambda^2 s_u^2 = s_y^2 - \lambda^2 s_u^2 ,
+$$
+
+which is zero at $\lambda^2 s_u^2 = s_y^2$. Kappa is maximised when the predictions have the same variance as the labels. The mean squared error is
+
+$$
+\tfrac1n\,O(\lambda) = s_y^2 - 2\lambda\,s_{yu} + \lambda^2 s_u^2 ,
+$$
+
+which is minimised at $\lambda = s_{yu}/s_u^2$. The variance of the predictions is then
+
+$$
+\lambda^2 s_u^2 = \frac{s_{yu}^2}{s_u^2} = \rho^2\,s_y^2 ,
+$$
+
+where $\rho = s_{yu}/(s_y s_u)$ is the correlation between labels and predictions. Since $\rho^2 \le 1$, MSE training shrinks the predictions towards the mean grade by a variance factor $\rho^2$, while the kappa loss does not. For example, with $\rho = 0.9$, the MSE-optimal predictions have $0.81$ of the label variance.
 </Deep>
 
-**Fewer epochs.** He limited training to 32–48 epochs, arguing that longer training learns the grading habits of the training annotators, which differ from those of the expert test panel. His final submission was a majority vote of 8 ResNeXt-50 models (0.917 public, 0.930 private).
+**Number of epochs.** He limited training to 32–48 epochs, so that the model would not learn the grading tendencies of the training annotators, which differ from those of the expert test panel. His final submission was a majority vote of 8 ResNeXt-50 models (0.917 public, 0.930 private).
 
-## How this compares with other competitions
+## Comparison with other competitions
 
-- **UBC-OCEAN** (ovarian cancer subtyping) also uses whole-slide images, but the slides are larger and vary in magnification, and the target is a subtype rather than a grade. Its winners used a pathology foundation model (Phikon) to embed tiles and trained only a small CHOWDER multiple-instance head, rather than training the whole network end to end.
-- **APTOS 2019** (diabetic retinopathy) is the other ordinal-grading competition in the collection, also scored with QWK; the winner there also regressed the grade (with a smooth L1 loss) and converted it to classes with thresholds.
-- **Label noise** is handled more explicitly here than anywhere else in the collection. In ISIC 2024 and the RSNA competitions, labels come from biopsy or expert consensus; in PANDA, the gap between training and test annotators is the central difficulty.
+- **UBC-OCEAN** (ovarian cancer subtyping) also uses whole-slide images, together with tissue microarrays at a different magnification, and the target is a subtype. Its winner embedded tiles with a pathology foundation model (Phikon) and trained only a small multiple-instance head (CHOWDER), without training the tile encoder end to end.
+- **APTOS 2019** (diabetic retinopathy) is the other ordinal-grading competition in the collection and was also scored with QWK. The winner there also regressed the grade, with a smooth L1 loss, and converted the output to classes with thresholds.
+- **Label noise.** In PANDA the training and test labels were produced by different kinds of annotator, and the top solutions removed training slides by the size of their out-of-fold residual.
 
 ## Compute and deployment
 
-| Setting | What the solution needs |
+| Setting | Requirements |
 | --- | --- |
-| Competition | Kaggle GPU notebook; tile extraction from the lower-resolution TIFF level dominates the time. |
-| Pathology lab | A GPU workstation; per-slide inference in seconds once tiles are extracted. |
-| Clinical product | Scanner and stain validation at each site; regulatory approval as a decision-support tool; localisation output for the pathologist. |
+| Competition | Kaggle GPU notebook; tiles are extracted from the intermediate-resolution TIFF level before the CNN pass. |
+| Pathology lab | A GPU workstation and a slide scanner producing multi-resolution images. |
+| Clinical product | Validation for the scanner and staining of each site; regulatory approval as a decision-support tool; localisation output for the pathologist. |
 
-The challenge paper (Bulten et al., *Nature Medicine*, 2022) evaluated the top algorithms on external validation sets from the United States and Europe and reported agreement with expert uropathologists comparable to that between the experts themselves.
+The challenge paper (Bulten et al., *Nature Medicine*, 2022) evaluated the top algorithms on external validation sets from the United States and Europe and reported agreement with expert uropathologists comparable to the agreement between the experts themselves.
 
-<Callout kind="deploy" title="The minimum useful version">
-An EfficientNet-B0 on 64 tissue tiles with tile pooling, trained with MSE or a kappa loss on a duplicate-aware split, then retrained after out-of-fold label denoising. The data licence is non-commercial, so a product must be trained on separately licensed data.
+<Callout kind="deploy" title="Reduced configuration">
+An EfficientNet-B0 on 64 tissue tiles with tile pooling, trained with MSE or a kappa loss on a duplicate-aware split and retrained after out-of-fold label denoising. After denoising, this configuration scored 0.934 on the private leaderboard. The data licence is non-commercial, so a product has to be trained on separately licensed data.
 </Callout>

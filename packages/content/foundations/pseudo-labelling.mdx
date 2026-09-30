@@ -2,33 +2,76 @@
 id: pseudo-labelling
 title: "Pseudo-labelling and knowledge distillation"
 kind: ml
-summary: "A trained model labels unlabelled data, and a new model trains on those labels. When done carefully this transfers what an ensemble knows into more data and into smaller models."
+summary: "Pseudo-labelling trains a model on unlabelled examples whose targets are the predictions of an earlier model, and knowledge distillation trains a small model to reproduce the outputs of a larger one. The primer defines both procedures, the soft targets they use and the safeguards against a model learning its own errors."
 ---
+
+### Definitions
+
+Let $\mathcal{D}_L = \{(x_i, y_i)\}_{i=1}^{n}$ be a labelled dataset, where $x_i$ is an input (an image, a recording) and $y_i$ its label, and let $\mathcal{D}_U = \{u_j\}_{j=1}^{m}$ be a set of inputs without labels. For a classification task with $K$ classes, a trained model $f$ maps an input to a probability vector $f(x) \in [0,1]^K$ whose entries sum to 1.
+
+A **pseudo-label** for an unlabelled input $u_j$ is a target computed from a model's prediction on it. Two forms are used:
+
+- a **hard pseudo-label**, the most probable class $\hat y_j = \arg\max_k f(u_j)_k$;
+- a **soft pseudo-label**, the probability vector $\tilde y_j = f(u_j)$ itself.
+
+The model that produces the pseudo-labels is called the **teacher** and the model trained on them the **student**. Teacher and student may have the same architecture.
 
 ### The procedure
 
-1. Train a model (usually an ensemble) on the labelled data.
-2. Predict on unlabelled data: the test set, extra public data, or unlabelled recordings from the same source.
-3. Add those examples to training with the predictions as targets, often as soft probabilities rather than hard labels.
-4. Train a new model on the enlarged set, and optionally repeat.
+1. Train a teacher $f_0$ on $\mathcal{D}_L$. The teacher is often an ensemble, whose prediction is the average of several models' predictions.
+2. Predict on the unlabelled set to obtain targets $\tilde y_j = f_0(u_j)$. The unlabelled set may be the competition's test inputs, a public dataset, or unlabelled recordings from the same source as the test data.
+3. Train a student $f_1$ on the union of $\mathcal{D}_L$ and $\{(u_j, \tilde y_j)\}$.
+4. Optionally, use $f_1$ as the new teacher and repeat.
 
-### Why it works
+With a per-example loss $\ell$ (for example the cross-entropy between a target vector and a prediction), the student minimises
 
-The new model sees inputs from the target distribution (test-time scanners, test-time recording sites) that the labelled data lacked. The soft targets also carry information about which classes are confusable. In BirdCLEF 2024, pseudo-labelling the unlabelled soundscapes, recorded at the same sites as the test data, gave the winners one of their largest single gains (private AUC 0.615 to 0.640).
+$$
+\mathcal{L}(f_1) = \frac{1}{n}\sum_{i=1}^{n} \ell\big(y_i, f_1(x_i)\big) + \lambda\,\frac{1}{m}\sum_{j=1}^{m} \ell\big(\tilde y_j, f_1(u_j)\big),
+$$
 
-### Why it can fail
+where $\lambda \ge 0$ sets the weight of the pseudo-labelled term relative to the labelled term. The cross-entropy accepts a probability vector as its target, so soft pseudo-labels need no change to the loss (see the primer on softmax and categorical cross-entropy).
 
-The model learns its own mistakes. Safeguards used by winners:
+### What the student gains
 
-- Use an **ensemble** to generate labels, so individual models' errors average out.
-- Keep only **confident** pseudo-labels, or give pseudo-labelled data a lower weight.
-- Mix pseudo-labels with the original labels: Chris Deotte's HMS model used $0.1\times$ the original vote distribution plus $0.3\times$ each of three models' predictions.
-- Never validate on pseudo-labelled data.
+The unlabelled inputs can come from a distribution closer to the test data than the labelled inputs: images from the scanners used at test time, or audio from the recording sites of the test set. Training on them exposes the student to that distribution even though no human label exists for it. Soft targets carry a second kind of information: a teacher that assigns 0.6 to one class and 0.3 to another records that the two classes are confusable for this input, which a hard label discards.
+
+In BirdCLEF 2024 the labelled data were mostly focal recordings of single birds, and the test data were soundscapes from fixed recorders. The winners pseudo-labelled the unlabelled soundscapes from the same sites. In their ablation, adding these soundscapes raised the private-leaderboard score from 0.615 to 0.640.
+
+### Confirmation bias and safeguards
+
+A teacher's errors become the student's targets, so the student is trained to repeat them. This effect is called confirmation bias. Safeguards used in competition solutions include the following.
+
+- **Ensemble teachers.** Averaging several models' predictions reduces the variance of the pseudo-labels, because errors that are not shared between models partly cancel.
+- **Confidence filtering and down-weighting.** Only pseudo-labels whose maximum probability exceeds a threshold $\tau$ are kept, or the pseudo-labelled term receives a weight $\lambda \lt 1$.
+- **Mixing with the original labels.** In the HMS brain-activity competition, Chris Deotte (8th place) relabelled the training samples with fewer than 10 expert votes by combining the original vote distribution $y^{\mathrm{votes}}$ with the predictions $f_1, f_2, f_3$ of three models:
+
+$$
+\tilde y = 0.1\,y^{\mathrm{votes}} + 0.3\,f_1(x) + 0.3\,f_2(x) + 0.3\,f_3(x).
+$$
+
+  The coefficients sum to $0.1 + 3 \times 0.3 = 1$, so $\tilde y$ is again a probability vector.
+
+- **Validation only on human labels.** Pseudo-labelled examples are excluded from the validation folds. A validation score computed against the teacher's own predictions measures agreement with the teacher.
 
 ### Label correction on external data
 
-External datasets often use different label definitions. The APTOS winner trained on IDRiD and Messidor after averaging their labels with his own model's predictions, which aligned their grading conventions with the competition's. The pneumothorax third-place solution kept only CheXpert positives that his model also predicted positive.
+External datasets are often graded under conventions that differ from the competition's. A model trained on the competition data can be used to align them. The APTOS 2019 winner, Guanshuo Xu, added the IDRiD and Messidor retinal datasets in his second stage. For IDRiD he averaged the given grades with his first-stage model's predictions. Messidor uses four grade levels, and he adjusted its labels with a group-mean-based mapping onto the competition's five grades. In the SIIM-ACR pneumothorax competition, the third-place solution pseudo-labelled chest radiographs from CheXpert and NIH ChestX-ray14 and kept an external positive only when its own model also predicted pneumothorax.
 
-### Distillation
+### Knowledge distillation
 
-**Knowledge distillation** trains a small "student" model on the outputs of a large "teacher". It is pseudo-labelling on the training data itself, with the aim of compressing an ensemble into one model that fits a deployment budget. The fifth-place ASL fingerspelling solution used it for that reason.
+**Knowledge distillation** (Hinton, Vinyals and Dean, 2015) trains a student on the soft outputs of a teacher on the labelled inputs themselves. The usual aim is a smaller or faster model that approaches the accuracy of a large model or an ensemble.
+
+The teacher's outputs are usually softened with a **temperature** $T \gt 0$. If $z \in \mathbb{R}^K$ are the teacher's logits (the scores before the softmax), the softened probabilities are
+
+$$
+p_k^{(T)} = \frac{e^{z_k / T}}{\sum_{j=1}^{K} e^{z_j / T}}, \qquad k = 1, \dots, K.
+$$
+
+$T = 1$ gives the ordinary softmax, and larger $T$ spreads probability more evenly across classes. For logits $z = (2, 1, 0)$:
+
+- at $T = 1$: $p = (0.665,\ 0.245,\ 0.090)$;
+- at $T = 2$ the logits become $(1, 0.5, 0)$, and $p = (0.507,\ 0.307,\ 0.186)$.
+
+The softened vector makes the teacher's ranking of the incorrect classes more visible to the student. The student is trained with the same temperature on a weighted sum of the cross-entropy against the softened teacher outputs and the cross-entropy against the true labels. Hinton et al. multiply the first term by $T^2$, because the gradients of a softmax at temperature $T$ scale approximately as $1/T^2$.
+
+In the ASL fingerspelling competition, in which submitted models were limited to 40 MB, the fifth-place solution used knowledge distillation.

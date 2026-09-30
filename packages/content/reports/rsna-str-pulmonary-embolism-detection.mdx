@@ -1,6 +1,6 @@
 ---
 slug: rsna-str-pulmonary-embolism-detection
-title: "RSNA STR Pulmonary Embolism Detection (2020): slice features, sequence models and consistent labels"
+title: "RSNA STR Pulmonary Embolism Detection (2020)"
 shortTitle: RSNA Pulmonary Embolism
 kaggleSlug: rsna-str-pulmonary-embolism-detection
 kaggleUrl: https://www.kaggle.com/competitions/rsna-str-pulmonary-embolism-detection
@@ -24,10 +24,10 @@ techniques:
   - ensembling
 metric:
   name: Weighted log loss over image and exam labels
-  summary: "Log loss over a per-slice PE label and nine exam-level labels (presence, chronicity, location, heart strain), each with its own weight, under rules that the labels of a study must be mutually consistent."
+  summary: "Weighted log loss over one label per slice (embolus visible or not) and nine labels per study, which describe presence, chronicity, location and right-heart strain. Each exam label has its own weight, the slice weight is scaled by the fraction of positive slices in the study, and submitted labels had to satisfy rules of mutual consistency."
 constraints: { runtime: "Code competition: notebook inference in at most 9 hours", hardware: "Kaggle GPU notebook", internet: false }
-summary: "Find pulmonary emboli in CT angiograms and describe them: on which slices, on which side, acute or chronic, and whether they strain the heart. The winner trained a 2D CNN on lung crops with adjacent slices as channels for one epoch, then fed the slice embeddings of each study to a bidirectional GRU that predicts all exam labels, and repaired inconsistent label sets by choosing the cheaper consistent configuration. The runner-up, a radiologist, added dedicated heart and RV/LV models."
-winningIdea: "Train a slice-level CNN on lung crops, turn each study into a fixed-length sequence of slice embeddings by resizing along the slice axis, and let one bidirectional GRU with attention and max pooling predict the image and exam labels together."
+summary: "The competition asked participants to detect pulmonary emboli in CT pulmonary angiograms, both on each slice and for the study as a whole, and to characterise them by side, central location, chronicity and strain on the right ventricle of the heart. The winning solution crops the lungs, computes an embedding of every slice with a 2D CNN, resizes the sequence of embeddings to a fixed length, and predicts all slice and study labels with a bidirectional GRU; a post-processing step then makes the labels consistent. The author's best slice model reached a slice-level ROC AUC of 0.964 on a hold-out set of 1,000 studies."
+winningIdea: "A 2D CNN trained for one epoch on lung crops, with three adjacent slices as channels, computes an embedding of every slice. The embeddings of a study are resized along the slice axis to a fixed length and read by one bidirectional GRU, which predicts the slice labels from its per-position outputs and the exam labels from attention pooling and max pooling. Label sets that violate the consistency rules are replaced by the nearest consistent set with the lower estimated loss."
 solutions:
   - rank: 1
     team: Guanshuo Xu
@@ -43,7 +43,7 @@ solutions:
       - { label: "Code", url: "https://github.com/i-pan/kaggle-rsna-pe" }
 deployability:
   score: 4
-  verdict: "The winner's pipeline is a lung localiser, one SE-ResNeXt per slice and one GRU per study, all run inside a 9-hour notebook on the full test set. Code is public. The exam labels (location, chronicity, right-heart strain) match what a radiology report states, which makes the output clinically meaningful."
+  verdict: "The winning pipeline consists of a lung localiser, one SE-ResNeXt applied to each slice and one GRU per study, and it processed the full hidden test set within a 9-hour notebook. The code is public. The exam labels (location, chronicity, right-heart strain) correspond to statements in a radiology report of a pulmonary angiogram."
   inference: "Per study: one regression pass to crop the lungs, one CNN pass per slice (studies have 100 to over 1,000 slices), one GRU pass; tens of seconds per study on a GPU."
   models: "EfficientNet-B0 lung localiser; SE-ResNeXt-50 and SE-ResNeXt-101 slice models; a bidirectional GRU study model."
   training: "Slice models trained for a single epoch over about 1.5 million slices; hours on a single GPU per model."
@@ -53,9 +53,9 @@ deployability:
     data: "RSNA-STR PE CT dataset under RSNA terms (non-commercial research)."
     weights: "See the repositories."
   risks:
-    - "Chronic versus acute PE and RV/LV ratio are hard labels with lower agreement between readers; their predictions deserve less trust than PE presence."
-    - "CT angiograms vary in contrast timing; poorly opacified studies were labelled 'indeterminate' and remain difficult."
-    - "Over-diagnosis of small subsegmental emboli is itself a clinical concern; the model inherits whatever the annotators called positive."
+    - "Chronicity and the RV/LV ratio are harder labels than the presence of an embolus. The second-place model for RV/LV ≥ 1 reached an AUC of about 0.85, against 0.95–0.96 for the presence of an embolus on a slice, so these outputs need separate validation."
+    - "Contrast timing varies between CT angiograms. Studies with poor opacification of the arteries are labelled indeterminate, and the write-ups do not report performance on them separately."
+    - "The competition description lists over-diagnosis among the problems of pulmonary embolism imaging. A model trained on these labels reproduces the annotators' threshold for calling small emboli positive."
 related:
   - rsna-intracranial-hemorrhage-detection
   - rsna-2022-cervical-spine-fracture-detection
@@ -68,34 +68,34 @@ papers:
 dataLinks:
   - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/rsna-str-pulmonary-embolism-detection/data" }
 priority: 15
-updated: "2026-09-28"
+updated: "2026-09-29"
 ---
 
-## The problem in its field
+## Clinical background
 
-A **pulmonary embolism (PE)** is a blockage of a pulmonary artery, usually by a blood clot that has travelled from the deep veins of the legs. It impairs blood flow through the lungs and can strain the right side of the heart, which must pump against the obstruction. The competition description cites 60,000 to 100,000 deaths a year in the United States.
+A **pulmonary embolism (PE)** is a blockage of a pulmonary artery, usually by a blood clot that has travelled from the deep veins of the legs. It obstructs blood flow through the lungs, and a large obstruction strains the right ventricle of the heart, which has to pump against it. The competition description cites 60,000 to 100,000 deaths a year in the United States from PE.
 
-The diagnostic test is **CT pulmonary angiography (CTPA)**: a CT scan of the chest acquired while iodinated contrast fills the pulmonary arteries. Contrast-filled arteries appear bright; a clot appears as a darker **filling defect** inside a bright vessel. A study has hundreds of slices, and the radiologist must follow the arterial tree from the main pulmonary artery out to small subsegmental branches. CTPA is ordered very often, most studies are negative, and reading them takes time.
+The standard diagnostic test is **CT pulmonary angiography (CTPA)**: a CT scan of the chest acquired while iodinated contrast fills the pulmonary arteries. The contrast-filled arteries appear bright, and a clot appears as a darker **filling defect** inside a bright vessel. A study contains hundreds of slices, and the radiologist follows the arterial tree from the main pulmonary artery out to the small subsegmental branches. The description names the time radiologists spend on these studies and over-diagnosis as problems that an automated reader could help with.
 
-<Deep title="What the radiologist reports" kind="domain">
+<Deep title="What a PE report states" kind="domain">
 
-A PE report states more than presence:
+A radiology report of a CTPA states more than the presence of an embolus.
 
-- **Location.** *Central* emboli sit in the main or lobar pulmonary arteries; others are segmental or subsegmental. The competition also labels whether emboli are in the **left** or **right** lung (or both).
-- **Chronicity.** An **acute** clot is fresh and fills the vessel centrally; a **chronic** clot is organised scar, adherent to the vessel wall, forming webs or eccentric thickening. Some patients have **acute and chronic** emboli. Treatment and prognosis differ.
-- **Right-heart strain.** When the obstruction is large, the right ventricle (RV) dilates. The ratio of RV to left ventricle (LV) diameter on axial CT is a standard marker; **RV/LV ≥ 1** indicates strain and higher risk, and may prompt more aggressive treatment such as thrombolysis.
-- **Indeterminate.** If contrast timing or motion makes the study unreadable, it is reported as indeterminate.
+- **Location.** A *central* embolus lies in the main or a lobar pulmonary artery; more peripheral emboli are segmental or subsegmental. The competition also labels whether emboli are present in the **left** or **right** lung, or both.
+- **Chronicity.** An **acute** clot is recent and usually lies in the centre of the vessel lumen. A **chronic** clot has become organised tissue attached to the vessel wall, and appears as a web or an eccentric thickening of the wall. Some patients have **acute and chronic** emboli together. Treatment and prognosis differ between the two.
+- **Right-heart strain.** A large obstruction dilates the right ventricle (RV). The ratio of the RV diameter to the left-ventricular (LV) diameter on axial CT is a standard marker; **RV/LV ≥ 1** indicates strain and a higher risk, and can lead to more aggressive treatment such as thrombolysis.
+- **Indeterminate.** When contrast timing or motion makes the study unreadable, it is reported as indeterminate.
 </Deep>
 
 <Foundation id="ct-hounsfield-windowing" />
 
-## The data
+## Data
 
-The RSNA and the Society of Thoracic Radiology assembled the largest public annotated PE dataset at the time, described in Colak et al. (2021). The training set holds about 7,000 studies and about 1.8 million slices. Studies range from roughly 100 to more than 1,000 slices.
+The RSNA and the Society of Thoracic Radiology assembled the dataset, which is described by Colak et al. (2021). The training set contains about 7,300 studies (7,279) and about 1.8 million slices. The number of slices per study ranges from about 100 to more than 1,000.
 
-Each **slice** has one label: PE visible on this image. Each **study** has nine exam-level labels:
+Each **slice** has one label: an embolus is visible on this image. Each **study** has nine exam labels, listed below with their weights in the metric.
 
-| Label | Weight |
+| Label | Weight $w_j$ |
 | --- | --- |
 | negative_exam_for_pe | 0.0736 |
 | indeterminate | 0.0920 |
@@ -107,106 +107,147 @@ Each **slice** has one label: PE visible on this image. Each **study** has nine 
 | rv_lv_ratio_gte_1 | 0.2347 |
 | rv_lv_ratio_lt_1 | 0.0782 |
 
+The nine weights sum to 1.0000. The hidden test set was processed by a submitted notebook without internet access, within 9 hours.
+
 <Foundation id="dicom-and-volumes" />
 
-## The metric
+## Evaluation metric
 
-The loss combines exam-level and image-level terms. For study $i$ with exam labels $y_{ij}$ and predictions $p_{ij}$:
+Let $i$ index the studies. Study $i$ has exam labels $y_{ij} \in \{0,1\}$ with predictions $p_{ij} \in (0,1)$ for $j = 1, \dots, 9$, and $n_i$ slices with image labels $y_{ik} \in \{0,1\}$ and predictions $p_{ik} \in (0,1)$ for $k = 1, \dots, n_i$. The binary log loss is $\ell(y, p) = -\big[\,y\log p + (1-y)\log(1-p)\,\big]$. Define
+
+- $w_j$, the weight of exam label $j$ from the table above;
+- $w_{\mathrm{img}} = 0.0736$, the base weight of an image label (0.07361963 in the metric code);
+- $q_i \in [0,1]$, the fraction of slices of study $i$ that are positive.
+
+The exam and image parts of study $i$ are
+
 $$
-L_{\text{exam}, i} = \sum_{j=1}^{9} w_j\,\ell(y_{ij}, p_{ij}),
+L_{\mathrm{exam}, i} = \sum_{j=1}^{9} w_j\,\ell(y_{ij}, p_{ij}),
+\qquad
+L_{\mathrm{img}, i} = \sum_{k=1}^{n_i} w_{\mathrm{img}}\, q_i\, \ell(y_{ik}, p_{ik}).
 $$
-and for its $n_i$ slices with image labels $y_{ik}$:
+
+The score is the sum of both parts over all studies divided by the sum of all weights used:
+
 $$
-L_{\text{image}, i} = \sum_{k=1}^{n_i} w\, q_i\, \ell(y_{ik}, p_{ik}),
+\mathcal{L} = \frac{\sum_i \big( L_{\mathrm{exam}, i} + L_{\mathrm{img}, i} \big)}{\sum_i \big( W_{\mathrm{exam}} + W_{\mathrm{img}, i} \big)},
+\qquad
+W_{\mathrm{exam}} = \sum_{j=1}^{9} w_j = 1,
+\qquad
+W_{\mathrm{img}, i} = \sum_{k=1}^{n_i} w_{\mathrm{img}}\, q_i .
 $$
-where $w = 0.0736$ and $q_i$ is the fraction of slices in study $i$ that are positive. The total is the sum of both parts over all studies, divided by the sum of all weights used. Because image weights scale with $q_i$, image labels in negative studies ($q_i = 0$) do not count at all, and each positive study's slices count in proportion to how much of the study contains PE.
+
+Every slice of study $i$ has the same weight, so the sum over slices is a product. Writing $n_i^{+} = q_i n_i$ for the number of positive slices:
+
+$$
+W_{\mathrm{img}, i} = w_{\mathrm{img}}\, q_i\, n_i = w_{\mathrm{img}}\, n_i^{+} .
+$$
+
+The total image weight of a study is therefore proportional to its number of positive slices. In a negative study ($n_i^{+} = 0$) the image labels do not count at all. In a positive study of 400 slices with 40 positive slices, the image labels carry a total weight of $0.0736 \times 40 \approx 2.9$, against a total of 1 for the nine exam labels.
 
 <Foundation id="weighted-log-loss" />
 
-**Consistency rules.** Submissions had to satisfy logical relations between labels, for example:
+### Consistency rules
 
-- If `negative_exam_for_pe` or `indeterminate` is predicted above 0.5, no image may have PE probability above 0.5, and none of the positive-exam labels (chronicity, location, RV/LV) may exceed 0.5.
-- If any image has PE above 0.5, exactly one of `rv_lv_ratio_gte_1` and `rv_lv_ratio_lt_1` must exceed 0.5, at least one of `leftsided_pe`, `rightsided_pe`, `central_pe` must exceed 0.5, and at most one of `chronic_pe`, `acute_and_chronic_pe` may.
+Submissions had to satisfy logical relations between the labels of a study. Among them:
 
-Inconsistent submissions could be disqualified. A model that predicts each label independently does not guarantee this, so every top solution needed a post-processing step.
+- If `negative_exam_for_pe` or `indeterminate` is predicted above 0.5, no image may have a PE probability above 0.5, and none of the labels that describe a positive study (chronicity, location, RV/LV) may exceed 0.5.
+- If any image has a PE probability above 0.5, exactly one of `rv_lv_ratio_gte_1` and `rv_lv_ratio_lt_1` must exceed 0.5, at least one of `leftsided_pe`, `rightsided_pe` and `central_pe` must exceed 0.5, and at most one of `chronic_pe` and `acute_and_chronic_pe` may exceed 0.5.
 
-## How the winning solution works
+Inconsistent submissions could be disqualified. Models that predict each label separately do not guarantee these relations, and both top solutions included a post-processing step that enforces them.
 
-Guanshuo Xu won alone. He credits a public notebook by vaillant for the introduction and data processing code, and the 2019 intracranial haemorrhage winners for the sequence idea.
+## Winning solution
+
+Guanshuo Xu competed alone. He credits a public notebook by vaillant for introductory and data-processing code, and the winners of the 2019 RSNA intracranial haemorrhage competition for the idea of a sequence model over slice features.
 
 <Pipeline steps={[
   {tag: "Localise", title: "Crop the lungs", detail: "EfficientNet-B0 box regressor"},
   {tag: "Slice", title: "2D CNN on 3 adjacent slices", detail: "SE-ResNeXt-50/101; image labels only; 1 epoch"},
   {tag: "Resize", title: "Fixed-length sequence", detail: "embeddings resized along z to 128–192"},
   {tag: "Study", title: "Bidirectional GRU", detail: "attention + max pooling for exam labels"},
-  {tag: "Repair", title: "Enforce consistency", detail: "cheapest consistent configuration"}
-]} caption="The winning pipeline." />
+  {tag: "Repair", title: "Enforce consistency", detail: "lower-loss consistent configuration"}
+]} caption="The winning pipeline, from the CT slices to a consistent set of slice and exam labels." />
 
 <Foundation id="models-and-loss" />
 
-### Step 1: crop the lungs
+### Stage 1: lung localisation
 
-The lungs do not fill the CT image; the field of view includes the chest wall, the arms in some studies, and air outside the body. He annotated bounding boxes on four images from each of a set of studies and trained an EfficientNet-B0 to **regress** the box coordinates. Cropping to the lungs and then resizing to a larger input (640 instead of 512) improved the slice model, because the pixels saved from the background go to the vessels.
+The lungs do not fill the CT image: the field of view also contains the chest wall, in some studies the arms, and air outside the body. The author annotated bounding boxes of the lungs on four images from each of a set of studies and trained an EfficientNet-B0 to **regress** the four box coordinates. He reports that cropping to the lungs and enlarging the input from 512 to 640 pixels improved the slice model.
 
-### Step 2: the slice model
+### Stage 2: slice model
 
-**Input.** Three adjacent slices in a PE window, as three channels. He found this better than one slice in three different windows: here the extra depth context helps more than extra contrast settings, because a clot is followed along a vessel across slices.
+**Input.** Three adjacent slices in a PE window, as the three channels of one image. The author found this better than one slice shown in three different windows.
 
-**Labels.** Only the image-level PE label. Adding exam-level labels at this stage did not help.
+**Labels.** Only the image-level PE label. Adding exam labels at this stage did not improve the results.
 
-**Training.** Plain binary cross-entropy, linear learning-rate decay, and **one epoch**: with about 1.5 million highly correlated slices, a second pass over the data overfit. Augmentation: random contrast, shift-scale-rotate and two cutout holes.
+**Training.** Binary cross-entropy, a linearly decaying learning rate, and **one epoch** over the training slices, which the author found to be the best number. Augmentation consisted of random contrast (±0.2), shift–scale–rotate (shift and scale ±0.2, rotation ±20°), and cutout with two holes.
 
-| Backbone | Validation loss | AUC |
+| Backbone | Validation loss | Slice ROC AUC |
 | --- | --- | --- |
 | SE-ResNeXt-50 | 0.080 | 0.962 |
 | SE-ResNeXt-101 | 0.079 | 0.964 |
 
-Inception-ResNet-v2 and EfficientNets were also good; DenseNet and plain ResNeXt were worse. The input size after cropping was 576, the largest that fitted the 9-hour inference limit.
+Inception-ResNet-v2 and EfficientNets also gave good results; DenseNet and ResNeXt without squeeze-and-excitation gave worse ones. The input size after cropping was 576 pixels, the largest that allowed inference within the 9-hour limit.
 
 <Foundation id="cnn-backbones" />
 
-**Validation.** A single hold-out set of 1,000 studies, with about 6,200 studies for training; the final models were retrained on all data.
+**Validation.** A single hold-out set of 1,000 studies, with about 6,200 studies for training. The final models were retrained on all training data.
 
-### Step 3: the study model
+### Stage 3: study model
 
-Each slice's 2048-dimensional embedding from the CNN becomes one element of a sequence. Studies have very different numbers of slices, from about 100 to over 1,000, so the sequence was **resized along the slice axis** to a fixed length $M$ with linear interpolation (`cv2.resize` applied to the $n \times 2048$ matrix), and the image labels were resized the same way. He searched $M$ in steps of 32; 128 was best on validation and the final models used 192.
+The CNN gives a 2048-dimensional embedding for each slice. The number of slices varies from about 100 to over 1,000, so the author **resized the sequence along the slice axis** to a fixed length $M$ by linear interpolation, applying `cv2.resize` to the $n \times 2048$ matrix of embeddings, and resized the image labels in the same way. He searched $M$ in steps of 32. $M = 128$ was best on validation, and the final models used $M = 192$.
 
-As in the 2019 haemorrhage runner-up's model, each element is concatenated with its differences to the previous and next element, giving $3 \times 2048$ features per position. A single **bidirectional GRU** layer reads the sequence. Its per-position outputs predict the image labels; for the exam labels, the outputs are pooled by concatenating an **attention-weighted average** and a **max pool**.
+Each element of the sequence is concatenated with its differences to the previous and the next element, which gives $3 \times 2048$ features per position. A single **bidirectional GRU** layer reads the sequence. Its per-position outputs predict the image labels. For the exam labels, the outputs are pooled by an **attention-weighted average** and by **max pooling**, and the two pooled vectors are concatenated.
 
 <Foundation id="recurrent-networks" />
 
 <Deep title="Resizing a sequence of embeddings" kind="math">
 
-Let the study have $n$ slices with embeddings $e_1, \dots, e_n \in \mathbb{R}^{d}$. Linear resizing to $M$ positions places output position $m \in \{0, \dots, M-1\}$ at source coordinate
-$$
-t_m = \Big(m + \tfrac12\Big)\frac{n}{M} - \tfrac12
-$$
-(the pixel-centre convention used by OpenCV), and interpolates between the neighbouring slices $a = \lfloor t_m \rfloor$ and $a+1$:
-$$
-\tilde e_m = (1 - \alpha)\,e_a + \alpha\,e_{a+1}, \qquad \alpha = t_m - a,
-$$
-with indices clamped at the ends. When $n > M$, each output is a blend of nearby slices, a form of smoothing and down-sampling; when $n < M$, slices are interpolated.
+Let a study have $n$ slices with embeddings $e_0, \dots, e_{n-1} \in \mathbb{R}^{d}$, and let $M$ be the target length. Linear resizing in OpenCV aligns the centres of the first and last cells of the two grids. With the scale factor $s = n / M$, output position $m \in \{0, \dots, M-1\}$ is placed at the source coordinate
 
-This gives every study the same length, which simplifies batching and removes the dependence of the GRU on the number of slices. The price is that slice spacing is ignored: a thin-slice study and a thick-slice study covering the same anatomy end up the same length, which is roughly the right behaviour, since both span the chest. Zero-padding, the alternative he also tried, keeps the original slices but makes the GRU process long runs of padding for short studies.
+$$
+t_m = \big(m + \tfrac12\big)\, s - \tfrac12 .
+$$
+
+Let $a = \lfloor t_m \rfloor$ be the slice below $t_m$ and $\alpha = t_m - a \in [0, 1)$ the fractional part. The output embedding interpolates between slices $a$ and $a+1$:
+
+$$
+\tilde e_m = (1 - \alpha)\, e_a + \alpha\, e_{a+1},
+$$
+
+with the indices clamped to $\{0, \dots, n-1\}$ at the ends.
+
+For example, with $n = 400$ slices and $M = 128$, the scale factor is $s = 400/128 = 3.125$. Position $m = 10$ lies at $t_{10} = 10.5 \times 3.125 - 0.5 = 32.3125$, so $a = 32$, $\alpha = 0.3125$ and $\tilde e_{10} = 0.6875\, e_{32} + 0.3125\, e_{33}$. When $n > M$, as here, the output samples the sequence at intervals of $s$ slices; when $n < M$, it interpolates between slices.
+
+All studies then have the same length, which allows batching without padding. Resizing ignores slice spacing: two studies of the same chest with different slice thickness give sequences of equal length, in which each position covers the same fraction of the scanned range. The author also considered zero-padding, which keeps the original slices but lengthens short studies with padding.
 
 Image predictions at the $M$ positions are mapped back to the $n$ original slices by the inverse resize.
 </Deep>
 
 <Deep title="Attention pooling and max pooling for exam labels" kind="math">
 
-The GRU outputs $h_1, \dots, h_M \in \mathbb{R}^{D}$. **Attention pooling** learns a scoring vector $u$ (in general a small network):
-$$
-\alpha_m = \frac{\exp(u^\top h_m)}{\sum_{m'}\exp(u^\top h_{m'})}, \qquad
-z_{\text{att}} = \sum_m \alpha_m h_m.
-$$
-**Max pooling** takes $z_{\max,c} = \max_m h_{m,c}$ for each channel. The exam head sees $[z_{\text{att}}; z_{\max}]$.
+Let $h_1, \dots, h_M \in \mathbb{R}^{D}$ be the GRU outputs, and let $u \in \mathbb{R}^{D}$ be a learned scoring vector (in general a small network). **Attention pooling** computes a weight for each position and a weighted mean:
 
-The two pools answer different questions. "Is there any PE?" is an existence question, best served by max pooling: a single strongly positive position should decide. "Is RV/LV ≥ 1?" depends on specific slices (those through the heart) and is served by attention, which can learn to weight them. "Central PE" depends on the slices through the main pulmonary arteries. A concatenation lets the head use either.
+$$
+\alpha_m = \frac{\exp(u^\top h_m)}{\sum_{m'=1}^{M}\exp(u^\top h_{m'})},
+\qquad
+z_{\mathrm{att}} = \sum_{m=1}^{M} \alpha_m h_m .
+$$
+
+**Max pooling** takes the maximum of each channel $c \in \{1, \dots, D\}$ over positions:
+
+$$
+z_{\max, c} = \max_{m} h_{m,c} .
+$$
+
+The exam head receives the concatenation $[z_{\mathrm{att}};\, z_{\max}] \in \mathbb{R}^{2D}$.
+
+The two pools respond to different patterns. The maximum is determined by the single most activated position, so a strong response on a few slices passes through it. The attention weights can concentrate on a subset of positions chosen by the network, such as the slices through the heart that are relevant to the RV/LV ratio. The concatenation makes both available to the exam head; the write-up does not report an ablation of either pool.
 </Deep>
 
 <Deep title="The study model in PyTorch" kind="code">
 
-A Nolad illustration following the description in the write-up; see the repository for the author's code.
+A Nolad illustration following the description in the write-up; the author's code is in the repository.
 
 ```python
 import torch, torch.nn as nn, torch.nn.functional as F
@@ -230,58 +271,84 @@ class StudyGRU(nn.Module):
 ```
 </Deep>
 
-His local validation loss was about 0.18. He noted that the leaderboard did not shake up at the end, which he attributed to the high quality of the data.
+The author's local validation loss was about 0.18. He reports that the private leaderboard showed no shake-up relative to the public one, and attributes this to the quality of the data.
 
-### Step 4: making the labels consistent
+### Post-processing: consistent labels
 
-If the predictions violate the rules, there are two families of consistent configurations: a **negative** one (no image above 0.5, negative or indeterminate exam) and a **positive** one (some PE images, one RV/LV label, at least one location, at most one chronicity label). For each, the smallest change to the predictions that satisfies the rules is computed (clipping the offending probabilities to just below or above 0.5), and the expected loss of each repaired version is estimated. The version with the lower loss is submitted. For this estimate, the image weight $q_i$, which depends on the unknown true labels, was replaced by a fixed 0.005.
+A prediction that violates the rules can be made consistent in two ways: as a **negative** configuration (no image above 0.5; negative or indeterminate exam) or as a **positive** one (at least one image above 0.5, one RV/LV label, at least one location label, at most one chronicity label). For an inconsistent study, the author computed the nearest consistent configuration of each kind and its loss, and submitted the one with the lower loss. In this computation, the image weight factor $q_i$, which depends on the unknown true labels, was replaced by the constant 0.005.
 
-<Deep title="Choosing between two repairs by expected loss" kind="math">
+<Deep title="Comparing two repairs by expected loss" kind="math">
 
-Consider only a simplified pair: the exam label "negative" with prediction $p_n$ and the maximum image prediction $p_{\max}$, both above 0.5 (inconsistent). The two repairs are:
+A Nolad model of the choice, for a simplified case. Consider two predictions of one study, the exam label "negative" with probability $p_n$ and the largest image probability $p_{\max}$, both above 0.5, which violates the rules. Let $\epsilon > 0$ be small. The two repairs are:
 
-- **Negative repair:** keep $p_n$, lower every image probability above 0.5 to $0.5 - \epsilon$.
-- **Positive repair:** lower $p_n$ to $0.5 - \epsilon$, keep the images.
+- **negative repair:** keep $p_n$ and lower every image probability above 0.5 to $0.5 - \epsilon$;
+- **positive repair:** lower $p_n$ to $0.5 - \epsilon$ and keep the images.
 
-The expected cost of a change from $p$ to $p'$ on a label whose true probability is believed to be $p$ is the increase in expected log loss:
+Take the current prediction $p$ of a label as the best estimate of the probability that the label is 1. The expected log loss of submitting $p'$ is then $-p\log p' - (1-p)\log(1-p')$. The increase caused by moving from $p$ to $p'$ is
+
 $$
-\Delta(p \to p') = -p\log p' - (1-p)\log(1-p') - \big[-p\log p - (1-p)\log(1-p)\big] = \mathrm{KL}\big(\mathrm{Bern}(p)\,\|\,\mathrm{Bern}(p')\big) \ge 0.
+\Delta(p \to p') = \big[-p\log p' - (1-p)\log(1-p')\big] - \big[-p\log p - (1-p)\log(1-p)\big].
 $$
-The repair with the smaller weighted sum of these increases is chosen. Moving $p = 0.9$ to $0.49$ costs $\mathrm{KL} \approx 0.9\log(0.9/0.49) + 0.1\log(0.1/0.51) \approx 0.547 - 0.163 = 0.384$ nats; moving $p = 0.55$ to $0.49$ costs about $0.007$. The rule therefore changes the less confident side, weighted by how much each label counts in the metric.
+
+Collecting the terms in $p$ and in $1-p$:
+
+$$
+\Delta(p \to p') = p\log\frac{p}{p'} + (1-p)\log\frac{1-p}{1-p'} = \mathrm{KL}\big(\mathrm{Bern}(p)\,\|\,\mathrm{Bern}(p')\big) \ge 0 .
+$$
+
+The repair with the smaller weighted sum of these increases is chosen. Two worked values, with $p' = 0.49$:
+
+$$
+\Delta(0.9 \to 0.49) = 0.9\log\tfrac{0.9}{0.49} + 0.1\log\tfrac{0.1}{0.51} \approx 0.547 - 0.163 = 0.384 \ \text{nats},
+$$
+
+$$
+\Delta(0.55 \to 0.49) = 0.55\log\tfrac{0.55}{0.49} + 0.45\log\tfrac{0.45}{0.51} \approx 0.0635 - 0.0563 = 0.007 \ \text{nats}.
+$$
+
+Under this model the repair changes the less confident predictions, weighted by the metric weight of each label.
 </Deep>
 
 <Foundation id="kl-divergence" />
 
-## Second place: a radiologist's decomposition
+## Second place: separate models for slices, sequences and the heart
 
-Ian Pan, a radiologist, competed as team high-d-dimer (a D-dimer blood test is used to screen for PE). His solution follows the clinical reading process more literally, with separate models for separate questions. He trained on four 24 GB GPUs and noted in the write-up that this compute was a privilege most competitors did not have.
+Ian Pan, a radiologist, competed as team high-d-dimer; a D-dimer blood test is used in the work-up of suspected PE. His solution uses separate models for separate questions. He trained on four GPUs with 24 GB of memory each (Quadro RTX 6000), with distributed data parallelism and mixed precision, and notes in the write-up that most competitors did not have this compute.
 
-1. **Slice model.** ResNeSt-50 on three consecutive slices in a PE window (level 100, width 700) at 448 after random cropping from 512, predicting seven PE-related labels per slice (exam labels assigned to positive slices, which is noisy). GeM pooling to a 512-dimensional embedding; slice AUC 0.95–0.96.
-2. **Sequence models.** Transformer encoders (4 layers, from the DistilBERT implementation) over the slice embeddings: one trained only on positive studies to refine slice labels, which improved cross-validation by 0.01–0.02, and one for exam labels (validation loss 0.15–0.17).
-3. **End-to-end refinement.** A time-distributed CNN trained end to end on the 30% of slices with the highest PE scores, initialised from steps 1–2, with batch normalisation frozen.
-4. **Heart localisation.** He hand-labelled the top and bottom heart slices on 1,000 studies (about a day's work) and trained a pruned EfficientNet-B1 to find heart slices (AUC 0.998).
-5. **RV/LV model.** A 3D video network (ir-CSN-101, pretrained on 65 million Instagram videos) on the heart slices only, in a mediastinal window (level 50, width 350), trained on positive studies. AUC for RV/LV ≥ 1 was about 0.85.
+1. **Slice model.** ResNeSt-50 on three consecutive slices in a PE window (level 100, width 700), resized to 512 and randomly cropped to 448, predicting seven PE-related labels per slice. The exam labels were assigned to the positive slices of a study, which makes them noisy slice targets. GeM pooling gives a 512-dimensional embedding. RandAugment, batch size 128, 5 epochs of 2,500 steps, RAdam with a cosine schedule. The slice AUC was 0.95–0.96.
+2. **Sequence models.** Transformer encoders with 4 layers, from the DistilBERT implementation, over the slice embeddings. One was trained on positive studies only to refine the slice predictions, which improved cross-validation by 0.01–0.02. A second predicted the exam labels, with a validation loss of 0.15–0.17.
+3. **End-to-end refinement.** A time-distributed CNN trained end to end on the 30% of slices with the highest PE scores, initialised from the models of steps 1 and 2, with batch normalisation frozen.
+4. **Heart localisation.** He labelled the first and last slices containing the heart on 1,000 studies, which he reports took about a day, and trained a pruned EfficientNet-B1 to identify heart slices (AUC 0.998).
+5. **RV/LV model.** A 3D video network, ir-CSN-101 pretrained on 65 million Instagram videos (Tran et al., 2019), applied to the heart slices only, in a mediastinal window (level 50, width 350), and trained on positive studies. The AUC for RV/LV ≥ 1 was about 0.85.
+
+His solution also includes a heuristic that makes the labels consistent.
 
 <Foundation id="attention-transformers" />
 
-Step 5 illustrates a point that recurs in medical imaging: a label that depends on one organ (here the heart) is predicted better by a model that sees only that organ at adequate resolution than by a global model that must find it among hundreds of lung slices.
+The RV/LV ratio depends on the heart, which occupies a minority of the slices of a CTPA. Steps 4 and 5 restrict the RV/LV model to those slices, at a resolution chosen for them.
 
 <Foundation id="transfer-learning" />
 
-## How this compares with other competitions
+## Comparison with other competitions
 
-- **The 2019 haemorrhage competition** introduced slice CNN + sequence model. The PE winner applied it with two additions: a localiser to crop the region of interest, and pooling designed for exam-level labels.
-- **Hierarchical and consistent labels** reappear in the 2023 abdominal trauma competition (healthy/low/high per organ plus "any injury") and the 2022 cervical spine competition (vertebrae plus patient). Only PE enforced consistency as a submission rule.
-- **Organ-specific models** such as Ian Pan's heart model anticipate the crop-then-classify designs that won the 2022 and 2023 competitions.
+- **The 2019 RSNA intracranial haemorrhage competition** was won with a 2D CNN per slice followed by a sequence model, the design the PE winner credits. The PE winner added a localiser that crops the region of interest, and pooling of the sequence for exam-level labels.
+- **Hierarchical labels** also occur in the 2022 cervical spine competition (seven vertebrae and the patient) and the 2023 abdominal trauma competition (healthy, low or high grade per organ, and any injury). Of the three, only the PE competition made label consistency a condition of a valid submission.
+- **Organ-specific models**, such as Ian Pan's heart localiser and RV/LV model, correspond to the crop-then-classify designs of the winners of the 2022 and 2023 competitions.
 
 ## Compute and deployment
 
-| Setting | What the solution needs |
+| Setting | Requirements |
 | --- | --- |
-| Competition | 9-hour notebook for the whole hidden test set; one epoch of slice-model training per backbone. |
-| Research group | One GPU trains the winner's pipeline; the runner-up used four 24 GB GPUs. |
-| Clinical tool | Several commercial PE detection products exist; a new one needs site validation across scanners and contrast protocols. |
+| Kaggle | 9-hour notebook for the whole hidden test set; one epoch of slice-model training per backbone. |
+| Research group | The winner's pipeline trains on one GPU; the runner-up used four 24 GB GPUs. |
+| Clinical tool | Validation at each site across scanners and contrast protocols, and regulatory approval as a medical device. |
 
-<Callout kind="deploy" title="The minimum useful version">
-A lung crop, one SE-ResNeXt-50 slice model on three adjacent slices, and the resized-embedding GRU with attention and max pooling. Report the slice-level PE probabilities alongside the exam labels, so the radiologist can jump to the slices the model flagged.
+<Callout kind="deploy" title="Reduced configuration">
+A configuration built from the winner's components: a lung crop, one SE-ResNeXt-50 slice model on three adjacent slices, and the GRU over resized embeddings with attention and max pooling. Showing the slice-level PE probabilities alongside the exam labels lets the radiologist go directly to the slices the model flagged.
 </Callout>
+
+### Considerations for deployment
+
+1. **Secondary labels.** Chronicity and the RV/LV ratio were harder to predict than the presence of an embolus (RV/LV AUC about 0.85 in the second-place solution). They should be validated separately before they are shown to clinicians.
+2. **Indeterminate studies.** Poorly opacified studies are labelled indeterminate in the data. Their frequency depends on the local contrast protocol.
+3. **Consistency.** The post-processing enforces the logical relations required by the competition. A clinical system needs the same guarantee, so that a study reported as negative carries no positive slices.

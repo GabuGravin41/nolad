@@ -2,62 +2,152 @@
 id: attention-transformers
 title: "Attention and transformers"
 kind: ml
-summary: "Self-attention lets every element of a sequence gather information from every other element, weighted by learned relevance. Transformers stack attention with small feed-forward networks; how positions are encoded decides whether they generalise to longer inputs."
+summary: "Covers scaled dot-product attention, multi-head attention, the transformer block, the ways position information is added to a sequence, and the quadratic cost of attention in sequence length."
 ---
 
 ### Scaled dot-product attention
 
-Take a sequence of $n$ vectors, stacked as rows of $X\in\mathbb{R}^{n\times d}$ (slice embeddings, frames, nucleotides, word pieces). Three learned matrices produce queries, keys and values:
+A sequence of $n$ elements is represented by $n$ vectors of dimension $d$, stacked as the rows of a matrix $X \in \mathbb{R}^{n\times d}$. The elements can be slice embeddings of a CT series, frames of a video, nucleotides of an RNA molecule or word pieces of a sentence; row $i$ is written $x_i \in \mathbb{R}^d$.
+
+Three learned matrices $W_Q, W_K \in \mathbb{R}^{d\times d_k}$ and $W_V \in \mathbb{R}^{d\times d_v}$ map each element to a **query**, a **key** and a **value**:
 
 $$
-Q = XW_Q,\qquad K = XW_K,\qquad V = XW_V .
+Q = XW_Q \in \mathbb{R}^{n\times d_k},\qquad K = XW_K \in \mathbb{R}^{n\times d_k},\qquad V = XW_V \in \mathbb{R}^{n\times d_v} .
 $$
 
-Element $i$ scores its relevance to element $j$ by the dot product $q_i\cdot k_j$. The scores are scaled, turned into weights by a softmax over $j$, and used to average the values:
+Element $i$ scores element $j$ by the dot product of its query with $j$'s key, divided by $\sqrt{d_k}$:
 
 $$
-\mathrm{Attention}(Q,K,V) = \mathrm{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)V .
+s_{ij} = \frac{q_i \cdot k_j}{\sqrt{d_k}}, \qquad i, j = 1, \dots, n .
 $$
 
-Each output row is a weighted average of all value vectors, with weights chosen by content. A slice in a CT series can attend to the slices that show the same vessel; a nucleotide can attend to the nucleotide it pairs with.
-
-<Deep title="Why divide by √dₖ" kind="math">
-
-Suppose the components of $q$ and $k$ are independent with mean 0 and variance 1. Then
+A softmax over $j$ turns each row of scores into weights that are positive and sum to 1:
 
 $$
-q\cdot k = \sum_{m=1}^{d_k} q_m k_m, \qquad \mathbb{E}[q\cdot k] = 0, \qquad \mathrm{Var}(q\cdot k) = \sum_{m} \mathrm{Var}(q_mk_m) = d_k .
+a_{ij} = \frac{e^{s_{ij}}}{\sum_{l=1}^{n} e^{s_{il}}} .
 $$
 
-With $d_k = 64$, raw scores have standard deviation 8. A softmax over scores that large puts nearly all weight on one element, and its gradient with respect to the other scores is close to zero. Dividing by $\sqrt{d_k}$ restores unit variance and keeps the softmax in a range where it learns.
+The output for element $i$ is the weighted average of the value vectors, $o_i = \sum_j a_{ij}\, v_j \in \mathbb{R}^{d_v}$. In matrix form, with the softmax applied to each row,
+
+$$
+\mathrm{Attention}(Q,K,V) = \mathrm{softmax}\!\left(\tfrac{1}{\sqrt{d_k}}\,QK^\top\right)V \in \mathbb{R}^{n\times d_v}.
+$$
+
+The weights depend on the content of the elements, so each element can draw information from whichever other elements are relevant to it: a CT slice from the slices that show the same vessel, a nucleotide from the nucleotide it pairs with.
+
+**Worked example.** Take $n = 3$, $d_k = 2$ and one query $q_1 = (1, 0)$. Let the keys be $k_1 = (1,0)$, $k_2 = (0,1)$, $k_3 = (1,1)$, and the values scalars $v = (10,\ 0,\ 4)$.
+
+1. Dot products: $q_1\cdot k_1 = 1$, $q_1\cdot k_2 = 0$, $q_1\cdot k_3 = 1$.
+2. Division by $\sqrt{2} \approx 1.414$: scores $0.707,\ 0,\ 0.707$.
+3. Exponentials: $2.028,\ 1,\ 2.028$, with sum $5.056$.
+4. Weights: $a_{1\cdot} = (0.401,\ 0.198,\ 0.401)$.
+5. Output: $o_1 = 0.401\times 10 + 0.198\times 0 + 0.401\times 4 \approx 5.62$.
+
+Keys 1 and 3 match the query equally and receive equal weight; key 2 is orthogonal to the query and receives the least.
+
+<Deep title="Why the scores are divided by √dₖ" kind="math">
+
+Suppose the components $q_m$ and $k_m$ of a query and a key are independent random variables with mean 0 and variance 1. The dot product is a sum of $d_k$ terms,
+
+$$
+q\cdot k = \sum_{m=1}^{d_k} q_m k_m .
+$$
+
+Each term has mean $\mathbb{E}[q_m]\,\mathbb{E}[k_m] = 0$ and variance $\mathbb{E}[q_m^2]\,\mathbb{E}[k_m^2] = 1$. The terms are independent, so their variances add:
+
+$$
+\mathbb{E}[q\cdot k] = 0, \qquad \mathrm{Var}(q\cdot k) = d_k .
+$$
+
+With $d_k = 64$, unscaled scores have standard deviation 8. Two scores that differ by 8 give softmax weights in the ratio $e^8 \approx 2{,}981$, so nearly all the weight goes to one element, and the gradient of the softmax with respect to the other scores is close to zero. Dividing by $\sqrt{d_k}$ gives the scores unit variance and keeps the softmax away from this saturated regime at initialisation.
 </Deep>
 
 ### Multi-head attention
 
-Instead of one attention with $d$-dimensional vectors, use $h$ heads with $d/h$ dimensions each, computed in parallel and concatenated. Different heads can track different relations. In the Ribonanza winners' model, 6 heads of size 32 each also received a separate channel of base-pair information added to their scores.
+**Multi-head attention** runs $h$ attention operations, the heads, in parallel. Head $r = 1, \dots, h$ has its own matrices $W_Q^{(r)}, W_K^{(r)}, W_V^{(r)}$ of width $d/h$:
+
+$$
+H_r = \mathrm{Attention}\big(XW_Q^{(r)},\ XW_K^{(r)},\ XW_V^{(r)}\big) \in \mathbb{R}^{n\times d/h} .
+$$
+
+The $h$ outputs are concatenated into an $n \times d$ matrix and multiplied by an output matrix $W_O \in \mathbb{R}^{d\times d}$. Each head computes its own weights $a_{ij}$, so different heads can attend according to different relations. The four matrices together hold $4d^2$ parameters (plus biases), independent of $h$.
+
+In the Stanford Ribonanza winning model, $d = 192$ and $h = 6$, so each head has dimension $192/6 = 32$. Features derived from a predicted base-pairing probability matrix were added to each head's scores $s_{ij}$ before the softmax, which gives the attention prior information about which nucleotides pair.
 
 ### The transformer block
 
-A block applies attention and then a two-layer feed-forward network to each position, each wrapped with a residual connection and layer normalisation:
+A **transformer block** applies multi-head attention and then a position-wise feed-forward network, each with a residual connection and layer normalisation. **Layer normalisation** (LN) standardises each vector $x \in \mathbb{R}^d$ over its own $d$ components, with mean $\mu$ and variance $\sigma^2$ of those components and learned vectors $\gamma, \beta \in \mathbb{R}^d$:
 
 $$
-X' = X + \mathrm{Attn}(\mathrm{LN}(X)),\qquad X'' = X' + \mathrm{FFN}(\mathrm{LN}(X')).
+\mathrm{LN}(x) = \gamma \odot \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} + \beta ,
 $$
 
-Stacking 4 to 24 such blocks gives an encoder. A **decoder** additionally masks attention so each position sees only earlier positions (for generating text one token at a time) and attends to the encoder's outputs (cross-attention), as in the ASL fingerspelling winner.
+where $\odot$ is the element-wise product. The **feed-forward network** (FFN) is applied to each row separately, with $W_1 \in \mathbb{R}^{d\times d_{\mathrm{ff}}}$, $W_2 \in \mathbb{R}^{d_{\mathrm{ff}}\times d}$, biases $b_1, b_2$ and a non-linearity $\phi$ such as GELU:
 
-### Positions
+$$
+\mathrm{FFN}(x) = \phi(xW_1 + b_1)\,W_2 + b_2 .
+$$
 
-Attention treats its input as a set: permuting the rows permutes the outputs identically. Order must be injected.
+A common choice is $d_{\mathrm{ff}} = 4d$. In the pre-normalisation arrangement used by most recent models, the block computes
 
-- **Absolute encodings** add a vector for position $i$ to $x_i$. They cannot represent positions longer than any seen in training.
-- **Relative biases** add a learned term $b_{i-j}$ to the score between $i$ and $j$, depending only on distance.
-- **ALiBi** adds a fixed penalty proportional to distance, $-m_h\,|i-j|$, with a different slope $m_h$ per head. It extrapolates to longer sequences.
-- **Rotary embeddings (RoPE)** rotate each query and key by an angle proportional to its position, so that $q_i\cdot k_j$ depends on $i-j$.
-- **Dynamic position bias** computes the relative bias with a small network from $i-j$, so it can produce values for unseen distances.
+$$
+X' = X + \mathrm{MHA}(\mathrm{LN}(X)),\qquad X'' = X' + \mathrm{FFN}(\mathrm{LN}(X')),
+$$
 
-In Ribonanza the test sequences were longer than the training sequences, and the choice among these schemes was one of the decisive modelling decisions.
+where MHA is multi-head attention. The original transformer (Vaswani et al., 2017) placed the normalisation after each residual sum instead.
 
-### Cost
+With $d_{\mathrm{ff}} = 4d$, a block has $4d^2$ attention parameters and $2 \times 4d^2 = 8d^2$ feed-forward parameters, about $12d^2$ in total. For $d = 192$ this is $12 \times 36{,}864 \approx 442{,}000$ parameters per block, so a 12-block encoder of this width has about 5.3 million.
 
-Attention compares every pair of positions, so its cost grows as $n^2$. For a 206-nucleotide RNA or a 384-frame sign sequence this is affordable. For a 512×512 image split into 16×16 patches it is 1,024 tokens; vision transformers such as SegFormer and MaxViT use local or downsampled attention to keep cost manageable.
+A stack of blocks is an **encoder**. A **decoder**, used to generate an output sequence one token at a time, differs in two ways. Its self-attention is **causal**: the score $s_{ij}$ is set to $-\infty$ for $j > i$, so that after the softmax $a_{ij} = 0$ and position $i$ sees only earlier positions. It also contains **cross-attention**, in which the queries come from the decoder and the keys and values from the encoder output. The ASL fingerspelling winner used an encoder over the landmark frames and a two-layer transformer decoder that produced the letters.
+
+### Position information
+
+Attention by itself ignores order. Let $P$ be an $n\times n$ permutation matrix, which reorders the rows of $X$. Then $Q$, $K$ and $V$ become $PQ$, $PK$ and $PV$, and the score matrix becomes $PQK^\top P^\top$, the original matrix with rows and columns reordered in the same way. The row-wise softmax commutes with this reordering, and $P^\top P = I$, so
+
+$$
+\mathrm{Attention}(PQ, PK, PV) = P\,\mathrm{softmax}\!\left(\tfrac{1}{\sqrt{d_k}}\,QK^\top\right)P^\top P\,V = P\,\mathrm{Attention}(Q,K,V) .
+$$
+
+Permuting the input permutes the output in the same way. Position must therefore be supplied separately. The main methods are these.
+
+- **Absolute encodings** add a vector $p_i$ to $x_i$ for each position $i$. Learned encodings are a table with one row per position and have no entry beyond the longest training length. Fixed sinusoidal encodings (Vaswani et al., 2017) are defined for every position, but a model has not been trained on positions beyond those it saw.
+- **Relative position biases** add a learned scalar $b_{i-j}$ to the score $s_{ij}$, which depends only on the offset between the two positions.
+- **ALiBi** (Press et al., 2022) adds a fixed penalty $-m_r\,|i-j|$ to the scores of head $r$, with a different slope $m_r > 0$ per head. Distant elements are down-weighted by an amount that is defined for any distance.
+- **Rotary position embeddings (RoPE)** (Su et al., 2021) rotate queries and keys by angles proportional to their positions.
+- **Dynamic position bias** computes $b_{i-j}$ with a small neural network that takes the offset $i-j$ as input, so it produces a value for offsets not seen in training.
+
+<Deep title="Why rotary embeddings make scores depend on relative position" kind="math">
+
+Consider a two-dimensional query and key, and let $R(\alpha)$ be the matrix of a rotation by angle $\alpha$,
+
+$$
+R(\alpha) = \begin{pmatrix} \cos\alpha & -\sin\alpha \\ \sin\alpha & \cos\alpha \end{pmatrix} .
+$$
+
+Rotations satisfy $R(\alpha)^\top = R(-\alpha)$ and $R(-\alpha)R(\beta) = R(\beta-\alpha)$. RoPE replaces the query at position $i$ by $R(i\omega)\,q$ and the key at position $j$ by $R(j\omega)\,k$, for a fixed frequency $\omega$. Their dot product is
+
+$$
+\big(R(i\omega)q\big)^\top R(j\omega)\,k = q^\top R(-i\omega)R(j\omega)\,k = q^\top R\big((j-i)\,\omega\big)\,k ,
+$$
+
+which depends on the positions only through the offset $j - i$. In $d_k$ dimensions, RoPE applies such a rotation to each of the $d_k/2$ pairs of coordinates, with a different frequency for each pair.
+</Deep>
+
+In Stanford Ribonanza the test sequences were on average longer than the training sequences, so the model had to handle lengths it had not been trained on. The winning team used dynamic position bias and report that it extrapolated to longer sequences better than absolute encodings, ALiBi and RoPE in their experiments. The second-place team used ALiBi.
+
+### Computational cost
+
+The score matrix has $n^2$ entries per head, and computing it costs about $n^2 d_k$ multiplications, so time and memory grow quadratically with sequence length.
+
+| Sequence | Length $n$ | Scores per head, $n^2$ |
+| --- | --- | --- |
+| Aneurysm location tokens | 13 | 169 |
+| Ribonanza training RNA | 206 | 42,436 |
+| ASL fingerspelling frames (maximum) | 384 | 147,456 |
+| 512 × 512 image in 16 × 16 patches | 1,024 | 1,048,576 |
+
+A 512 × 512 image divided into 16 × 16 patches gives $32 \times 32 = 1{,}024$ tokens. Stored in 32-bit floating point, one head's score matrix then occupies $1{,}048{,}576 \times 4$ bytes, or 4 MiB, per image. Vision transformers designed for dense prediction reduce this cost: SegFormer computes keys and values on a spatially downsampled feature map, and MaxViT restricts attention to local windows and to a sparse grid.
+
+### Use in the reports
+
+The aneurysm winner applied a transformer encoder to 13 tokens, one per artery location, so that each artery's representation depends on the others. The Ribonanza winner built its model from 12 transformer encoder blocks. The ASL fingerspelling winner used Squeezeformer blocks, which combine attention with convolution, followed by a transformer decoder. Vision transformers such as SegFormer appear as segmentation backbones.

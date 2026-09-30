@@ -1,6 +1,6 @@
 ---
 slug: cafa-5-protein-function-prediction
-title: "CAFA 5 Protein Function Prediction (2023): many weak signals, one ontology"
+title: "CAFA 5 Protein Function Prediction (2023)"
 shortTitle: CAFA 5 Protein Function
 kaggleSlug: cafa-5-protein-function-prediction
 kaggleUrl: https://www.kaggle.com/competitions/cafa-5-protein-function-prediction
@@ -21,10 +21,10 @@ techniques:
   - ensembling
 metric:
   name: Information-accretion-weighted Fmax
-  summary: "For each of the three Gene Ontology subontologies, the maximum over thresholds of an F-measure in which each term is weighted by its information content; the score is the mean over subontologies."
+  summary: "For each of the three Gene Ontology subontologies, the maximum over thresholds of an F-measure in which each term is weighted by its information accretion. The score is the mean of the three values."
 constraints: { runtime: "Predictions submitted as a file; evaluated prospectively on annotations added after the deadline", hardware: "Participants' own hardware", internet: true }
-summary: "Predict which Gene Ontology terms describe the function, process and location of proteins, scored on experimental annotations that appeared only after the submission deadline. The winning academic team extended their NetGO 3.0 system with components based on protein literature and predicted structure, combining a dozen predictors by learning to rank. The runner-up trained multi-output gradient boosting on protein language-model embeddings, modelled each term conditionally on its parents in the ontology, and stacked the models with a graph network over the ontology."
-winningIdea: "Combine many heterogeneous signals (sequence similarity, language-model embeddings, interaction networks, predicted structure and especially text about the protein) with a learning-to-rank ensemble, validated on a sample that matches the test set's species mix."
+summary: "The competition asked participants to predict, from protein sequences and any public data, the Gene Ontology terms that describe each protein's molecular function, biological processes and cellular location; predictions were scored against experimental annotations added after the submission deadline. The winning solution extends the NetGO 3.0 system with components based on predicted structure and on the literature about each protein, and combines about a dozen predictors with a learning-to-rank model. It scored 0.616 on the private leaderboard."
+winningIdea: "Several predictors each score every candidate Gene Ontology term for a protein: logistic regression on protein language-model embeddings, annotation transfer from proteins with similar sequences, structures or interaction partners, and models of the text written about the protein. A learning-to-rank model combines their scores together with the protein's species. The model was validated on a sample of proteins drawn to match the species distribution of the test set."
 solutions:
   - rank: 1
     team: GOCurator (Fudan University)
@@ -35,15 +35,15 @@ solutions:
       - { name: "Tianyang Huang" }
       - { name: "Huiying Yan" }
     writeup: https://www.kaggle.com/competitions/cafa-5-protein-function-prediction/writeups/gocurator-1st-place-solution-for-the-cafa5
-    note: "Zhu Lab (Shanfeng Zhu), Fudan University; authors of the NetGO systems."
+    note: "Zhu Lab (Shanfeng Zhu), Fudan University, which develops the NetGO systems."
   - rank: 2
     team: u900
     members: [{ name: "Anton Vakhrushev" }]
     writeup: https://www.kaggle.com/competitions/cafa-5-protein-function-prediction/writeups/u900-private-2nd-public-5th-solution-py-boost-and-
-    note: "Second on the private leaderboard, fifth on the public. Anton Vakhrushev is the author of py-boost; other team members are listed on the write-up."
+    note: "Second on the private leaderboard and fifth on the public leaderboard. Anton Vakhrushev is the author of py-boost; the other team members are listed on the write-up."
 deployability:
   score: 3
-  verdict: "The runner-up's pipeline (protein language-model embeddings, GPU gradient boosting, a graph stacker) is self-contained and trains in hours per fold on one GPU. The winner's system is stronger but depends on many external resources that must be kept current: literature retrieval, interaction networks, predicted structures and InterProScan. As a research tool for annotating new proteins, either is usable; neither replaces experimental evidence."
+  verdict: "The runner-up's pipeline (protein language-model embeddings, GPU gradient boosting and a graph-network stacker) is self-contained and trains in about 1.5 hours per fold on one GPU. The winner's system scored higher but depends on external resources that must be kept current: literature retrieval, interaction networks, predicted structures and InterProScan. Either can serve as a research tool for proposing annotations of new proteins; the predictions do not replace experimental evidence."
   inference: "Per protein: a language-model embedding (seconds on a GPU), plus database searches (BLAST, FoldSeek, literature retrieval) for the winning system, then the ensemble."
   models: "Winner: about a dozen component predictors (logistic regression on ESM-1b embeddings, KNN over BLAST, FoldSeek and interaction networks, text models) combined by learning to rank. Runner-up: py-boost, logistic regression and neural networks on ProtT5 embeddings, stacked by a graph convolutional network."
   training: "Winner: 1–2 days to compute InterProScan and ESM-1b features, 10–15 hours per component. Runner-up: about 1.5 hours per fold for py-boost with 4,500 outputs on one 32 GB V100."
@@ -53,9 +53,9 @@ deployability:
     data: "UniProt and GO data are freely available (CC BY 4.0); STRING has its own licence."
     weights: "Pretrained protein language models (ESM-1b, ESM2, ProtT5) are openly released under their own licences."
   risks:
-    - "Predictions propagate existing annotation biases: well-studied species and functions dominate the training data."
-    - "Text-based components require literature about the protein, which is absent for newly sequenced proteins, exactly those most in need of prediction."
-    - "Electronic annotations used as features can be circular if they derive from the same databases used for labels."
+    - "Predictions reproduce the biases of existing annotations, in which well-studied species and functions are over-represented."
+    - "The text-based components require published literature about the protein. Newly sequenced proteins, for which predictions are most needed, usually have none."
+    - "Electronic annotations used as features can make the evaluation circular if they are derived from the same databases as the labels."
 related:
   - stanford-ribonanza-rna-folding
   - leash-BELKA
@@ -72,75 +72,117 @@ dataLinks:
   - { label: "Gene Ontology", url: "https://geneontology.org/" }
   - { label: "UniProt", url: "https://www.uniprot.org/" }
 priority: 24
-updated: "2026-09-28"
+updated: "2026-09-29"
 ---
 
-## The problem in its field
+## Scientific background
 
-Sequencing has produced hundreds of millions of protein sequences, but only a small fraction have any experimentally established function. Most annotations in databases are inferred computationally, often by similarity to a characterised protein. Experiments are slow; prediction guides which experiments to do, and gives provisional descriptions for the rest.
+Sequencing has produced hundreds of millions of protein sequences, and only a small fraction of these proteins have an experimentally established function. Most function annotations in databases are inferred computationally, often from sequence similarity to a protein whose function is known. Experiments are slow and expensive. Predictions are used to choose which experiments to carry out and to give provisional descriptions of the proteins that remain uncharacterised.
 
-**CAFA (Critical Assessment of Functional Annotation)** is a community experiment that has evaluated protein function prediction since 2010. Its design is **prospective**: predictions are submitted for proteins without experimental annotations, and are scored months later against annotations that curators add in the meantime. No one, including the organisers, knows the answers at submission time. CAFA 5 ran on Kaggle for the first time, organised by Iddo Friedberg, Predrag Radivojac and colleagues, with UniProt.
+**CAFA (Critical Assessment of Functional Annotation)** is a community experiment that has evaluated protein function prediction since 2010. Its evaluation is **prospective**. Participants submit predictions for proteins that lack experimental annotations, and the predictions are scored months later against the experimental annotations that curators add in the meantime. At the submission deadline the answers are unknown to everyone, including the organisers. CAFA 5 was the first CAFA to run on Kaggle. It was organised by the Function-COSI community, with CAFA co-chairs Iddo Friedberg and Predrag Radivojac, co-organisers including M. Clara De Paolis Kaluza, Parnal Joshi and Damiano Piovesan, and UniProt.
 
 <Deep title="The Gene Ontology" kind="domain">
 
-The **Gene Ontology (GO)** is a controlled vocabulary of about 40,000–45,000 terms describing gene product function, organised in three separate **subontologies**:
+The **Gene Ontology (GO)** is a controlled vocabulary of about 40,000–45,000 terms that describe the functions of gene products. It is divided into three **subontologies**:
 
-- **Molecular Function (MF):** what the protein does at the molecular level, e.g. "ATP binding", "protein kinase activity".
-- **Biological Process (BP):** the larger processes it takes part in, e.g. "DNA repair", "response to heat".
-- **Cellular Component (CC):** where it is located, e.g. "mitochondrial inner membrane", "nucleus".
+- **Molecular Function (MF):** the activity of the protein at the molecular level, for example "ATP binding" or "protein kinase activity".
+- **Biological Process (BP):** the larger processes in which the protein takes part, for example "DNA repair" or "response to heat".
+- **Cellular Component (CC):** the location of the protein in the cell, for example "mitochondrial inner membrane" or "nucleus".
 
-Each subontology is a **directed acyclic graph** (DAG): a term can have several parents, linked by relations such as "is a" and "part of". "Protein serine/threonine kinase activity" is a "protein kinase activity", which is a "kinase activity", which is a "catalytic activity".
+Each subontology is a **directed acyclic graph** (DAG). A term can have several parents, connected by relations such as "is a" and "part of". For example, "protein serine/threonine kinase activity" is a "protein kinase activity", which is a "kinase activity", which is a "catalytic activity".
 
-The **true path rule**: if a protein is annotated with a term, it is implicitly annotated with all the term's ancestors. Annotations and predictions are therefore propagated upwards before comparison.
+Under the **true path rule**, a protein annotated with a term is also annotated with all of that term's ancestors. Annotations and predictions are therefore **propagated** to all ancestors before they are compared.
 
-Annotations carry **evidence codes**. Experimental codes (e.g. IDA, direct assay; IMP, mutant phenotype) count as ground truth in CAFA; electronic annotations (IEA) and other computational codes do not.
+Each annotation carries an **evidence code**. Experimental codes, such as IDA (inferred from direct assay) and IMP (inferred from mutant phenotype), count as ground truth in CAFA. Electronic annotations (IEA) and other computational evidence codes do not.
 </Deep>
 
-## The data
+### Protein representations used by the solutions
 
-The training set contains proteins with at least one experimental GO annotation, their sequences, and the propagated annotation sets. The test superset holds about 140,000 proteins; after the deadline, the organisers collected new experimental annotations for them. A protein counts in the evaluation of a subontology only if it had **no experimental annotation in that subontology** at the deadline and gained one afterwards.
+- **BLAST** searches a sequence database for sequences that align with a query and reports a similarity score (the bit score) for each hit.
+- A **protein language model**, such as ESM-1b, ESM-2 or ProtT5, is a transformer trained on millions of protein sequences to predict amino acids that have been hidden from its input. The vector it computes for a sequence (an **embedding**) is used as a feature vector for downstream models.
+- **STRING** is a database of known and predicted protein–protein interactions for many species.
+- **InterProScan** assigns protein domain and family signatures to a sequence.
+- **FoldSeek** searches a database of protein 3D structures, including structures predicted from sequence, for structures similar to a query.
 
-Participants could use any public data: sequence databases, annotations with non-experimental evidence, interaction networks, literature and structure predictions.
+<Foundation id="transfer-learning" />
 
-## The metric
+## Data
 
-Precision and recall are computed per protein over the set of predicted terms above a threshold $\tau$, averaged over proteins, and combined into an F-measure; **Fmax** is its maximum over $\tau$. In CAFA 5, each term is weighted by its **information accretion**, so that predicting the root "biological process" (true for every protein) earns nothing, while predicting a specific, rarely annotated term earns much.
+The training set contains proteins with at least one experimental GO annotation, their sequences, and their propagated annotation sets. The test superset contains about 140,000 proteins. After the deadline, the organisers collected the experimental annotations added to these proteins. A protein is evaluated in a subontology only if it had **no experimental annotation in that subontology** at the deadline and received one afterwards.
 
-<Deep title="Information accretion and weighted Fmax" kind="math">
+Participants could use any public data, including sequence databases, annotations with non-experimental evidence, interaction networks, literature and predicted structures.
 
-**Information accretion** (Clark and Radivojac, 2013). For a term $f$ with parent set $\mathrm{Pa}(f)$, estimate from the annotation database the probability that a protein has $f$ given that it has all its parents:
-$$
-\mathrm{ia}(f) = -\log_2 P\big(f \mid \mathrm{Pa}(f)\big).
-$$
-If every protein with the parents also has $f$, then $\mathrm{ia}(f) = 0$: knowing $f$ adds no information. If only 1 in 8 does, $\mathrm{ia}(f) = 3$ bits. Summing $\mathrm{ia}$ over a propagated annotation set gives its total information content, because the chain rule of probability along the DAG turns the joint probability into a product of conditional ones.
+## Evaluation metric
 
-**Weighted precision and recall** for protein $i$ with true propagated set $T_i$ and predicted propagated set $P_i(\tau) = \{f : s_i(f) \ge \tau\}$:
-$$
-\mathrm{pr}_i(\tau) = \frac{\sum_{f \in P_i(\tau) \cap T_i} \mathrm{ia}(f)}{\sum_{f \in P_i(\tau)} \mathrm{ia}(f)}, \qquad
-\mathrm{rc}_i(\tau) = \frac{\sum_{f \in P_i(\tau) \cap T_i} \mathrm{ia}(f)}{\sum_{f \in T_i} \mathrm{ia}(f)}.
-$$
-Precision is averaged over the $m(\tau)$ proteins with at least one prediction above $\tau$; recall over all $n$ evaluated proteins:
-$$
-\mathrm{pr}(\tau) = \frac{1}{m(\tau)}\sum_{i : P_i(\tau) \ne \emptyset} \mathrm{pr}_i(\tau), \qquad
-\mathrm{rc}(\tau) = \frac{1}{n}\sum_{i} \mathrm{rc}_i(\tau),
-$$
-$$
-F_{\max} = \max_\tau \frac{2\,\mathrm{pr}(\tau)\,\mathrm{rc}(\tau)}{\mathrm{pr}(\tau) + \mathrm{rc}(\tau)}.
-$$
-The final score is the mean of Fmax over MF, BP and CC.
-
-Consequences for modelling:
-
-- Scores must be **consistent with the DAG**: a term's score should not exceed its parent's, or propagation will produce contradictions. Most pipelines enforce $s(\text{parent}) \ge s(\text{child})$ by taking maxima upwards.
-- Because precision is averaged only over proteins with predictions, a single threshold applies to all proteins; a well-ranked, well-calibrated score across proteins matters as much as ranking within one.
-- Deep, specific terms dominate the weights; broad terms near the root contribute little.
-</Deep>
+For each protein, precision and recall are computed over the set of GO terms whose predicted score is at least a threshold $\tau$. They are averaged over proteins and combined into an F-measure, and **Fmax** is the maximum of this F-measure over $\tau$. In CAFA 5 each term is weighted by its **information accretion**. The root term "biological process", which applies to every protein, has weight zero, and a specific term that is rarely annotated has a large weight.
 
 <Foundation id="precision-recall-fbeta" />
 
-## How the winning solution works
+<Deep title="Information accretion and weighted Fmax" kind="math">
 
-Team GOCurator from Shanfeng Zhu's laboratory at Fudan University (Shaojun Wang, Weiqi Zhai, Wei Liu, Tianyang Huang and Huiying Yan) scored 0.616 on the private leaderboard. Their laboratory develops the **NetGO** systems, which had placed at the top of CAFA3 and CAFA4, and they extended NetGO 3.0 with new components.
+**Information accretion** (Clark and Radivojac, 2013). Let $f$ be a GO term with parent set $\mathrm{Pa}(f)$. Estimated from the annotation database, $P\big(f \mid \mathrm{Pa}(f)\big)$ is the probability that a protein has $f$ given that it has all of $f$'s parents. The information accretion of $f$ is
+
+$$
+\mathrm{ia}(f) = -\log_2 P\big(f \mid \mathrm{Pa}(f)\big) \ \ge 0 .
+$$
+
+If every protein with all the parents also has $f$, then $P = 1$ and $\mathrm{ia}(f) = 0$. If one protein in 8 has it, then $\mathrm{ia}(f) = -\log_2 \tfrac18 = 3$ bits.
+
+The weights add up to the information content of an annotation set. Clark and Radivojac model the annotations as a Bayesian network on the DAG, in which each term depends only on its parents. Let $T$ be a propagated annotation set, so that every ancestor of a term in $T$ is also in $T$. The probability that a protein has all the terms of $T$ factorises over the terms,
+
+$$
+P(T) = \prod_{f \in T} P\big(f \mid \mathrm{Pa}(f)\big) ,
+$$
+
+and taking $-\log_2$ of both sides turns the product into a sum:
+
+$$
+-\log_2 P(T) = \sum_{f \in T} \mathrm{ia}(f) .
+$$
+
+**Weighted precision and recall.** For protein $i$, let $T_i$ be the true propagated annotation set and $s_i(f) \in [0,1]$ the predicted score of term $f$. The predicted set at threshold $\tau \in [0,1]$ is $P_i(\tau) = \{f : s_i(f) \ge \tau\}$, propagated. Define the information in the correctly predicted terms, in all predicted terms, and in all true terms:
+
+$$
+\mathrm{TP}_i(\tau) = \sum_{f \in P_i(\tau) \cap T_i} \mathrm{ia}(f), \qquad
+\mathrm{Pred}_i(\tau) = \sum_{f \in P_i(\tau)} \mathrm{ia}(f), \qquad
+\mathrm{True}_i = \sum_{f \in T_i} \mathrm{ia}(f).
+$$
+
+The weighted precision and recall of protein $i$ are
+
+$$
+\mathrm{pr}_i(\tau) = \frac{\mathrm{TP}_i(\tau)}{\mathrm{Pred}_i(\tau)}, \qquad
+\mathrm{rc}_i(\tau) = \frac{\mathrm{TP}_i(\tau)}{\mathrm{True}_i} .
+$$
+
+**Example.** A protein has true terms {root, $A$, $B$} with information accretion 0, 1 and 3 bits. The predicted set is {root, $A$, $C$}, with $\mathrm{ia}(C) = 2$. Then $\mathrm{TP} = 0 + 1 = 1$, $\mathrm{Pred} = 0 + 1 + 2 = 3$ and $\mathrm{True} = 0 + 1 + 3 = 4$, so the precision is $1/3$ and the recall is $1/4$. The correct prediction of the root adds nothing to either.
+
+**Averaging over proteins.** Precision is averaged over the $m(\tau)$ proteins that have at least one predicted term at threshold $\tau$, and recall over all $n$ evaluated proteins:
+
+$$
+\mathrm{pr}(\tau) = \frac{1}{m(\tau)}\sum_{i \,:\, P_i(\tau) \ne \emptyset} \mathrm{pr}_i(\tau), \qquad
+\mathrm{rc}(\tau) = \frac{1}{n}\sum_{i=1}^{n} \mathrm{rc}_i(\tau) .
+$$
+
+The F-measure at $\tau$ and its maximum are
+
+$$
+F(\tau) = \frac{2\,\mathrm{pr}(\tau)\,\mathrm{rc}(\tau)}{\mathrm{pr}(\tau) + \mathrm{rc}(\tau)}, \qquad
+F_{\max} = \max_{\tau} F(\tau) .
+$$
+
+The final score is the mean of $F_{\max}$ over MF, BP and CC.
+
+**Consequences for modelling.**
+
+- Scores should be consistent with the DAG: a term's score should not exceed the scores of its parents. A predicted term is propagated to its ancestors, so a child scored above its parent places the parent in the predicted set at thresholds where its own score would not. A common post-processing step raises each parent's score to the maximum of its children's scores.
+- One threshold $\tau$ is applied to all proteins, so scores must be comparable between proteins, not only ordered correctly within one protein.
+- Terms near the root have $P(f \mid \mathrm{Pa}(f))$ close to 1 and weights close to 0. Most of the score comes from specific terms deep in the DAG.
+</Deep>
+
+## Winning solution
+
+Team GOCurator from Shanfeng Zhu's laboratory at Fudan University (Shaojun Wang, Weiqi Zhai, Wei Liu, Tianyang Huang and Huiying Yan) scored 0.61623 on the private leaderboard. The laboratory develops the **NetGO** systems, which ranked at the top of CAFA3 and CAFA4. The team extended NetGO 3.0 with new components.
 
 <Pipeline steps={[
   {tag: "Sequence", title: "LR-ESM, BLAST-KNN", detail: "language-model embeddings, homology"},
@@ -148,127 +190,177 @@ Team GOCurator from Shanfeng Zhu's laboratory at Fudan University (Shaojun Wang,
   {tag: "Structure", title: "FoldSeek-KNN", detail: "similar predicted structures"},
   {tag: "Text", title: "LR-MEM, GOXML, GORetrieval", detail: "descriptions and literature"},
   {tag: "Ensemble", title: "Learning to rank", detail: "component scores + species one-hot"}
-]} caption="The GOCurator system: many components, one ranker." />
+]} caption="The GOCurator system. Each component scores candidate GO terms; a learning-to-rank model combines the scores." />
 
 <Foundation id="models-and-loss" />
 
-### Components carried over from NetGO 3.0
+The training data were Swiss-Prot sequences and GOA annotations with the evidence codes used in CAFA 5, and the GO graph.
 
-- **LR-ESM:** logistic regression per GO term on ESM-1b protein language-model embeddings. ESM-2 and ProtT5 embeddings did no better inside the ensemble.
-- **BLAST-KNN:** annotations transferred from sequence-similar training proteins, weighted by similarity.
-- **Net-KNN:** annotations transferred from interaction partners in the STRING network. For species with few annotations it was unreliable, so it was used only for the 15 best-covered species.
-- Further NetGO components based on protein domain and family signatures (InterProScan).
+### Components from NetGO 3.0
 
-<Foundation id="transfer-learning" />
+- **LR-ESM:** logistic regression for each GO term on ESM-1b embeddings. The team reports that ESM-2 and ProtT5 embeddings were no better than ESM-1b within the ensemble.
+- **BLAST-KNN:** annotations transferred from training proteins with similar sequences, weighted by similarity.
+- **Net-KNN:** annotations transferred from interaction partners in the STRING network. It performed poorly for species with few annotations and was used only for the 15 species with the most annotations.
+- Further NetGO components based on InterProScan domain and family signatures.
 
 <Deep title="Nearest-neighbour annotation transfer" kind="math">
 
-For a query protein $q$ with neighbours $\mathcal{N}(q)$ (by BLAST bit score, structural similarity, or network edges) and similarity weights $w_{qj}$, the score for term $f$ is the weighted fraction of neighbours annotated with it:
-$$
-s_q(f) = \frac{\sum_{j \in \mathcal{N}(q)} w_{qj}\,\mathbb{1}[f \in T_j]}{\sum_{j \in \mathcal{N}(q)} w_{qj}}.
-$$
-Because every $T_j$ is propagated, $\mathbb{1}[f \in T_j] \le \mathbb{1}[\mathrm{parent}(f) \in T_j]$ for each $j$, so the scores automatically satisfy $s_q(f) \le s_q(\mathrm{parent}(f))$: KNN transfer is consistent with the DAG by construction.
+Let $q$ be a query protein, $\mathcal{N}(q)$ its set of neighbours (by BLAST bit score, structural similarity or network edges), and $w_{qj} > 0$ the similarity weight of neighbour $j$, with propagated annotation set $T_j$. The score of term $f$ is the weighted fraction of neighbours annotated with it:
 
-This is the oldest idea in function prediction (homology implies similar function) and remains a strong baseline. Its weakness is proteins without close characterised relatives, which embeddings and text help with.
+$$
+s_q(f) = \frac{\sum_{j \in \mathcal{N}(q)} w_{qj}\,\mathbb{1}[f \in T_j]}{W_q}, \qquad W_q = \sum_{j \in \mathcal{N}(q)} w_{qj} .
+$$
+
+These scores are consistent with the DAG. Let $g$ be a parent of $f$. Each $T_j$ is propagated, so $f \in T_j$ implies $g \in T_j$:
+
+$$
+\mathbb{1}[f \in T_j] \le \mathbb{1}[g \in T_j] \quad \text{for every } j .
+$$
+
+Multiplying by $w_{qj} > 0$, summing over $j$ and dividing by $W_q$ gives
+
+$$
+s_q(f) \le s_q(g) .
+$$
+
+Annotation transfer from similar sequences is the oldest method of function prediction, based on the observation that homologous proteins often share functions. It gives no prediction for proteins without annotated relatives, which is where the embedding-based and text-based components contribute.
 </Deep>
 
 ### New components
 
-- **FoldSeek-KNN:** the same transfer rule over proteins with similar **predicted 3D structures**, found with FoldSeek. Structure is conserved over longer evolutionary distances than sequence, so it finds relatives that BLAST misses.
-- **LR-MEM:** logistic regression on a concatenation of representations of the protein's **description**, **literature** and **sequence**.
-- **GOXML:** an extreme multi-label classifier (AttentionXML) over the literature about the protein, in the spirit of the lab's earlier DeepText2GO.
-- **GORetrieval:** a two-stage text method. First retrieve candidate GO terms from proteins whose descriptions resemble the query's; then re-rank candidates by semantic matching between the GO term's definition and the protein's literature, using PubMedBERT.
+- **FoldSeek-KNN:** the same transfer rule applied to proteins with similar **predicted 3D structures**, found with FoldSeek and combined by weighted voting. Protein structure is generally conserved over longer evolutionary distances than sequence, so this search can find relatives that BLAST does not.
+- **LR-MEM:** logistic regression on the concatenated representations of the protein's **description**, its **literature** and its **sequence**.
+- **GOXML:** an extreme multi-label classifier (AttentionXML) applied to the literature about the protein, similar to the laboratory's earlier DeepText2GO.
+- **GORetrieval:** a two-stage text method. Candidate GO terms are first retrieved from proteins whose descriptions resemble the query's description. The candidates are then re-ranked by semantic matching, with PubMedBERT, between the definition of each GO term and the literature about the protein.
 
-The team reports that adding just one text-based or structure-based component to NetGO 3.0 already gives about 90% of the final improvement. Text works because, for many proteins in the prospective test set, papers describing their function already existed before curators turned those findings into GO annotations.
+The text components also use Doc2Vec and TF-IDF representations, as in DeepText2GO. The write-up states that adding a single text-based or structure-based component to NetGO 3.0 achieves about 90% of the final performance. Curators derive experimental GO annotations from published papers, so a paper that describes a protein's function can exist before the corresponding annotation is added to the database.
 
 ### Learning to rank
 
-For every protein–term pair, each component produces a score. A **learning-to-rank** model (as in NetGO) takes these scores, plus a 20-dimensional one-hot encoding of the species, and learns to order candidate terms per protein. Species matters because components differ in reliability between well-studied organisms (human, mouse, yeast) and others.
+Each component produces a score for every protein–term pair. A **learning-to-rank** model, as in NetGO, takes these scores together with a 20-dimensional one-hot encoding of the species and learns to order the candidate terms for each protein. The species is included because the reliability of the components differs between well-studied organisms and others.
 
-<Deep title="Why rank, rather than classify, candidate terms" kind="detail">
+<Deep title="Ranking candidate terms with shared features" kind="detail">
 
-A per-term classifier must learn a separate decision for each of tens of thousands of terms, most with very few positives. A ranking model instead learns **how much to trust each component** in a way shared across terms: "when BLAST-KNN and GORetrieval both score a term highly for a human protein, it is probably right". The features are the component scores, not the term identity, so rare terms benefit from what is learned on common ones.
+A classifier for each GO term would need a separate decision function for each of tens of thousands of terms, most of which have very few positive examples. The ranking model's features are the component scores and the species, not the identity of the term. It therefore learns how far to trust each component, and in which species, with parameters shared across all terms, and rare terms use what is learned from common ones. For example, the model can learn that a term scored highly by both BLAST-KNN and GORetrieval for a human protein is usually correct.
 
-Fmax then only needs a single global threshold on the ranker's output. NetGO's papers train this ranker with a learning-to-rank objective over candidate terms per protein, using gradient-boosted trees.
+Fmax then requires one global threshold on the ranker's output.
 </Deep>
-
-<Foundation id="gradient-boosting" />
 
 ### Validation
 
-Instead of a temporal split, the team sampled 1,000 proteins for validation to **match the species distribution of the test set**, since the mix of species strongly affects which components work.
+The team did not use a temporal split. It sampled 1,000 proteins for validation so that their **species distribution matched that of the test set**, because the species mix affects which components perform well.
 
 <Foundation id="cross-validation" />
 
-**Compute:** 1–2 days for InterProScan and ESM-1b features, 10–15 hours of training per component, and 50 minutes for the ranker.
+**Compute.** Computing the InterProScan and ESM-1b features took 1–2 days, training each component 10–15 hours, and training the ranker 50 minutes.
 
 ## Second place: embeddings, py-boost and conditional probabilities on the DAG
 
-Team u900, including Anton Vakhrushev, the author of the py-boost library, finished second on the private leaderboard (fifth on the public). Their approach uses only sequence embeddings and annotation data, and is instructive for its treatment of the ontology.
+Team u900, which included Anton Vakhrushev, the author of the py-boost library, finished second on the private leaderboard and fifth on the public leaderboard. Their solution uses sequence embeddings and annotation data only.
 
-**Features.** Mostly **ProtT5** embeddings (some models used ProtT5 and ESM-2 concatenated), plus a one-hot encoding of about 30 well-represented taxa (the rest merged). Annotations with electronic evidence (IEA) from GOA were also used as features to predict the experimental labels.
+**Features.** The main features were **ProtT5** embeddings; some models used ProtT5 and ESM-2 embeddings concatenated. A one-hot encoding of about 30 well-represented taxa was added, with the remaining taxa merged into one category. Annotations with electronic evidence (IEA) from GOA were also used as features for predicting the experimental labels.
 
-**Base models.**
+**Base models**, trained with 5-fold cross-validation:
 
-- **py-boost**, a GPU gradient-boosting library for multi-output problems (based on the SketchBoost method, NeurIPS 2022), with 4,500 outputs (3,000 BP, 1,000 MF, 500 CC terms), trained on one 32 GB V100 in about 1.5 hours per fold.
-- Logistic regression with 13,000 outputs for rarer terms.
+- **py-boost**, a GPU library for gradient boosting with many outputs, based on the SketchBoost method (Iosipoi and Vakhrushev, 2022). The model had 4,500 outputs (3,000 BP, 1,000 MF and 500 CC terms) and trained in about 1.5 hours per fold on one 32 GB V100.
+- Logistic regression with 13,000 outputs, for rarer terms.
 - A neural network from a public notebook.
+
+<Foundation id="gradient-boosting" />
 
 <Deep title="Conditional modelling on the ontology" kind="math">
 
-Standard multi-label training treats each term as an independent binary target. Team u900 instead trained each term **conditionally on its parents**. The target for term $f$ and protein $i$ is
-$$
-y_{if} = \begin{cases} 1 & f \in T_i,\\ 0 & f \notin T_i \text{ but some parent of } f \in T_i,\\ \text{masked} & \text{no parent of } f \in T_i. \end{cases}
-$$
-The model then learns $p^{\text{cond}}_{if} \approx P(f \mid \text{some parent of } f \text{ is present})$, a much more balanced problem than the unconditional one, because it only compares proteins that are already "in the neighbourhood" of $f$.
+Standard multi-label training treats each term as an independent binary target. Team u900 instead trained each term **conditionally on its parents**. For protein $i$ with true propagated set $T_i$ and term $f$, the training target is
 
-To recover unconditional probabilities, process terms in topological order (parents before children). Assuming the parents are independent,
 $$
-P(\text{some parent present}) = 1 - \prod_{g \in \mathrm{Pa}(f)} \big(1 - p^{\text{raw}}_{ig}\big),
+y_{if} =
+\begin{cases}
+1 & \text{if } f \in T_i, \\
+0 & \text{if } f \notin T_i \text{ and at least one parent of } f \text{ is in } T_i, \\
+\text{masked} & \text{if no parent of } f \text{ is in } T_i .
+\end{cases}
 $$
-$$
-p^{\text{raw}}_{if} = p^{\text{cond}}_{if} \cdot \Big(1 - \prod_{g \in \mathrm{Pa}(f)} \big(1 - p^{\text{raw}}_{ig}\big)\Big).
-$$
-The roots have $p^{\text{raw}} = 1$. Terms without a model use the prior conditional frequency.
 
-Compare the information-accretion weight: $\mathrm{ia}(f) = -\log_2 P(f \mid \mathrm{Pa}(f))$ is the log of the same kind of conditional probability, estimated from the database rather than predicted per protein. The conditional formulation models exactly the quantity the metric is built from.
+Let $E_{if}$ denote the event that at least one parent of $f$ is in $T_i$. The model trained on these targets estimates
 
-Two caveats: the independence assumption is wrong for correlated parents (in which case the product overstates the probability that some parent is present), and the recovered child probability can exceed a parent's, so a final consistency pass is still useful. The team notes that this formulation mainly helped by making the models **different** from standard multi-label ones, which increased ensemble diversity.
+$$
+p^{\mathrm{cond}}_{if} \approx P\big(f \in T_i \mid E_{if}\big) .
+$$
+
+The training examples for $f$ are restricted to proteins with a parent of $f$ annotated, so the fraction of positives is higher than in the unconditional problem.
+
+**Recovering unconditional probabilities.** By the true path rule, $f \in T_i$ implies that all parents of $f$ are in $T_i$, and in particular $E_{if}$. Therefore
+
+$$
+P(f \in T_i) = P\big(f \in T_i \mid E_{if}\big)\, P(E_{if}) .
+$$
+
+Terms are processed in topological order, parents before children, so the unconditional probabilities $p^{\mathrm{raw}}_{ig}$ of the parents $g \in \mathrm{Pa}(f)$ are already known. Assuming the parents are present independently of each other,
+
+$$
+P(E_{if}) = 1 - \prod_{g \in \mathrm{Pa}(f)} \big(1 - p^{\mathrm{raw}}_{ig}\big) ,
+$$
+
+and substituting,
+
+$$
+p^{\mathrm{raw}}_{if} = p^{\mathrm{cond}}_{if} \cdot \Big(1 - \prod_{g \in \mathrm{Pa}(f)} \big(1 - p^{\mathrm{raw}}_{ig}\big)\Big) .
+$$
+
+The roots have $p^{\mathrm{raw}} = 1$. Terms without a model use the mean conditional frequency from the training data.
+
+**Relation to the metric.** The information accretion $\mathrm{ia}(f) = -\log_2 P\big(f \mid \mathrm{Pa}(f)\big)$ is also defined through a conditional probability given the parents. It conditions on all parents being present, where the u900 target conditions on at least one, and it is estimated once from the database, where $p^{\mathrm{cond}}_{if}$ is predicted for each protein.
+
+**Limitations.** If the parents are positively correlated, the probability that none is present is larger than the product $\prod_g (1 - p^{\mathrm{raw}}_{ig})$, so the independence formula overstates $P(E_{if})$. The recovered child probability can also exceed a parent's. With two parents at $0.6$ and $0.5$ and $p^{\mathrm{cond}} = 0.9$,
+
+$$
+P(E_{if}) = 1 - 0.4 \times 0.5 = 0.8, \qquad p^{\mathrm{raw}}_{if} = 0.9 \times 0.8 = 0.72,
+$$
+
+which exceeds both parents, although the true path rule requires $P(f \in T_i) \le 0.5$. A final consistency step is therefore still needed. The team describes the main benefit of the formulation as ensemble diversity: its predictions differ from those of standard multi-label models.
 </Deep>
 
 <Foundation id="binary-cross-entropy" />
 
-**Stacking with a graph network.** A **graph convolutional network** over the GO graph combined the base models. Each protein is treated as a graph with the same adjacency (the ontology); node features are the base models' predictions for that term, learned node embeddings, and GO annotation features. Message passing lets each term's final score depend on its neighbours' scores, a learned version of the consistency rules. Shuffling the order of model identifiers served as test-time augmentation.
+**Stacking with a graph network.** A **graph convolutional network** (GCN) over the GO graph combined the base models. Each protein is represented as a graph with the same adjacency, the ontology, and the task is node classification. The node features of a term are the base models' predictions for that term, a learned embedding of the term, and GO annotation features. Through message passing, each term's final score depends on the scores of neighbouring terms. Shuffling the order of the base-model identifiers was used as test-time augmentation.
 
 <Deep title="One layer of a graph convolutional network" kind="math">
 
-With adjacency matrix $A$ over the $K$ GO terms (made symmetric, with self-loops $\tilde A = A + I$) and degree matrix $\tilde D_{kk} = \sum_l \tilde A_{kl}$, a GCN layer (Kipf and Welling, 2017) computes
-$$
-H^{(l+1)} = \phi\big(\tilde D^{-1/2} \tilde A\, \tilde D^{-1/2} H^{(l)} W^{(l)}\big),
-$$
-where $H^{(l)} \in \mathbb{R}^{K \times d}$ holds one feature vector per term and $W^{(l)}$ is a learned weight matrix shared across terms. Each term's new features are a degree-normalised average of its own and its neighbours' features, transformed by $W$.
+Let $A \in \{0,1\}^{K \times K}$ be the adjacency matrix of the $K$ GO terms, made symmetric. Adding self-loops gives $\tilde A = A + I$, with degree matrix $\tilde D$, where $\tilde D_{kk} = \sum_{l} \tilde A_{kl}$. Define the normalised adjacency
 
-After $L$ layers, each term's output depends on terms up to $L$ steps away in the ontology. For function prediction this means a term's score can be raised because its children are predicted strongly (evidence for a specific function supports the general one) or lowered because its parent is predicted weakly.
+$$
+\hat A = \tilde D^{-1/2}\, \tilde A\, \tilde D^{-1/2} .
+$$
+
+A GCN layer (Kipf and Welling, 2017) maps the feature matrix $H^{(l)} \in \mathbb{R}^{K \times d_l}$, one row per term, to
+
+$$
+H^{(l+1)} = \phi\big(\hat A\, H^{(l)} W^{(l)}\big),
+$$
+
+where $W^{(l)} \in \mathbb{R}^{d_l \times d_{l+1}}$ is a learned weight matrix shared by all terms and $\phi$ is an elementwise nonlinearity. Entry $(k, l)$ of $\hat A$ is $1/\sqrt{\tilde D_{kk}\tilde D_{ll}}$ for neighbouring or identical terms and zero otherwise, so row $k$ of $\hat A H^{(l)}$ is a degree-normalised sum of the features of term $k$ and its neighbours.
+
+After $L$ layers, the output for a term depends on all terms within $L$ edges of it in the ontology. A term's score can therefore be raised when its children are predicted strongly, or lowered when its parent is predicted weakly.
 </Deep>
 
 <Foundation id="ensembling-tta" />
 
-**A metric-aware detail.** Since a protein is evaluated in a subontology only if it gains its first experimental annotation there, the team fitted the stacker separately per subontology on proteins that have annotations in it.
+**Per-subontology stacking.** A protein is evaluated in a subontology only if it gains its first experimental annotation there. The team therefore fitted the stacker separately for each subontology, on the proteins that have annotations in it.
 
-## How this compares with other competitions
+## Comparison with other competitions
 
-- **Protein language models** are here the default representation, used by both top teams. In Leash BELKA (small molecules) and Stanford Ribonanza (RNA), pretrained language models did not help the winners; the difference is the size and evolutionary structure of protein sequence databases.
-- **Hierarchical labels** appear in several medical competitions (vertebrae and patient in the cervical spine, organs and "any injury" in abdominal trauma), but nowhere else with tens of thousands of classes in a DAG. The conditional-probability formulation is the most complete treatment of label structure in the collection.
-- **Prospective evaluation** removes any possibility of leakage from the test labels: they did not exist at the deadline.
+- **Protein language models** were used by both top teams. In Stanford Ribonanza, the winners report no gain from RNA-FM embeddings of RNA sequences. In Leash BELKA, the winner pretrained its own model on the competition's molecules with masked language modelling, and pretraining on the ZINC database did not help.
+- **Hierarchical labels** also occur in medical competitions in this collection (vertebrae and patient in cervical spine fracture detection, organs and "any injury" in abdominal trauma detection). CAFA 5 is the only one with tens of thousands of classes arranged in a DAG.
+- **Prospective evaluation.** The test labels did not exist at the submission deadline, so they could not leak into training.
 
 ## Compute and deployment
 
-| Setting | What the solution needs |
+| Setting | Requirements |
 | --- | --- |
-| Competition | Days of feature computation and many component models (winner); hours per fold on one V100 (runner-up). |
+| Competition | Days of feature computation and many component models (winner); about 1.5 hours per fold on one V100 (runner-up). |
 | Bioinformatics group | A GPU for embeddings and py-boost; standard databases (UniProt, GO). |
 | Annotation service | Regularly refreshed databases and literature indices for the text and network components. |
 
-<Callout kind="deploy" title="The minimum useful version">
-ProtT5 or ESM embeddings with multi-output gradient boosting or logistic regression per term, BLAST-KNN transfer, a species one-hot, and a final pass that makes each term's score at most its parents'. Add a literature-based component where papers about the proteins exist; it is the largest single gain.
+<Callout kind="deploy" title="Reduced configuration">
+ProtT5 or ESM embeddings with multi-output gradient boosting or per-term logistic regression, BLAST-KNN transfer, a one-hot encoding of the species, and a final step that limits each term's score to at most its parents' scores. A literature-based component can be added where papers about the proteins exist.
 </Callout>

@@ -2,60 +2,130 @@
 id: roc-auc
 title: "ROC curves, AUC and partial AUC"
 kind: math
-summary: "AUC measures how well a model ranks positives above negatives, independent of any threshold. Partial AUC restricts the measurement to the high-sensitivity region that matters for screening."
+summary: "The ROC curve plots the true-positive rate against the false-positive rate as a decision threshold varies, and the area under it (AUC) equals the probability that a randomly chosen positive example is scored above a randomly chosen negative one. The primer derives this identity, works a small example, and defines partial AUC above a sensitivity floor and column-weighted AUC."
 ---
+
+### Counts at a threshold
+
+A binary classifier assigns a real-valued score $s$ to each example; a higher score indicates that the example is more likely positive. Choosing a threshold $\tau \in \mathbb{R}$ and calling every example with $s \gt \tau$ positive divides the examples into four counts:
+
+- $\mathrm{TP}$, true positives: positive examples called positive;
+- $\mathrm{FN}$, false negatives: positive examples called negative;
+- $\mathrm{FP}$, false positives: negative examples called positive;
+- $\mathrm{TN}$, true negatives: negative examples called negative.
+
+From these,
+
+$$
+\mathrm{TPR}(\tau) = \frac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FN}}, \qquad \mathrm{FPR}(\tau) = \frac{\mathrm{FP}}{\mathrm{FP}+\mathrm{TN}}.
+$$
+
+The true-positive rate is also called sensitivity or recall. The false-positive rate equals $1 - \text{specificity}$.
 
 ### The ROC curve
 
-A model outputs a score $s$ per example. Choosing a threshold $\tau$ and calling everything with $s>\tau$ positive gives
+The **receiver operating characteristic (ROC) curve** is the set of points $\big(\mathrm{FPR}(\tau), \mathrm{TPR}(\tau)\big)$ as $\tau$ decreases from $+\infty$ to $-\infty$. At $\tau = +\infty$ nothing is called positive, giving $(0,0)$; at $\tau = -\infty$ everything is, giving $(1,1)$. A classifier whose scores are independent of the class has an expected curve along the diagonal $\mathrm{TPR} = \mathrm{FPR}$. A classifier that scores every positive above every negative passes through $(0,1)$.
+
+The **area under the curve** is
 
 $$
-\mathrm{TPR}(\tau) = \frac{TP}{TP+FN}\ \ (\text{sensitivity, recall}),\qquad \mathrm{FPR}(\tau) = \frac{FP}{FP+TN}\ \ (1 - \text{specificity}).
+\mathrm{AUC} = \int_0^1 \mathrm{TPR}\; d\,\mathrm{FPR},
 $$
 
-Sweeping $\tau$ from $+\infty$ to $-\infty$ traces the **ROC curve** from $(0,0)$ to $(1,1)$. A useless model follows the diagonal; a perfect one jumps to $(0,1)$.
+which is 0.5 for the diagonal and 1 for a perfect ranking.
 
-### AUC as a probability
+### AUC as a ranking probability
 
-The area under the ROC curve has a direct meaning:
-
-$$
-\mathrm{AUC} = P\big(s(X^+) > s(X^-)\big),
-$$
-
-the probability that a randomly chosen positive gets a higher score than a randomly chosen negative (ties count one half).
-
-<Deep title="Why the area equals the ranking probability" kind="math">
-
-Let $F_+$ and $F_-$ be the score distributions of positives and negatives. At threshold $\tau$, $\mathrm{TPR}(\tau) = P(s^+>\tau)$ and $\mathrm{FPR}(\tau) = P(s^->\tau)$. As $\tau$ decreases, FPR increases by $dF_-$ at each negative score. The area is
+Let $S^+$ be the score of a positive example drawn at random and $S^-$ the score of a negative example drawn at random, independently. Then
 
 $$
-\int_0^1 \mathrm{TPR}\;d\,\mathrm{FPR} = \int P(s^+ > \tau)\; dF_-(\tau) = \mathbb{E}_{s^-}\big[P(s^+ > s^-)\big] = P(s^+ > s^-).
+\mathrm{AUC} = P\big(S^+ \gt S^-\big) + \tfrac12\,P\big(S^+ = S^-\big).
 $$
 
-With finite samples of $n_+$ positives and $n_-$ negatives, the same argument gives the Mann–Whitney statistic
+<Deep title="Derivation of the ranking identity" kind="math">
+
+Assume first that the scores have no ties. Let $F_-$ be the cumulative distribution function of $S^-$. At threshold $\tau$,
 
 $$
-\widehat{\mathrm{AUC}} = \frac{1}{n_+ n_-}\sum_{i\in +}\sum_{j\in -}\Big(\mathbb{1}[s_i > s_j] + \tfrac12\mathbb{1}[s_i = s_j]\Big).
+\mathrm{TPR}(\tau) = P(S^+ \gt \tau), \qquad \mathrm{FPR}(\tau) = P(S^- \gt \tau) = 1 - F_-(\tau).
 $$
+
+*Change of variable.* As $\tau$ decreases, $\mathrm{FPR}$ increases, and $d\,\mathrm{FPR} = -\,dF_-(\tau)$. Reversing the direction of integration removes the sign, so the integral over $\mathrm{FPR}$ from 0 to 1 becomes an integral over $\tau$ with respect to the distribution of $S^-$:
+
+$$
+\mathrm{AUC} = \int P(S^+ \gt \tau)\; dF_-(\tau).
+$$
+
+*Interpretation as an expectation.* The right-hand side is the expectation, over $\tau$ distributed as $S^-$, of $P(S^+ \gt \tau)$:
+
+$$
+\mathrm{AUC} = \mathbb{E}_{S^-}\big[\,P(S^+ \gt S^- \mid S^-)\,\big].
+$$
+
+*Law of total probability.* Averaging a conditional probability over the conditioning variable gives the unconditional probability:
+
+$$
+\mathrm{AUC} = P(S^+ \gt S^-).
+$$
+
+With ties, the ROC curve joins the points before and after a tied group by a straight segment, and the area under that segment counts each tied positive–negative pair as one half.
+
+**Finite samples.** For $n_+$ positive examples with scores $s_i$ and $n_-$ negative examples with scores $s_j$, the same argument applied to the empirical distributions gives
+
+$$
+\widehat{\mathrm{AUC}} = \frac{1}{n_+ n_-}\sum_{i=1}^{n_+}\sum_{j=1}^{n_-} \phi(s_i, s_j), \qquad
+\phi(a, b) = \begin{cases} 1 & a \gt b \\ \tfrac12 & a = b \\ 0 & a \lt b \end{cases}
+$$
+
+This is the Mann–Whitney $U$ statistic divided by $n_+ n_-$.
 </Deep>
 
-Consequences used throughout these reports:
+### Worked example
 
-- AUC depends only on the **order** of scores. Any strictly increasing transformation of the outputs leaves it unchanged, so calibration does not matter.
-- Averaging ranks rather than raw probabilities is a natural way to ensemble models whose outputs sit on different scales (`rank(pct=True)` in the melanoma and ISIC 2024 winners).
-- AUC does not depend on class prevalence, which makes it stable when positives are rare, but it can look high for a model that is useless at the threshold a clinic would use.
+Three positives have scores $0.9, 0.7, 0.4$, and three negatives have scores $0.8, 0.3, 0.2$. There are $3 \times 3 = 9$ positive–negative pairs.
+
+- The positive at 0.9 is above all three negatives: 3 pairs.
+- The positive at 0.7 is above 0.3 and 0.2 and below 0.8: 2 pairs.
+- The positive at 0.4 is above 0.3 and 0.2: 2 pairs.
+
+So $\widehat{\mathrm{AUC}} = 7/9 \approx 0.778$.
+
+The ROC curve gives the same value. Sorting all six scores in decreasing order (P, N, P, P, N, N) and lowering the threshold past each one gives the points $(0,0)$, $(0,\tfrac13)$, $(\tfrac13,\tfrac13)$, $(\tfrac13,\tfrac23)$, $(\tfrac13,1)$, $(\tfrac23,1)$, $(1,1)$. The curve is at height $\tfrac13$ for $\mathrm{FPR} \in [0,\tfrac13]$ and at height 1 for $\mathrm{FPR} \in [\tfrac13, 1]$, so the area is
+
+$$
+\tfrac13 \times \tfrac13 + 1 \times \tfrac23 = \tfrac19 + \tfrac69 = \tfrac79 .
+$$
+
+### Properties
+
+- **Dependence on order only.** AUC depends on the scores only through their order. Applying any strictly increasing function to all scores leaves it unchanged, so AUC does not measure calibration.
+- **Rank averaging.** Because only the order matters, models whose outputs lie on different scales can be combined by averaging their ranks. The winners of the SIIM-ISIC melanoma and ISIC 2024 competitions converted each model's predictions to percentile ranks (`rank(pct=True)` in pandas) before averaging.
+- **Independence from prevalence.** TPR is computed within the positives and FPR within the negatives, so AUC does not change when the ratio of positives to negatives changes, provided the score distributions within each class stay the same. The positive predictive value at a fixed threshold does depend on prevalence, and a model with a high AUC can have a low positive predictive value when positives are rare.
 
 ### Partial AUC above a sensitivity floor
 
-A screening tool that misses 30% of cancers is unacceptable however well it ranks. ISIC 2024 scored only the part of the ROC curve where $\mathrm{TPR}\ge 0.8$:
+A screening test is used only at thresholds with high sensitivity. The ISIC 2024 skin-lesion competition scored only the part of the ROC curve where $\mathrm{TPR} \ge 0.8$. With $\mathrm{TPR}(u)$ denoting the true-positive rate at false-positive rate $u \in [0,1]$,
 
 $$
-\mathrm{pAUC}_{\mathrm{TPR}\ge0.8} = \int_{0}^{1}\max\big(\mathrm{TPR}(f) - 0.8,\ 0\big)\,df ,
+\mathrm{pAUC}_{\mathrm{TPR}\ge0.8} = \int_{0}^{1}\max\big(\mathrm{TPR}(u) - 0.8,\ 0\big)\,du .
 $$
 
-the area between the curve and the horizontal line at 0.8. Its maximum is $1\times0.2 = 0.2$, which is why ISIC 2024 scores lie between 0 and 0.2. Two models with equal AUC can differ greatly in pAUC: what counts is how few false positives a model needs before it has found 80% of the cancers.
+This is the area between the ROC curve and the horizontal line $\mathrm{TPR} = 0.8$, counted only where the curve lies above the line. A perfect classifier has $\mathrm{TPR} = 1$ for every $u \gt 0$, so the maximum is $1 \times (1 - 0.8) = 0.2$, and ISIC 2024 scores lie between 0 and 0.2.
+
+In the worked example above, the curve exceeds 0.8 only for $u \in [\tfrac13, 1]$, where $\mathrm{TPR} = 1$, so
+
+$$
+\mathrm{pAUC}_{\mathrm{TPR}\ge0.8} = (1 - 0.8) \times \tfrac23 \approx 0.133 .
+$$
+
+The part of the curve below the floor, which contributes $\tfrac19$ to the full AUC, contributes nothing here. Two models with equal AUC can therefore have different pAUC: the metric depends on how many false positives a model incurs before it reaches 80% sensitivity.
 
 ### Column-weighted AUC
 
-When there are several labels, AUC is computed per label and averaged, possibly with weights. The aneurysm competition gave the "aneurysm present" column weight 13 and each of the 13 location columns weight 1, so that the overall question and the 13 location questions each contribute half of the score.
+When each example has several binary labels, an AUC is computed separately for each label (each column of the prediction table) and the results are averaged, possibly with weights $w_j$:
+
+$$
+\mathrm{Score} = \frac{\sum_j w_j\,\mathrm{AUC}_j}{\sum_j w_j}.
+$$
+
+In the RSNA intracranial aneurysm competition, the "aneurysm present" column had weight 13 and each of the 13 artery-location columns weight 1. The total weight is 26, so the presence column and the 13 location columns each contribute half of the score.

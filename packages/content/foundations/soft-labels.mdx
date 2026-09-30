@@ -2,37 +2,69 @@
 id: soft-labels
 title: "Soft labels, label smoothing and noisy labels"
 kind: math
-summary: "Training targets need not be exactly 0 or 1. Softer targets reduce overconfidence, encode disagreement between annotators, and limit the damage done by wrong labels."
+summary: "A soft label is a training target that assigns probability to more than one class instead of a single 0 or 1. The primer defines label smoothing and derives its effect on the logits, and covers targets built from annotator votes, targets spread in time or space, and the handling of wrong labels."
 ---
+
+### Hard and soft targets
+
+In a classification task with $K$ classes, a **hard** (one-hot) target for an example of class $c$ is the vector $y \in \{0,1\}^K$ with $y_c = 1$ and all other entries 0. A **soft** target is any probability vector $\tilde y \in [0,1]^K$ with $\sum_k \tilde y_k = 1$. For a binary label, a soft target is a single number in $[0,1]$.
+
+The cross-entropy between a target $\tilde y$ and a prediction $p$ is $-\sum_k \tilde y_k \log p_k$. For a fixed target it is minimised over probability vectors $p$ at $p = \tilde y$ (the primers on softmax cross-entropy and KL divergence derive this). Changing the target therefore changes the prediction that the model is trained towards.
 
 ### Label smoothing
 
-With $K$ classes and smoothing $\varepsilon$, replace a one-hot target $y$ by
+With smoothing parameter $\varepsilon \in [0,1)$, label smoothing replaces a one-hot target $y$ by
 
 $$
-\tilde y = (1-\varepsilon)\,y + \frac{\varepsilon}{K}\mathbf{1}.
+\tilde y = (1-\varepsilon)\,y + \frac{\varepsilon}{K}\,\mathbf{1},
 $$
 
-For binary labels with smoothing $0.1$, the targets become $0.05$ and $0.95$. Because cross-entropy is minimised by predicting the target, the model is never pushed to output exactly 0 or 1, and its logits stay bounded. This reduces overconfidence and helps when the metric is log loss.
+where $\mathbf{1}$ is the vector of ones. The true class receives $1 - \varepsilon + \varepsilon/K$ and each other class $\varepsilon/K$. For a binary label ($K = 2$) with $\varepsilon = 0.1$, the targets become $0.95$ for the true class and $0.05$ for the other.
 
-### Asymmetric (positive-only) smoothing
-
-The mammography winner softened only the positives: negatives kept target 0, positives got target 0.8 or 0.9. The reason was specific to the data. The label belongs to a breast, but each breast has several images, and the cancer may not be visible in every one. A positive label on a single image is therefore less certain than a negative one, and a soft positive target states that uncertainty.
-
-### Soft targets from annotators
-
-When several experts label the same example, their votes form a distribution. The HMS brain-activity competition supplied vote counts for six EEG patterns and scored predictions by KL divergence against the vote distribution, so training directly on the normalised votes is natural. The winning team added a constant $0.02$ to each vote count before normalising:
+**Effect on the logits.** A softmax output is $p_k = e^{z_k} / \sum_j e^{z_j}$, where $z \in \mathbb{R}^K$ are the logits. The ratio of two probabilities depends only on the difference of the logits:
 
 $$
-\tilde y_k = \frac{v_k + 0.02}{\sum_j (v_j + 0.02)} .
+\frac{p_c}{p_k} = e^{z_c - z_k} .
 $$
 
-For an example with 20 votes, the added mass is negligible; for an example with one vote, it spreads noticeable probability across all classes. The smoothing is therefore strongest where the label is least reliable.
+At the minimiser $p = \tilde y$, taking logarithms gives
+
+$$
+z_c - z_k = \log\frac{1 - \varepsilon + \varepsilon/K}{\varepsilon/K}.
+$$
+
+With a hard target ($\varepsilon = 0$) the minimum is approached only as $z_c - z_k \to \infty$, so training keeps increasing the logit gap. With smoothing the gap has a finite optimum. For $K = 2$ and $\varepsilon = 0.1$ it is $\log(0.95/0.05) = \log 19 \approx 2.94$. The smoothed model is trained to predict at most 0.95, which limits its penalty under log loss when it is wrong.
+
+### Asymmetric smoothing
+
+Smoothing can be applied to one class only. In the RSNA screening mammography competition, the cancer label applies to a breast, and each breast has several images in which a lesion is not equally visible. The winner kept negative targets at 0 and set positive targets to 0.8. On one fold this raised PR-AUC from 0.4755 (label smoothing of 0.1 on both classes) to 0.5401, but his later ablation found the soft positive target not clearly better than ordinary label smoothing across all folds.
+
+### Soft targets from annotator votes
+
+When several experts label the same example, the fraction of votes for each class forms a probability vector. The HMS harmful brain activity competition supplied, for each EEG segment, vote counts $v_1, \dots, v_6$ for six patterns, and scored predictions by KL divergence against the normalised votes $v_k / \sum_j v_j$. The first-place team smoothed the votes by adding a constant $0.02$ to each count before normalising:
+
+$$
+\tilde y_k = \frac{v_k + 0.02}{\sum_{j=1}^{6} (v_j + 0.02)} = \frac{v_k + 0.02}{V + 0.12}, \qquad V = \sum_{j=1}^{6} v_j .
+$$
+
+The added mass is $0.12$ in total, so its effect decreases as the number of votes $V$ increases.
+
+- One vote, for class 1: $\tilde y_1 = 1.02 / 1.12 = 0.911$, and each other class receives $0.02/1.12 = 0.018$.
+- Twenty votes, all for class 1: $\tilde y_1 = 20.02 / 20.12 = 0.995$, and each other class receives $0.02/20.12 = 0.001$.
+
+The smoothing is strongest for examples with few votes, whose vote distributions are the least reliable estimates of expert opinion.
 
 ### Soft targets in time and space
 
-The same idea appears in other shapes: the sleep-state winners replaced each event by a triangle-shaped target that decays with distance in time; the abdominal trauma winners weighted each slice's target by how much of the organ was visible in it. In both cases the hard label is known only at a coarser level (a timestamp, a patient) than the prediction (a step, a slice).
+The same idea applies when a label is known at a coarser level than the prediction.
+
+- In the Child Mind Institute sleep-state competition, each event was a single time step, while the model predicted a score at every step. The winners built a target that equals 1 near the event and decreases in steps with distance from it, down to 0.1 at 30 minutes, and narrowed it during training.
+- In the RSNA 2023 abdominal trauma competition, injury labels were given per patient, while the winners' 2D models read individual slices. The winners set each slice's target to the patient label multiplied by the visible fraction of the organ in that slice, computed from segmentation masks and scaled to $[0,1]$.
 
 ### Noisy labels
 
-When some labels are wrong, cross-entropy pushes the model to fit them, which hurts. Three responses appear in these reports: remove examples whose out-of-fold prediction disagrees strongly with the label (PANDA, lumbar spine), soften the targets, or pseudo-label with an ensemble so that the targets reflect what several models agree on.
+When some training labels are wrong, minimising cross-entropy drives the model to fit them. Three responses appear in the reports.
+
+- **Removal.** Examples whose out-of-fold prediction differs strongly from their label are removed and the model is retrained. A member of the first-place PANDA team removed slides whose predicted ISUP grade differed from the label by more than 1.6. The lumbar spine runner-up removed samples where the difference was at least 0.8 and reported an improvement of about 1% on both leaderboards.
+- **Softening** the targets, as above.
+- **Pseudo-labelling with an ensemble,** so that the targets reflect the agreement of several models (see the primer on pseudo-labelling).

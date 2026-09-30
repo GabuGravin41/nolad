@@ -1,6 +1,6 @@
 ---
 slug: siim-acr-pneumothorax-segmentation
-title: "SIIM-ACR Pneumothorax Segmentation (2019): small U-Nets and a three-threshold decision rule"
+title: "SIIM-ACR Pneumothorax Segmentation (2019)"
 shortTitle: SIIM-ACR Pneumothorax Segmentation
 kaggleSlug: siim-acr-pneumothorax-segmentation
 kaggleUrl: https://www.kaggle.com/competitions/siim-acr-pneumothorax-segmentation
@@ -26,10 +26,10 @@ techniques:
   - ensembling
 metric:
   name: Mean Dice coefficient
-  summary: "Dice averaged over images, with an empty prediction on an empty image scoring 1. Most test images were negative."
+  summary: "Dice coefficient between predicted and true masks, averaged over test images. An empty prediction on an image without pneumothorax scores 1, and any predicted pixel on such an image scores 0."
 constraints: { runtime: "Two-stage; stage 2 predictions from models uploaded at the end of stage 1", hardware: "Participants' own hardware", internet: true, other: "Models had to be uploaded before the stage-2 test set was released." }
-summary: "Outline collapsed lung on chest X-rays, and leave healthy X-rays blank. The winner, working on segmentation for the first time, trained ResNet-34 and SE-ResNeXt-50 U-Nets on one or two consumer GPUs and replaced the usual separate classifier with a three-threshold rule applied to the segmentation output itself."
-winningIdea: "Decide whether an image contains a pneumothorax from the segmentation map itself (enough confident pixels?), then draw the mask with a lower threshold; tune the three numbers on validation, and train with a positive-sampling rate that falls from 0.8 to 0.4."
+summary: "The competition asked participants to segment pneumothorax on frontal chest radiographs, and to return an empty mask for radiographs without one. The winning solution trains U-Nets with ResNet-34, ResNet-50 and SE-ResNeXt-50 encoders and decides whether an image is positive from the segmentation output itself, using a high probability threshold, a minimum pixel count and a lower threshold for drawing the mask. The two final ensembles scored 0.8679 and 0.8641 mean Dice on the private leaderboard."
+winningIdea: "U-Nets with ImageNet-pretrained encoders produce a pneumothorax probability map for each radiograph. An image is declared positive only if enough pixels exceed a high threshold, and on positive images the mask is drawn with a lower threshold; the three numbers are tuned on validation data. During training the fraction of positive images in each epoch is lowered from 0.8 to 0.4."
 solutions:
   - rank: 1
     team: Aimoldin Anuar (sneddy)
@@ -63,7 +63,7 @@ solutions:
     writeup: https://www.kaggle.com/competitions/siim-acr-pneumothorax-segmentation/writeups/ian-pan-felipe-kitamura-8th-place-solution-overvie
 deployability:
   score: 5
-  verdict: "Small, well-understood U-Nets that trained on a single GTX 1080 Ti, with released code; the method has since been reused as a template for other medical segmentation problems."
+  verdict: "The models are U-Nets with standard ImageNet encoders, trained on one or two GTX 1080 Ti GPUs with a batch size of 2–4, and the training code is public. Weights are not distributed, so a user has to retrain, which is feasible on a single consumer GPU."
   inference: "Fractions of a second per radiograph on a GPU; ResNet-34 U-Nets also run acceptably on CPU."
   models: "Four U-Net configurations (ResNet-34, ResNet-50, SE-ResNeXt-50 encoders), several folds each, top-3 checkpoint averaging, horizontal-flip TTA."
   training: "One, sometimes two, NVIDIA GTX 1080 Ti GPUs; batch size 2–4."
@@ -73,8 +73,8 @@ deployability:
     data: "SIIM-ACR data derived from the NIH ChestX-ray14 dataset, distributed through the Google Cloud Healthcare API for the competition."
     weights: "Not distributed with the winner's repository; retraining is required."
   risks:
-    - "Chest tubes in training images can act as shortcuts: patients with a treated pneumothorax have a tube, so a model can learn 'tube means pneumothorax'. This was documented for this dataset and should be tested before use."
-    - "The images are frontal radiographs from one source dataset; performance on portable, supine ICU films from other hospitals must be verified."
+    - "A patient whose pneumothorax has already been treated usually has a chest drain on the radiograph. A model trained on such images can learn to detect the drain rather than the air, so performance should be measured separately on positive images without a drain."
+    - "The images are frontal radiographs from one source dataset. Performance on supine radiographs taken with portable equipment in intensive care, and on images from other hospitals, has to be measured before use."
 related:
   - uw-madison-gi-tract-image-segmentation
   - hubmap-organ-segmentation
@@ -86,55 +86,91 @@ papers:
 dataLinks:
   - { label: "Competition data page (Kaggle)", url: "https://www.kaggle.com/competitions/siim-acr-pneumothorax-segmentation/data" }
 priority: 2
-updated: "2026-09-28"
+updated: "2026-09-29"
 ---
 
-## The problem in its field
+## Clinical background
 
-A **pneumothorax** is air in the pleural space, the thin gap between the lung and the chest wall. Normally that space is at negative pressure and holds the lung against the wall. When air enters it, through an injury, a ruptured air blister on the lung surface, or damage from lung disease or a medical procedure, the lung partly or completely collapses. A small pneumothorax may cause mild breathlessness and resolve by itself; a large or "tension" pneumothorax, in which air keeps entering and pushes the heart and great vessels aside, can kill within minutes.
+A pneumothorax is air in the pleural space, the thin space between the lung and the chest wall. The pressure in this space is normally below atmospheric pressure, which holds the lung against the chest wall. When air enters the space, the lung partly or completely collapses. The competition description lists blunt chest injury and underlying lung disease as causes, and a pneumothorax can also occur without an apparent cause. A small pneumothorax may cause mild breathlessness and resolve without treatment. In a tension pneumothorax, air continues to enter the pleural space and displaces the heart and great vessels; this is a medical emergency.
 
-The first test is a chest X-ray. On a frontal film, the collapsed lung's edge appears as a thin white line (the visceral pleural line) with no lung markings beyond it, only dark air. The line can be subtle, especially at the apex of the lung, on a film taken with the patient lying down, or when ribs overlap it. The competition description frames the value of automation directly: triage X-rays so suspected pneumothoraces are read first, and support non-radiologists who must act before a radiologist is available.
+The usual first investigation is a chest radiograph. On a frontal radiograph the edge of the collapsed lung appears as a thin white line, the visceral pleural line, with lung markings on its inner side and only dark air beyond it. The line can be faint, particularly at the apex of the lung, on a radiograph taken with the patient lying down, or where a rib overlaps it. The competition description names two uses for an automated reader: ordering the reporting worklist so that radiographs with a suspected pneumothorax are read first, and supporting clinicians who are not radiologists and have to act before a radiologist is available.
 
-<Deep title="What a radiologist looks for" kind="domain">
+<Deep title="Radiographic signs of pneumothorax" kind="domain">
 
-- **The pleural line**: a fine, sharp white line parallel to the chest wall, with lung markings inside it and none outside it.
-- **Where to look**: on an upright film, air rises, so a pneumothorax collects at the top of the chest (apex). On a supine film, typical of intensive care, air collects at the front and bottom and produces subtler signs such as an unusually deep, dark angle between the diaphragm and chest wall.
-- **Mimics**: skin folds, the edge of the shoulder blade and clothing can produce lines that resemble a pleural line.
-- **Treatment clues**: a patient already treated has a chest drain (a tube entering between the ribs). In this dataset, many positive images show drains. A model can learn to detect the tube instead of the air, which is useless for the patients who matter most: untreated ones.
+- **Pleural line.** A fine, sharp white line parallel to the chest wall, with lung markings inside it and none outside it.
+- **Location.** On an upright radiograph, air rises and a pneumothorax collects at the apex. On a supine radiograph, which is typical in intensive care, air collects anteriorly and inferiorly, and the signs are less direct, for example an unusually deep and dark angle between the diaphragm and the chest wall.
+- **Mimics.** Skin folds, the edge of the scapula and clothing can produce lines that resemble a pleural line.
+- **Signs of treatment.** A patient who has already been treated usually has a chest drain, a tube inserted between the ribs. If many positive training images show drains, a model can learn to detect the drain instead of the air. Such a model is of little use for untreated patients, who are the ones a triage system is meant to find.
 </Deep>
 
-## The data
+## Data
 
-The images came from the NIH ChestX-ray14 collection, re-annotated with pixel masks by the SIIM machine-learning committee, and were distributed as DICOM through the Google Cloud Healthcare API. Each image is a 1024 × 1024 frontal radiograph. Masks were given as run-length encodings; an image could have several separate regions of pneumothorax, or none. Roughly a fifth of the training images were positive.
+The images are frontal chest radiographs of 1024 × 1024 pixels derived from the NIH ChestX-ray14 collection, annotated with pixel masks of pneumothorax for the competition and distributed as DICOM files through the Google Cloud Healthcare API. Masks were given as run-length encodings. An image could contain several separate regions of pneumothorax, or none. Roughly a fifth of the training images contained a pneumothorax.
 
-The competition ran in two stages. Before stage 2, teams had to upload the models they would use; the stage-2 test set was then released and scored with those models, which prevented tuning on the final test data.
+The competition ran in two stages. Stage 1 ended on 28 August 2019, and teams had to upload the models they would use before it closed. The stage-2 test set was then released and scored with those models, so the final test data could not be used for tuning.
 
-## The metric
+<Foundation id="dicom-and-volumes" />
 
-The score is the Dice coefficient averaged over test images, with one convention that shaped everything:
+## Evaluation metric
+
+For a predicted mask $X$ and a true mask $Y$, each a set of pixels, the Dice coefficient is
 
 $$
-\mathrm{Dice}(X,Y) = \frac{2|X\cap Y|}{|X|+|Y|}, \qquad \mathrm{Dice}(\varnothing,\varnothing) = 1 .
+\mathrm{Dice}(X,Y) = \frac{2\,|X\cap Y|}{|X|+|Y|}, \qquad \mathrm{Dice}(\varnothing,\varnothing) = 1 ,
 $$
 
-An image with no pneumothorax scores 1 if the prediction is empty and 0 if even a single pixel is predicted. An image with a pneumothorax scores 0 if the prediction is empty.
+where $|\cdot|$ counts pixels. The second definition sets the value for an image where both masks are empty, for which the fraction is $0/0$. The score is the mean of $\mathrm{Dice}(X,Y)$ over all test images.
+
+The convention for empty masks gives four cases:
+
+| Image | Prediction | Dice |
+| --- | --- | --- |
+| No pneumothorax | empty | 1 |
+| No pneumothorax | any pixel | 0 |
+| Pneumothorax | empty | 0 |
+| Pneumothorax | non-empty | between 0 and 1 |
+
+On an image without pneumothorax, $|Y| = 0$ and $X \cap Y = \varnothing$, so any non-empty prediction gives $0/|X| = 0$. A single false pixel therefore costs the whole point for that image.
 
 <Foundation id="dice-and-overlap" />
 
-<Deep title="Why the empty-mask decision dominates the score" kind="math">
+<Deep title="Expected score as a function of detection and mask quality" kind="math">
 
-Let a fraction $\pi$ of test images be positive. Suppose a model detects positives with sensitivity $s$ (it outputs some mask), rejects negatives with specificity $c$ (it outputs nothing), and achieves average Dice $d$ on the positives it detects. The expected leaderboard score is
+Let $\pi \in [0,1]$ be the fraction of test images that contain a pneumothorax. Describe a model by three quantities:
+
+- $s \in [0,1]$, the sensitivity: the fraction of positive images on which it outputs a non-empty mask;
+- $c \in [0,1]$, the specificity: the fraction of negative images on which it outputs an empty mask;
+- $d \in [0,1]$, the mean Dice on the positive images on which it outputs a non-empty mask.
+
+By the table above, a negative image scores 1 with probability $c$ and 0 otherwise, so its expected score is $c$. A positive image scores $d$ on average with probability $s$ and 0 otherwise, so its expected score is $s\,d$. Weighting the two groups by their shares of the test set gives
 
 $$
 \mathbb{E}[\text{score}] = (1-\pi)\,c + \pi\,s\,d .
 $$
 
-With $\pi = 0.2$, a perfect empty/non-empty decision ($s=c=1$) and mediocre masks ($d=0.6$) scores $0.8 + 0.12 = 0.92$. Perfect masks with a weaker decision ($s = c = 0.9$, $d = 1$) score $0.72 + 0.18 = 0.90$. Specificity on the 80% negative images is worth four times as much per point as sensitivity on the positives. A false alarm on a healthy image costs a full point; a slightly imprecise outline on a true positive costs a fraction of a point.
+The partial derivatives are
+
+$$
+\frac{\partial\,\mathbb{E}[\text{score}]}{\partial c} = 1-\pi,
+\qquad
+\frac{\partial\,\mathbb{E}[\text{score}]}{\partial s} = \pi\,d,
+\qquad
+\frac{\partial\,\mathbb{E}[\text{score}]}{\partial d} = \pi\,s .
+$$
+
+With $\pi = 0.2$, one percentage point of specificity is worth $0.8 \times 0.01 = 0.008$ in score, and one percentage point of sensitivity is worth at most $0.2 \times 0.01 = 0.002$. Specificity is therefore worth at least four times as much per point.
+
+Two worked cases, with $\pi = 0.2$:
+
+- Perfect detection and moderate masks, $s = c = 1$ and $d = 0.6$: $\;0.8 \times 1 + 0.2 \times 1 \times 0.6 = 0.8 + 0.12 = 0.92$.
+- Perfect masks and weaker detection, $s = c = 0.9$ and $d = 1$: $\;0.8 \times 0.9 + 0.2 \times 0.9 \times 1 = 0.72 + 0.18 = 0.90$.
+
+The first model scores higher although its masks are much worse.
 </Deep>
 
-## How the winning solution works
+## Winning solution
 
-Aimoldin Anuar (Kaggle handle *sneddy*) described this as his first image-segmentation project. The solution uses standard components and puts its effort into two decisions: how to turn probabilities into masks, and how often to show the model positive images.
+The winner, Aimoldin Anuar (Kaggle handle sneddy), competed alone and states in the write-up that this was his first image-segmentation project. The solution consists of U-Nets trained with a combined loss, a sampling schedule that changes the proportion of positive images during training, and a rule with three parameters that converts the probability map into a mask or an empty prediction.
 
 <Foundation id="models-and-loss" />
 
@@ -142,22 +178,38 @@ Aimoldin Anuar (Kaggle handle *sneddy*) described this as his first image-segmen
 
 ### Models
 
-Three U-Net families, all with ImageNet-pretrained encoders:
+All models are U-Nets with ImageNet-pretrained encoders:
 
-- **AlbuNet**: a U-Net with a ResNet-34 encoder, from the TernausNet project.
-- A U-Net with a **ResNet-50** encoder and an **SCSE U-Net** with an **SE-ResNeXt-50** encoder, both from Selim Seferbekov's SpaceNet 4 solution. SCSE stands for concurrent spatial and channel squeeze-and-excitation: attention blocks in the decoder that reweight both channels and spatial positions.
+- **AlbuNet**, a U-Net with a ResNet-34 encoder, from the TernausNet project.
+- A U-Net with a **ResNet-50** encoder, and an **SCSE U-Net** with an **SE-ResNeXt-50** encoder, both taken from Selim Seferbekov's SpaceNet 4 solution. SCSE stands for concurrent spatial and channel squeeze-and-excitation: blocks in the decoder that rescale each channel and each spatial position by learned weights.
 
 <Foundation id="cnn-backbones" />
 
-### The triplet decision rule
+### Decision rule with three thresholds
 
-Most teams trained a separate classifier to decide whether an image contains a pneumothorax and ran the segmentation model only on images it flagged. The winner used the segmentation map for both jobs, with three numbers:
+A common design, used by the second-place team, trains a separate classifier to decide whether an image contains a pneumothorax and draws a mask only on images the classifier marks as positive. The winner made both decisions from the segmentation output, with three parameters:
 
-- `top_score_threshold`: a high probability threshold, used only to decide whether the image is positive;
-- `min_contour_area`: the number of pixels that must exceed the high threshold for the image to count as positive;
-- `bottom_score_threshold`: a lower threshold used to draw the mask on images judged positive.
+- `top_score_threshold`, a high probability threshold used only to decide whether the image is positive;
+- `min_contour_area`, the number of pixels that must exceed the high threshold for the image to be declared positive;
+- `bottom_score_threshold`, a lower threshold used to draw the mask on images declared positive.
 
-<Deep title="Code: the triplet rule" kind="code" open>
+Let $p(u) \in [0,1]$ be the predicted probability at pixel $u$ of an image with pixel set $\Omega$, and write $t_{\mathrm{top}}$, $A_{\min}$ and $t_{\mathrm{bot}}$ for the three parameters. The number of confident pixels is
+
+$$
+n_{\mathrm{top}} = \big|\{\, u \in \Omega : p(u) > t_{\mathrm{top}} \,\}\big| ,
+$$
+
+and the predicted mask is
+
+$$
+X =
+\begin{cases}
+\varnothing, & n_{\mathrm{top}} < A_{\min}, \\[2pt]
+\{\, u \in \Omega : p(u) > t_{\mathrm{bot}} \,\}, & n_{\mathrm{top}} \ge A_{\min}.
+\end{cases}
+$$
+
+<Deep title="The rule in the winner's README" kind="code" open>
 
 ```python title="kaggle-pneumathorax README (simplified version of the rule)"
 classification_mask = predicted > top_score_threshold
@@ -167,108 +219,134 @@ mask = mask > bot_score_threshold
 return mask
 ```
 
-- `predicted` is a batch of probability maps, shape `(N, 1, H, W)`.
-- `classification_mask` marks pixels above the high threshold.
-- `classification_mask.sum(axis=(1,2,3))` counts those pixels per image. Images with fewer than `min_contour_area` such pixels are set to all zeros: they are declared negative.
-- For all remaining images, the mask is the set of pixels above the low threshold.
+- `predicted` is a batch of probability maps with shape `(N, 1, H, W)`.
+- `classification_mask` marks the pixels above the high threshold.
+- `classification_mask.sum(axis=(1,2,3))` counts those pixels in each image, which is $n_{\mathrm{top}}$. Images with fewer than `min_contour_area` such pixels are set to zero, that is, declared negative.
+- For the remaining images, the mask is the set of pixels above the low threshold.
 </Deep>
 
 <Source href="https://github.com/sneddy/kaggle-pneumathorax">sneddy/kaggle-pneumathorax, README</Source>
 
-The logic follows from the metric. The high threshold and area requirement protect the negative images, the majority of the test set, where any false pixel costs a whole point: only a sizeable region of confident prediction is allowed to declare an image positive. Once an image is declared positive, the low threshold draws a generous mask, because on a true positive a mask that is too small loses more Dice than one that is slightly too large at the boundary. Using a single threshold for both jobs, as most participants did, forces one number to serve two opposing purposes.
+The rule separates the two decisions that the metric rewards differently. On a negative image a single predicted pixel costs a full point, so the image is declared positive only when a region of confident prediction is present. On a positive image the Dice of the mask depends on its boundary, and the lower threshold sets that boundary independently of the detection decision. A single threshold would have to serve both purposes.
 
-The best triplet on validation was (0.75, 2000, 0.3); the best on the public leaderboard was (0.7, 600, 0.3). The final submissions used values between these.
+The best triplet $(t_{\mathrm{top}}, A_{\min}, t_{\mathrm{bot}})$ on validation data was $(0.75, 2000, 0.3)$, and the best on the public leaderboard was $(0.7, 600, 0.3)$. The final submissions used values between these. If the area is counted at the full resolution of $1024 \times 1024 = 1{,}048{,}576$ pixels, 2000 pixels are about 0.19% of the image and 600 pixels about 0.06%.
 
-### The combo loss
+### Loss function
 
-Models were trained with a weighted sum of binary cross-entropy, Dice loss and focal loss. The weights (BCE, Dice, focal) were (3, 1, 4) for the best validation ResNet-34 and SE-ResNeXt-50 models, (1, 1, 1) for the best public-leaderboard ResNet-34, and (2, 1, 2) for ResNet-50.
+The models were trained with a weighted sum of binary cross-entropy (BCE), soft Dice loss and focal loss. For pixel probabilities $p(u)$ and labels $y(u) \in \{0,1\}$ on an image,
+
+$$
+\mathcal{L} = \lambda_{\mathrm{BCE}}\,\mathcal{L}_{\mathrm{BCE}} + \lambda_{\mathrm{Dice}}\,\mathcal{L}_{\mathrm{Dice}} + \lambda_{\mathrm{F}}\,\mathcal{L}_{\mathrm{focal}},
+$$
+
+with non-negative weights $\lambda$. The three terms are defined as follows. BCE is the mean over pixels of $-[\,y \log p + (1-y)\log(1-p)\,]$. The soft Dice loss is $1 - \mathrm{Dice}_{\mathrm{soft}}$, where the soft Dice replaces the set sizes in the Dice coefficient by sums of probabilities:
+
+$$
+I = \sum_{u} p(u)\,y(u), \qquad P = \sum_u p(u), \qquad G = \sum_u y(u), \qquad \mathrm{Dice}_{\mathrm{soft}} = \frac{2I}{P + G}.
+$$
+
+The focal loss multiplies the per-pixel cross-entropy by $(1-p_t)^{\gamma}$, where $p_t$ is the probability assigned to the true class and $\gamma \ge 0$, so that pixels already classified with high confidence contribute less.
+
+The weights $(\lambda_{\mathrm{BCE}}, \lambda_{\mathrm{Dice}}, \lambda_{\mathrm{F}})$ were $(3, 1, 4)$ for the best validation ResNet-34 model and the SE-ResNeXt-50 model, $(1, 1, 1)$ for the ResNet-34 model tuned on the public leaderboard, and $(2, 1, 2)$ for the ResNet-50 model.
 
 <Foundation id="binary-cross-entropy" />
 
 <Foundation id="focal-loss" />
 
-<Deep title="Why combine three losses" kind="math">
+<Deep title="Properties of the three loss terms" kind="math">
 
-Each term pulls the model in a different direction:
+- **BCE** is a mean over pixels. On an image in which 99% of pixels are background, 99% of its terms come from background pixels, so a small object contributes little to the loss.
+- **Soft Dice** is a ratio computed per image, so it depends on the fraction of the object that is covered, not on the object's size in pixels. When the target is empty ($G = 0$), $I = 0$ and $\mathrm{Dice}_{\mathrm{soft}} = 0$ for any $P > 0$, and the loss gives the same value, 1, for a nearly empty and a very wrong prediction. On negative images it therefore carries no useful signal, and the BCE term supplies the gradient.
+- **Focal loss** reduces the contribution of confidently classified pixels by the factor $(1-p_t)^\gamma$. For $\gamma = 2$, a pixel with $p_t = 0.9$ is weighted by $0.1^2 = 0.01$ and a pixel with $p_t = 0.6$ by $0.4^2 = 0.16$, so ambiguous pixels, such as those near a faint pleural line, dominate the gradient.
 
-- **BCE** is computed per pixel and is well behaved from the first iteration. On an image that is 99% background it is dominated by background pixels.
-- **Soft Dice** is computed per image and scales with the object: missing half of a small pneumothorax costs as much as missing half of a large one. Its gradient is unstable when both prediction and target are nearly empty.
-- **Focal loss** down-weights pixels already classified confidently, concentrating learning on the ambiguous boundary pixels and faint pleural lines.
-
-A weighted sum gives the stable gradient of BCE early in training and the object-level pressure of Dice once masks begin to form. Because the leaderboard metric is Dice, the Dice term keeps the optimisation aligned with the score.
+The winner's write-up gives the weights but not a derivation of them; they were selected by validation.
 </Deep>
 
-### The sliding sample rate
+### Sampling of positive images
 
-The **sample rate** is the fraction of positive images in each training epoch. At the start of training, the winner's data sampler took every positive image and enough negatives to make positives 80% of the epoch; the rate was lowered to 0.4 by the end.
+The **sample rate** $r$ is the fraction of positive images in a training epoch. The winner's data sampler took every positive image in each epoch and added negative images until positives made up the fraction $r$. With $P$ positive images, the number of negative images $N$ satisfies
 
-A high positive rate early gives the model many examples of the rare thing it must learn to draw, so masks improve quickly. A lower rate later brings the training distribution closer to the test distribution (mostly negatives), so the model learns not to hallucinate masks on healthy images, the most expensive error under this metric.
+$$
+\frac{P}{P + N} = r ,
+$$
 
-### The training recipe
+and solving for $N$ gives
 
-The winner described four phases, noting that his actual process involved much repeated fine-tuning and is not exactly reproducible:
+$$
+N = P\,\frac{1-r}{r} .
+$$
 
-| Phase | Learning rate | Sample rate | Schedule | Goal |
+At $r = 0.8$ this is $N = 0.25\,P$, one negative for every four positives. At $r = 0.4$ it is $N = 1.5\,P$, three negatives for every two positives. In the training set itself roughly one image in five is positive, $r \approx 0.2$.
+
+The rate was 0.8 at the start of training and was lowered to 0.4 by the end. A high rate provides many examples of pneumothorax while the model learns to draw masks. A lower rate later brings the training distribution closer to the test distribution, in which most images are negative and a false positive costs a full point.
+
+### Training
+
+The write-up describes four training phases:
+
+| Phase | Learning rate | Sample rate | Schedule | Purpose |
 | --- | --- | --- | --- | --- |
-| Part 0 | about $10^{-3}$–$10^{-4}$ | 0.8 | reduce on plateau, 10–12 epochs | reach validation Dice ≈ 0.835 quickly |
-| Part 1 | about $10^{-5}$ | 0.6 | cosine or cosine with warm restarts | improve until convergence |
-| Part 2 | about $10^{-5}$ | 0.4 | cosine | adapt to realistic class balance |
-| Second stage | $10^{-5}$–$10^{-6}$ | 0.5 | cosine | fine-tune on stage-2 training data |
+| Part 0 | about $10^{-3}$–$10^{-4}$ | 0.8 | reduce on plateau, 10–12 epochs | reach validation Dice ≈ 0.835 |
+| Part 1 | about $10^{-5}$ | 0.6 | cosine or cosine with warm restarts | train until convergence |
+| Part 2 | about $10^{-5}$ | 0.4 | cosine | adapt to the class balance of the test data |
+| Second stage | $10^{-5}$–$10^{-6}$ | 0.5 | cosine | fine-tune on the stage-2 training data |
 
 Further details:
 
-- **Resolution**: models were first trained at 512 × 512 and then fine-tuned at the full 1024 × 1024, with the encoder frozen for the first epochs of the high-resolution phase.
-- **Batch size 2–4**, without gradient accumulation, on one or two GTX 1080 Ti cards.
-- **Augmentation** (albumentations): horizontal flip; one of contrast, gamma or brightness change (p = 0.3); one of elastic, grid or optical distortion (p = 0.3); shift-scale-rotate.
-- **Checkpoint averaging**: the three best checkpoints of each fold were averaged at inference.
-- **TTA**: horizontal flip.
+- **Resolution.** Models were first trained at 512 × 512 and then fine-tuned at the full 1024 × 1024, with the encoder frozen for the first epochs of the high-resolution phase.
+- **Batch size** 2–4, on one or sometimes two GTX 1080 Ti GPUs.
+- **Augmentation** with the albumentations library: horizontal flip; one of contrast, gamma or brightness change (probability 0.3); one of elastic, grid or optical distortion (probability 0.3); shift-scale-rotate; resize.
+- **Checkpoint averaging.** The three best checkpoints of each fold were averaged.
+- **Test-time augmentation.** Horizontal flip.
 
 <Foundation id="learning-rate-schedules" />
 
 <Foundation id="data-augmentation" />
 
+<Foundation id="weight-averaging" />
+
 ### Final submissions
 
-The best single configuration on the public leaderboard (the ResNet-34 AlbuNet tuned for it) scored 0.8871 public, better than every ensemble. The winner suspected it had overfitted the public set and submitted two ensembles instead: one that trusted the public leaderboard more, with looser thresholds, and one that trusted validation more, with stricter thresholds. They scored 0.8679 and 0.8641 on the private leaderboard. His post-competition view was that the best combination would have been the validation-driven ensemble with the looser thresholds.
+The best single configuration on the public leaderboard, the ResNet-34 AlbuNet tuned on the public leaderboard, scored 0.8871 public, higher than any of the winner's ensembles. Both final submissions were nevertheless ensembles, and they scored 0.8679 and 0.8641 on the private leaderboard.
 
-## What the other top solutions did
+## Second place: a classifier and separate segmentation models
 
-### Second place: a classifier branch and separate segmentation models
+The second-place team X5 (yelan, He, bird, SeuTao, Sen Yang) is the same group that won the 2019 RSNA intracranial haemorrhage competition. Their solution separates classification from segmentation:
 
-The X5 team (yelan, He, bird, SeuTao, Sen Yang) used the more common two-part design:
+- **Classification.** A multi-task U-Net with an added classification branch decides whether each image is positive. The classification branch is trained with BCE plus focal loss and the segmentation output with BCE. Backbones were SE-ResNeXt-50, SE-ResNeXt-101 and EfficientNet-B3, and the classification outputs were combined by stacking.
+- **Segmentation.** U-Net and DeepLabV3 models with SE-ResNeXt-50/101 and EfficientNet-B3/B5 backbones, trained with Dice loss on positive images only, draw the masks. Their outputs are averaged.
 
-- A **multi-task U-Net** with an added classification branch decided whether each image is positive. Classification used BCE plus focal loss and segmentation BCE; backbones SE-ResNeXt-50, SE-ResNeXt-101 and EfficientNet-B3; outputs were stacked.
-- **Separate segmentation models** (U-Net and DeepLabV3 on SE-ResNeXt and EfficientNet-B3/B5 backbones), trained only on positive images with Dice loss, drew the masks.
+The segmentation models see only positive images during training, and the decision on negative images is left to the classifier.
 
-Training the segmenter only on positives lets it specialise on drawing; the classifier protects the negatives.
+## Third place: lung crops and pseudo-labelled external data
 
-### Third place: crop the lungs, add pseudo-labelled data, no thresholds
+bestfitting competed alone.
 
-bestfitting (then ranked first on Kaggle) took a different path:
+- **Lung crops.** A first U-Net located the lungs on the 1024 × 1024 image. Later models worked on lung crops resized to 576 × 576, which the write-up reports to be sufficient.
+- **Pseudo-labels.** A ResNet-34 U-Net that scored 0.858 on the public leaderboard predicted masks on images from CheXpert and NIH ChestX-ray14. Positive external images were kept only when the model agreed with them. The write-up gives the ratio of pseudo-labelled to competition samples as 0.5, with equal numbers of positive and negative samples.
+- **No classifier and no threshold search.** The solution has no classification model and no classification loss, and uses a fixed threshold of 0.5.
+- **Final models.** Three SE-ResNeXt-50 U-Nets with CBAM attention: one at 704 pixels without pseudo-labels, one at 576 pixels with CheXpert pseudo-labels, and one at 576 pixels with CheXpert and NIH pseudo-labels. They were trained with the Lovász loss and Adam at a constant learning rate of $10^{-4}$ for 15 epochs, with an exponential moving average of the weights from epoch 6, and a batch size of 3 per GPU on three GTX 1080 Ti GPUs.
 
-- A first U-Net located the lungs on the 1024 × 1024 image. All later models worked on lung crops resized to 576 × 576, saving memory without losing the relevant detail.
-- He added **pseudo-labelled external data**. A ResNet-34 U-Net (0.858 public) predicted masks on CheXpert and NIH images. From CheXpert he kept images labelled positive that his model also predicted positive; for NIH he ignored the provided labels and trusted his model. Pseudo-labelled samples made up half as many as real ones.
-- **No classification model, no classification loss and no threshold search.** He argued that pixel-level labels already contain the classification information and that thresholds tuned on validation might not transfer to the private set. He used 0.5 throughout.
-- Three SE-ResNeXt-50 U-Nets with CBAM attention, trained with the **Lovász loss**, Adam at a constant $10^{-4}$ for 15 epochs, EMA from epoch 6.
-
-Three of ten folds of his CheXpert-pseudo-labelled model alone scored 0.8809 public and 0.8642 private, close to the winner.
+Three of the ten folds of the model with CheXpert pseudo-labels scored 0.8809 public and 0.8642 private. The winner's two submissions scored 0.8679 and 0.8641 private.
 
 <Foundation id="pseudo-labelling" />
 
-## Where the ideas went next
+## Comparison with other competitions
 
-The classify-then-segment pipeline from this competition became a template. The 2022 UW-Madison GI tract segmentation winners explicitly credit three SIIM pneumothorax solutions for their classification–segmentation design and training tricks. The winner's sliding sample rate is a clean instance of curriculum learning on class balance, and it reappears in later solutions as "start with more positives, end near the true prior".
+The winners of the 2022 UW-Madison GI tract segmentation competition credit solutions from this competition for their design of a classification stage followed by a segmentation stage. The metric there also gives a perfect score to an empty prediction on an empty image. The winner's schedule for the sample rate starts training with a high proportion of positive images and ends near the proportion in the test data.
 
 ## Compute and deployment
 
-| Setting | What the solution needs |
+| Setting | Requirements |
 | --- | --- |
 | Kaggle | Two-stage format; models trained on participants' own hardware. |
-| Small clinic or research group | One consumer GPU is enough to retrain. A ResNet-34 U-Net at 1024 × 1024 runs in well under a second per image on a GPU. |
-| Product | Regulatory approval; external validation on supine, portable films; explicit testing for the chest-drain shortcut. |
+| Clinic or research group | One consumer GPU is enough to retrain; the winner used one or two GTX 1080 Ti GPUs. Weights are not published. |
+| Commercial product | Regulatory approval, external validation on supine and portable radiographs, and a separate evaluation on positive images without chest drains. |
 
 <Foundation id="ensembling-tta" />
 
-<Callout kind="deploy" title="The shortcut to test first">
-A detector that fires on chest drains looks accurate on this dataset and fails on untreated patients. Evaluate separately on positive images without drains before trusting any pneumothorax model trained on ChestX-ray14-derived data.
-</Callout>
+### Considerations for deployment
+
+1. **Chest drains.** A model that responds to chest drains appears accurate on data in which many positive images come from treated patients, and fails on untreated patients. Performance should be measured separately on positive images without a drain.
+2. **Operating point.** The thresholds were tuned for a metric in which a false positive on a negative image costs a full point. A triage system may need a different balance between sensitivity and specificity, and the three thresholds should be retuned on local data for that purpose.
+3. **Image source.** All images come from one source dataset. Performance on radiographs from other hospitals and equipment should be measured before use.

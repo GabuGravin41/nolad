@@ -1,6 +1,6 @@
 ---
 slug: siim-isic-melanoma-classification
-title: "SIIM-ISIC Melanoma Classification (2020): nine diagnoses, all the data, and a stable ensemble"
+title: "SIIM-ISIC Melanoma Classification (2020)"
 shortTitle: SIIM-ISIC Melanoma Classification
 kaggleSlug: siim-isic-melanoma-classification
 kaggleUrl: https://www.kaggle.com/competitions/siim-isic-melanoma-classification
@@ -24,10 +24,10 @@ techniques:
   - tta
 metric:
   name: ROC-AUC
-  summary: "Area under the ROC curve for the probability that a skin lesion image shows melanoma."
+  summary: "Area under the ROC curve of the predicted probability that a skin-lesion image shows melanoma, computed over all test images."
 constraints: { runtime: "Predictions submitted as a file", hardware: "Participants' own hardware", internet: true }
-summary: "Decide from a dermoscopic photograph whether a skin lesion is melanoma. The winning team trained EfficientNets and other CNNs on the 2018, 2019 and 2020 ISIC data together, predicted nine diagnoses instead of one binary label, selected the ensemble by cross-validation on all years rather than by the public leaderboard, and averaged rank-normalised predictions. With few melanomas in the test set, the public leaderboard was nearly uninformative, and the final standings shifted considerably."
-winningIdea: "Pool all available ISIC years, train with a nine-class diagnosis target and read off the melanoma probability, and trust a large, stable cross-validation over the public leaderboard when choosing the ensemble."
+summary: "The competition asked participants to estimate, for each dermoscopic image of a skin lesion, the probability that the lesion is melanoma, using the image and the patient's age, sex and anatomical site. The winning solution trains convolutional networks on the 2018, 2019 and 2020 ISIC datasets together with a nine-class diagnosis target, selects its ensemble by cross-validation over all three years, and averages rank-normalised predictions. Its private leaderboard AUC was 0.9490."
+winningIdea: "Images from the 2018, 2019 and 2020 ISIC challenges are pooled into one training set, and each network predicts one of nine diagnoses; the melanoma score is the softmax probability of the melanoma class. The final ensemble was chosen by cross-validated AUC over all three years, a larger and more stable validation set than the public leaderboard. Predictions from each model are converted to percentile ranks before averaging."
 solutions:
   - rank: 1
     team: All Data Are Ext
@@ -40,7 +40,7 @@ solutions:
       - { label: "Code", url: "https://github.com/haqishen/SIIM-ISIC-Melanoma-Classification-1st-Place-Solution" }
 deployability:
   score: 4
-  verdict: "Single EfficientNets on one photograph plus a few metadata fields are cheap to run, and the code is public. The winning ensemble is large (many backbones, five folds, eight-fold TTA), but a single model captures most of the ranking ability. The main clinical gap is that dermoscopic images come from specialist equipment and curated archives, not from the general population."
+  verdict: "A single EfficientNet applied to one photograph and a few metadata fields is inexpensive to run, and the code is public. The winning ensemble is large (several backbones, five folds each, eight test-time views), and a clinic would run a reduced version. Dermoscopic images come from specialist equipment and curated archives, so performance on images from other sources and populations has to be measured."
   inference: "One CNN pass per image per model at 384–896 pixels; with 8 TTA views and 5 folds, tens of passes per image for the full ensemble."
   models: "EfficientNet-B3 to B7, SE-ResNeXt-101 and ResNeSt-101, with and without a metadata branch; 5 folds each."
   training: "GPU cluster time for many backbones at high resolution; a single model trains on one GPU in hours to a day."
@@ -50,9 +50,9 @@ deployability:
     data: "ISIC archive images under CC BY-NC (non-commercial); see the ISIC archive for each dataset's licence."
     weights: "See the repository."
   risks:
-    - "Skin types are unevenly represented in ISIC data; performance on darker skin is not established by this competition."
-    - "Dermoscopes differ from phone cameras; a consumer app would face a large domain shift."
-    - "AUC measures ranking; a clinical tool needs a threshold chosen for sensitivity, since a missed melanoma is the costly error."
+    - "Skin types are unevenly represented in the ISIC data. The competition does not establish performance on darker skin."
+    - "Images from phone cameras differ from dermoscopic images in magnification and lighting. A consumer application would face a large shift in the input distribution."
+    - "AUC measures ranking only. A clinical tool needs a threshold chosen for a target sensitivity, because a missed melanoma is the more costly error."
 related:
   - isic-2024-challenge
   - rsna-breast-cancer-detection
@@ -66,63 +66,100 @@ dataLinks:
   - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/siim-isic-melanoma-classification/data" }
   - { label: "ISIC Archive", url: "https://www.isic-archive.com/" }
 priority: 22
-updated: "2026-09-28"
+updated: "2026-09-29"
 ---
 
-## The problem in its field
+## Clinical background
 
-**Melanoma** is a cancer of the pigment-producing cells of the skin. It is the least common of the main skin cancers but causes most skin-cancer deaths (about 75%, according to the competition description). The American Cancer Society estimated more than 100,000 new cases and about 7,000 deaths in the United States in 2020. Caught early, melanoma is usually cured by removing it with minor surgery; once it has spread, the outlook is much worse.
+**Melanoma** is a cancer of the melanocytes, the pigment-producing cells of the skin. It is the least common of the main skin cancers, and the competition description states that it causes about 75% of skin-cancer deaths. The American Cancer Society estimated more than 100,000 new cases and about 7,000 deaths in the United States in 2020. A melanoma found early can usually be removed by minor surgery; once it has spread, the prognosis is much worse.
 
-Dermatologists examine suspicious moles with a **dermatoscope**, a magnifier with polarised or immersion lighting that shows pigment structures below the skin surface. They also compare lesions on the same patient: most people have a consistent "signature" pattern of moles, and a lesion that looks unlike the others (the **ugly duckling sign**) is more suspicious. The competition encouraged approaches that use such patient-level context.
+Dermatologists examine suspicious lesions with a **dermatoscope**, a hand-held magnifier with polarised or immersion lighting that shows pigment structures below the skin surface. They also compare lesions on the same patient. Most of one person's moles resemble each other, and a lesion that differs from the others (the **ugly duckling sign**) is more suspicious. The competition encouraged approaches that use this patient-level context.
 
-<Deep title="What dermoscopy shows" kind="domain">
+<Deep title="Dermoscopic features of melanoma" kind="domain">
 
-Classic dermoscopic criteria for melanoma include:
+Standard dermoscopic criteria for melanoma include:
 
-- **Asymmetry** of colour and structure in one or two axes.
+- **Asymmetry** of colour and structure about one or two axes.
 - **Atypical pigment network**: irregular, thickened or broken lines of pigment.
-- **Multiple colours**, particularly blue-white veil, grey, and red.
+- **Multiple colours**, particularly blue-white veil, grey and red.
 - **Irregular dots, globules and streaks** at the periphery.
 - **Regression structures**: white scar-like areas and blue-grey peppering.
 
-Benign lesions that can resemble melanoma include atypical naevi (moles), seborrhoeic keratoses, solar lentigines and lichenoid keratoses. The ISIC diagnosis classes group these, which is why a model can learn from the benign diagnoses as well as from melanomas.
+Benign lesions that can resemble melanoma include atypical naevi (moles), seborrhoeic keratoses, solar lentigines and lichenoid keratoses. The ISIC diagnosis classes separate these lesions, so a model trained on the diagnosis labels receives supervision from the benign classes as well as from melanomas.
 </Deep>
 
-## The data
+## Data
 
-The 2020 training set has about 33,000 dermoscopic images from about 2,000 patients, of which about 1.8% (fewer than 600 images) are melanoma. Each image comes with metadata: age, sex, and anatomical site. Unlike earlier ISIC challenges, several images per patient are provided, allowing patient-level comparisons. The test set has about 11,000 images. The dataset is described in Rotemberg et al. (2021).
+The 2020 training set contains 33,126 dermoscopic images from about 2,056 patients. Of these, 584 images (1.8%) are melanoma. Each image has metadata: age, sex and anatomical site. Unlike earlier ISIC challenges, the data include several images per patient, which allows comparisons between lesions of the same patient. The test set has 10,982 images. The dataset is described by Rotemberg et al. (2021).
 
-The **ISIC 2018 and 2019 challenge** datasets were allowed as external data. The 2019 set (about 25,000 images) is labelled with nine diagnostic categories and is much richer in melanomas, because it was assembled from specialist collections.
+The **ISIC 2018 and 2019 challenge** datasets were permitted as external data. The 2019 set contains 25,331 images labelled with nine diagnostic categories. It has a much higher proportion of melanomas than the 2020 set, because it was assembled from specialist collections.
 
-## The metric
+## Evaluation metric
+
+Submissions were scored by the area under the ROC curve (ROC AUC) of the melanoma probability over the test images.
 
 <Foundation id="roc-auc" />
 
-<Deep title="How noisy is AUC with few positives?" kind="math">
+<Deep title="Variance of the AUC when positives are few" kind="math">
 
-AUC equals the probability that a randomly chosen positive is scored above a randomly chosen negative (the Mann–Whitney statistic):
-$$
-\widehat{\text{AUC}} = \frac{1}{n_+ n_-}\sum_{i \in +}\sum_{j \in -} \mathbb{1}[s_i > s_j].
-$$
-Hanley and McNeil (1982) derived an approximation to its variance:
-$$
-\operatorname{Var}(\widehat{\text{AUC}}) \approx \frac{A(1-A) + (n_+ - 1)(Q_1 - A^2) + (n_- - 1)(Q_2 - A^2)}{n_+ n_-},
-\quad Q_1 = \frac{A}{2 - A},\; Q_2 = \frac{2A^2}{1 + A},
-$$
-where $A$ is the true AUC. With $A = 0.95$: $Q_1 = 0.9048$, $Q_2 = 0.9256$, so $Q_1 - A^2 \approx 0.0023$ and $Q_2 - A^2 \approx 0.0231$.
+Let $n_+$ be the number of melanomas and $n_-$ the number of benign lesions in a test set, and $s_i \in \mathbb{R}$ the score of image $i$. The empirical AUC is the fraction of (positive, negative) pairs that the scores order correctly, which is the Mann–Whitney statistic:
 
-Suppose, for illustration, that the public test portion has about 60 melanomas and 3,300 benign lesions (plausible for a 30% public split at the training prevalence). Then
 $$
-\operatorname{Var} \approx \frac{0.0475 + 59(0.0023) + 3299(0.0231)}{60 \times 3300} \approx \frac{0.0475 + 0.136 + 76.2}{198{,}000} \approx 3.9\times10^{-4},
+\widehat{\mathrm{AUC}} = \frac{1}{n_+ n_-}\sum_{i \in +}\sum_{j \in -} \mathbb{1}[s_i > s_j].
 $$
-a standard deviation of about 0.020. Differences of 0.005 between leaderboard entries are therefore far inside the noise. The term with $n_-$ dominates: the scarcity of positives, not the number of negatives, limits precision, because every negative is compared with the same few positives.
 
-This is why the winning team found almost no correlation between single models' cross-validation and public scores, and why the leaderboard shook up.
+Let $A \in [0,1]$ be the true AUC. Hanley and McNeil (1982) define two auxiliary probabilities: $Q_1$, the probability that two randomly chosen positives are both scored above one randomly chosen negative, and $Q_2$, the probability that one randomly chosen positive is scored above two randomly chosen negatives. They approximate them by
+
+$$
+Q_1 = \frac{A}{2 - A}, \qquad Q_2 = \frac{2A^2}{1 + A},
+$$
+
+and derive the variance
+
+$$
+\operatorname{Var}(\widehat{\mathrm{AUC}}) \approx \frac{V}{n_+ n_-}, \qquad
+V = A(1-A) + (n_+ - 1)(Q_1 - A^2) + (n_- - 1)(Q_2 - A^2).
+$$
+
+**Worked example.** Take $A = 0.95$, so $A^2 = 0.9025$ and $A(1-A) = 0.0475$. Then
+
+$$
+Q_1 = \frac{0.95}{1.05} = 0.90476, \qquad Q_2 = \frac{1.805}{1.95} = 0.92564,
+$$
+
+$$
+Q_1 - A^2 = 0.00226, \qquad Q_2 - A^2 = 0.02314 .
+$$
+
+Assume, for illustration, that the public leaderboard used 30% of the 10,982 test images, about 3,300 images, and that melanomas occur at the training prevalence of 1.8%. This gives $n_+ = 60$ and $n_- = 3{,}300$ (rounded). The three terms of $V$ are
+
+$$
+A(1-A) = 0.0475, \qquad 59 \times 0.00226 = 0.133, \qquad 3{,}299 \times 0.02314 = 76.34,
+$$
+
+so $V \approx 76.52$. Dividing by $n_+ n_- = 198{,}000$,
+
+$$
+\operatorname{Var}(\widehat{\mathrm{AUC}}) \approx \frac{76.52}{198{,}000} \approx 3.9 \times 10^{-4},
+$$
+
+a standard deviation of about $\sqrt{3.9 \times 10^{-4}} \approx 0.020$. Two submissions whose public scores differ by 0.005 are therefore well within one standard deviation of each other.
+
+**Dependence on the number of positives.** The third term of $V$ is larger than the other two by a factor of several hundred. Keeping only that term, and using $n_- - 1 \approx n_-$,
+
+$$
+\operatorname{Var}(\widehat{\mathrm{AUC}}) \approx \frac{(n_- - 1)(Q_2 - A^2)}{n_+ n_-}
+\approx \frac{Q_2 - A^2}{n_+} = \frac{0.02314}{60} = 3.86 \times 10^{-4}.
+$$
+
+The variance is approximately inversely proportional to the number of positives and nearly independent of the number of negatives. Doubling the number of benign images would leave it almost unchanged; doubling the number of melanomas would halve it.
+
+The winning team reported that the cross-validation and public-leaderboard scores of single models were almost uncorrelated, which is consistent with this estimate. The final standings on the private leaderboard differed considerably from the public ones.
 </Deep>
 
-## How the winning solution works
+## Winning solution
 
-Team All Data Are Ext (Bo Liu, Qishen Ha and Gary) won. Their name summarises the approach: treat the 2018, 2019 and 2020 images as one dataset.
+The competition was won by team All Data Are Ext: Bo Liu, Qishen Ha and Gary. The team name refers to the use of the 2018, 2019 and 2020 ISIC images as a single dataset.
 
 <Pipeline steps={[
   {tag: "Data", title: "2018 + 2019 + 2020", detail: "Chris Deotte's resized JPEGs and leak-free folds"},
@@ -134,58 +171,79 @@ Team All Data Are Ext (Bo Liu, Qishen Ha and Gary) won. Their name summarises th
 
 <Foundation id="models-and-loss" />
 
-### Validation that could be trusted
+### Validation
 
-The team used Chris Deotte's resized JPEG datasets and his **triple-stratified, leak-free folds**: patients are grouped so that all images of a patient fall in one fold, and folds are stratified by target and by the number of images per patient. They trained and validated on all three years and tracked two scores:
+The team used the resized JPEG datasets and the **triple-stratified, leak-free folds** published by Chris Deotte. All images of a patient fall in the same fold, so that no patient appears in both training and validation, and the folds are stratified by target and by the number of images per patient. The models were trained and validated on all three years, and two validation scores were tracked:
 
-- **cv_all**: AUC over the validation images from 2018, 2019 and 2020 together. Many more melanomas, so it is stable.
-- **cv_2020**: AUC over the 2020 validation images only. It resembles the test distribution but is noisy.
+- **cv_all**: the AUC over the validation images from 2018, 2019 and 2020 together. It contains many more melanomas than the 2020 data alone, and therefore has a smaller variance.
+- **cv_2020**: the AUC over the 2020 validation images only. Its distribution is closer to that of the test set, but it is based on fewer melanomas.
 
 <Foundation id="cross-validation" />
 
-For single models, cross-validation and public leaderboard scores were essentially uncorrelated. Ensembles were stable. The team submitted two ensembles:
+The write-up reports that single-model cross-validation scores and public leaderboard scores were essentially uncorrelated, while ensembles gave more stable scores. The team submitted two ensembles:
 
 | Ensemble | cv_all | cv_2020 | Public | Private |
 | --- | --- | --- | --- | --- |
 | 1: chosen by cv_all | 0.9845 | 0.9600 | 0.9442 | **0.9490** (1st) |
 | 2: chosen by cv_2020 | — | 0.9638 | 0.9494 | 0.9481 (would be 3rd) |
 
-The ensemble chosen on the larger, more stable validation set won, even though its public score was lower. The best single model had cv_2020 of 0.9481.
+Ensemble 1, selected on the larger validation set, had the lower public score and the higher private score, and won. The best single model had a cv_2020 of 0.9481.
 
-They also noted that public TensorFlow/TPU notebooks had achieved lucky public scores, while PyTorch/GPU pipelines had better cross-validation, an example of how easily the public leaderboard could mislead.
+The team also observed that public notebooks using TensorFlow on TPUs had obtained high public scores, while PyTorch pipelines on GPUs had better cross-validation scores.
 
-### Nine classes instead of two
+### Nine-class diagnosis target
 
-Instead of a binary melanoma label, the models predicted the **diagnosis**, using cross-entropy over the nine ISIC 2019 categories. The 2020 diagnoses were mapped onto them: seborrhoeic keratosis, lichenoid keratosis, solar lentigo and "lentigo NOS" to benign keratosis (BKL); naevus to NV; melanoma to MEL; café-au-lait macule and atypical melanocytic proliferation to "unknown". The melanoma score is the softmax probability of MEL. This gained about 0.01 AUC.
+The models were trained to predict the **diagnosis** with cross-entropy over the nine ISIC 2019 categories, in place of a binary melanoma label. The 2020 diagnoses were mapped onto these categories:
+
+- seborrhoeic keratosis, lichenoid keratosis, solar lentigo and "lentigo NOS" to benign keratosis (BKL);
+- naevus to NV;
+- melanoma to MEL;
+- café-au-lait macule and atypical melanocytic proliferation to "unknown".
+
+The melanoma score is the softmax probability of MEL. The team reports that this target improved the AUC by about 0.01 compared with binary cross-entropy.
 
 <Foundation id="softmax-cross-entropy" />
 
-<Deep title="Why a finer target helps a binary ranking" kind="math">
+<Deep title="The softmax melanoma probability as a binary score" kind="math">
 
-With a binary target, all non-melanomas form one class, and the network is only told "not melanoma". With diagnosis labels, it must also separate naevi from keratoses from lentigines. The two objectives share the same features; the multi-class one supplies more bits of supervision per image. Most benign images are naevi, the lesions most easily confused with melanoma, and learning the specific features that distinguish naevus from melanoma is exactly what the ranking needs.
+Let $z \in \mathbb{R}^9$ be the logits of the nine classes and write $z_{\mathrm{M}}$ for the melanoma logit. Define the log-sum-exp of the other eight logits,
 
-Formally, let $z \in \mathbb{R}^9$ be the logits. The multi-class model's melanoma score is
 $$
-s = \operatorname{softmax}(z)_{\text{MEL}} = \frac{e^{z_{\text{MEL}}}}{\sum_k e^{z_k}} = \sigma\Big(z_{\text{MEL}} - \log\textstyle\sum_{k \ne \text{MEL}} e^{z_k}\Big),
+L = \log \sum_{k \ne \mathrm{M}} e^{z_k}, \qquad \text{so that} \qquad \sum_{k \ne \mathrm{M}} e^{z_k} = e^{L}.
 $$
-a binary logit that compares melanoma against a soft maximum of all other diagnoses. The binary head is a special case in which the "other" logit has no structure. Since AUC depends only on the ranking of $s$, calibration differences between the two formulations are irrelevant; only the quality of the ordering matters.
 
-This is also a form of **auxiliary supervision**: the extra classes act as auxiliary tasks that shape the representation.
+The melanoma probability is
+
+$$
+s = \operatorname{softmax}(z)_{\mathrm{M}} = \frac{e^{z_{\mathrm{M}}}}{e^{z_{\mathrm{M}}} + e^{L}} .
+$$
+
+Dividing numerator and denominator by $e^{z_{\mathrm{M}}}$,
+
+$$
+s = \frac{1}{1 + e^{-(z_{\mathrm{M}} - L)}} = \sigma(z_{\mathrm{M}} - L),
+$$
+
+where $\sigma(t) = 1/(1 + e^{-t})$ is the logistic function. The score is therefore a binary logistic output whose logit compares the melanoma logit with $L$, a smooth maximum of the eight other logits. A binary classifier has a single logit for "melanoma against everything else", and the loss gives it no information about which benign diagnosis an image has. The nine-class loss also requires the network to separate naevi from keratoses and lentigines, which adds supervision from the same images. In this sense the extra classes act as auxiliary tasks.
+
+Because $\sigma$ is strictly increasing, the AUC of $s$ equals the AUC of $z_{\mathrm{M}} - L$. The calibration of $s$ does not affect the metric.
 </Deep>
 
 ### Models, inputs and augmentation
 
-Backbones: EfficientNet-B3 to B7, SE-ResNeXt-101 and ResNeSt-101, at input sizes from 384 to 896 (cropped from 512, 768 or 1024 JPEGs). Some models had a **metadata branch** with 14 features taken from public notebooks: sex, age, one-hot anatomical site, number of images of the patient, and image size. The metadata branch used Swish activations and was concatenated with the image features before the classifier.
+The backbones were EfficientNet-B3 to B7, SE-ResNeXt-101 and ResNeSt-101, at input sizes from 384 to 896 pixels, cropped from JPEGs resized to 512, 768 or 1024 pixels.
 
 <Foundation id="cnn-backbones" />
 
-Augmentation (albumentations): transpose and flips; brightness and contrast; blur, motion blur, median blur or Gaussian noise; optical, grid or elastic distortion; CLAHE; hue-saturation-value shifts; shift-scale-rotate; and cutout of about 37.5% of the image size. Most were applied with high probability (0.5–0.85). Dermoscopic images have no canonical orientation, and colour varies with the device and lighting, so strong geometric and colour augmentations are appropriate.
+Some models had a **metadata branch** with 14 features taken from public notebooks: sex, age, anatomical site (one-hot encoded), the number of images of the patient, and the image size. The branch is a small fully connected network with Swish activations (Ramachandran et al., 2017), and its output is concatenated with the image features before the classification layer.
+
+The augmentations (from the albumentations library) were transposition and flips; brightness and contrast changes; one of motion blur, median blur, Gaussian blur or Gaussian noise; one of optical, grid or elastic distortion; CLAHE (contrast-limited adaptive histogram equalisation); hue, saturation and value shifts; shift, scale and rotation; and cutout of a square about 37.5% of the image side. Most were applied with probabilities between 0.5 and 0.85. Dermoscopic images have no canonical orientation, and their colour varies with the device and the lighting, which is consistent with the choice of strong geometric and colour augmentations.
 
 <Foundation id="data-augmentation" />
 
 <Deep title="The augmentation pipeline" kind="code">
 
-A Nolad reconstruction, in albumentations, of the augmentations listed in the write-up. Probabilities and the main limits follow the write-up; other parameter values are illustrative, so take the exact configuration from the repository.
+A Nolad illustration: the augmentations listed in the write-up, written with albumentations. The probabilities and the main limits (brightness and contrast 0.2, CLAHE clip limit 4, HSV shifts 10, 20, 10, shift-scale-rotate 0.1, 0.1, 15°, cutout 37.5%) follow the write-up; the other parameter values are illustrative. The exact configuration is in the [winners' repository](https://github.com/haqishen/SIIM-ISIC-Melanoma-Classification-1st-Place-Solution).
 
 ```python
 import albumentations as A
@@ -207,44 +265,56 @@ def train_transforms(size):
         A.Normalize(),
     ])
 ```
-<Source href="https://github.com/haqishen/SIIM-ISIC-Melanoma-Classification-1st-Place-Solution">haqishen/SIIM-ISIC-Melanoma-Classification-1st-Place-Solution</Source>
 </Deep>
 
-### Rank averaging
+### Ensembling by rank averaging
 
-Each model's predictions were converted to **percentile ranks** (`rank(pct=True)`) before averaging. Different models produce probabilities on different scales: a model trained with nine classes and one with a metadata branch may give melanoma probabilities concentrated in different ranges. Averaging raw probabilities would let the most spread-out model dominate. Since AUC depends only on the ordering, averaging ranks is the natural combination.
+Each model was evaluated over its 5 folds with 8 test-time augmentation (TTA) views, flips and transpositions. The predictions of each model were then converted to **percentile ranks** (`rank(pct=True)` in pandas) before averaging across models. Different models produce probabilities on different scales; a nine-class model and a model with a metadata branch, for example, may concentrate their melanoma probabilities in different ranges. When raw probabilities are averaged, the model whose scores are most spread out has the largest influence on the order of the average. The AUC depends only on the order of the scores, and averaging ranks gives each model equal influence on that order.
 
 <Foundation id="ensembling-tta" />
 
 <Deep title="Rank averaging and AUC" kind="math">
 
-For model $m$ with scores $s^{(m)}_i$ over $N$ test images, its percentile rank is
-$$
-r^{(m)}_i = \frac{1}{N}\,\#\{j : s^{(m)}_j \le s^{(m)}_i\}.
-$$
-The ensemble score is $\bar r_i = \frac1M \sum_m r^{(m)}_i$.
+Let model $m \in \{1, \dots, M\}$ assign score $s^{(m)}_i$ to test image $i \in \{1, \dots, N\}$. Its percentile rank is
 
-Each $r^{(m)}$ is a monotone transformation of $s^{(m)}$, so each model's own AUC is unchanged by ranking. Ranks are uniformly spread on $(0, 1]$ for every model, so each contributes equally to the ordering of the average, whatever its original calibration. A model whose probabilities are mostly near 0 with a few near 1 would otherwise decide the order of the extreme cases on its own.
+$$
+r^{(m)}_i = \frac{1}{N}\,\#\{\, j : s^{(m)}_j \le s^{(m)}_i \,\} \in (0, 1],
+$$
 
-The drawback is that ranks discard confidence: two lesions both ranked in the top 1% by one model count as equally suspicious even if their probabilities are 0.5 and 0.99. For AUC this is harmless; for a clinical threshold, calibrated probabilities are needed afterwards.
+and the ensemble score is the mean rank
+
+$$
+\bar r_i = \frac{1}{M} \sum_{m=1}^{M} r^{(m)}_i .
+$$
+
+The map $s^{(m)}_i \mapsto r^{(m)}_i$ is non-decreasing, so each model's own AUC is unchanged by the transformation (apart from the handling of ties). Without ties, the ranks of every model take the values $1/N, 2/N, \dots, 1$, so all models have the same distribution of values in the average, whatever their calibration.
+
+**Example** (hypothetical numbers). Model A concentrates its probabilities near 0, and model B spreads them over $[0, 1]$. For two images, the scores and percentile ranks are:
+
+| | A: probability | A: rank | B: probability | B: rank |
+| --- | --- | --- | --- | --- |
+| Image 1 | 0.001 | 0.40 | 0.60 | 0.55 |
+| Image 2 | 0.002 | 0.70 | 0.30 | 0.45 |
+
+The raw averages are $(0.001 + 0.60)/2 = 0.3005$ and $(0.002 + 0.30)/2 = 0.151$, so image 1 is ranked higher and model B alone determines the order. The rank averages are $(0.40 + 0.55)/2 = 0.475$ and $(0.70 + 0.45)/2 = 0.575$, so image 2 is ranked higher: model A separates the two images by 0.30 in rank and model B by only 0.10.
+
+Ranks discard confidence. Two lesions that one model places in its top 1% receive nearly equal ranks even if their probabilities are 0.5 and 0.99. This has no effect on the AUC, but a clinical threshold requires calibrated probabilities, which have to be estimated separately.
 </Deep>
 
-Each model was evaluated with 5 folds and 8 TTA views (flips and transposes).
+## Comparison with other competitions
 
-## How this compares with other competitions
-
-- **ISIC 2024** addressed the same disease with a very different kind of image: tiles cropped from 3D total-body photographs, of much lower quality than dermoscopy, with a large set of tabular features. Gradient-boosted trees on image-model outputs and metadata won there, and the "ugly duckling" idea became explicit patient-normalised features.
-- **APTOS 2019** also depended on an earlier competition's data and suffered from a public–private mismatch; its winner, by contrast, validated on the public leaderboard carefully.
-- **RSNA breast cancer detection** shares the extreme imbalance but used a threshold-dependent metric, which made its leaderboard even noisier than this AUC-scored one.
+- **ISIC 2024** concerned the same disease with a different kind of image: crops from 3D total-body photographs, of lower quality than dermoscopic images, accompanied by many tabular features. Gradient-boosted trees on image-model outputs and metadata won that competition, and patient-level comparison was implemented as features that measure how a lesion differs from the same patient's other lesions.
+- **APTOS 2019** also used data from an earlier competition. Its winner found that validation on the earlier data did not correlate with the leaderboard, and used the public leaderboard for validation.
+- **RSNA breast cancer detection** had a similar class imbalance but a metric that depends on a decision threshold (probabilistic F1), and the winners' scores depended strongly on the threshold they chose.
 
 ## Compute and deployment
 
-| Setting | What the solution needs |
+| Setting | Requirements |
 | --- | --- |
 | Competition | Many GPU-days for the full ensemble of backbones, folds and resolutions. |
-| Dermatology clinic | One EfficientNet on a dermoscopic image, milliseconds on a GPU, feasible on a CPU. |
-| Product | Validation across skin types and dermoscopes, a sensitivity-based threshold, and regulatory approval. |
+| Dermatology clinic | One EfficientNet applied to one dermoscopic image per lesion, which a single GPU runs quickly and a CPU can run more slowly. |
+| Product | Validation across skin types and dermatoscope models, a threshold chosen for a target sensitivity, and regulatory approval. |
 
-<Callout kind="deploy" title="The minimum useful version">
-One EfficientNet-B4 or B5 at 512–640 pixels, trained on ISIC 2018–2020 together with a nine-class diagnosis target and heavy augmentation, validated with patient-grouped folds across all years. Calibrate the melanoma probability on local data before choosing an operating point.
+<Callout kind="deploy" title="Reduced configuration">
+One EfficientNet-B4 or B5 at 512–640 pixels, trained on the ISIC 2018–2020 data together with the nine-class diagnosis target and the augmentations above, and validated with patient-grouped folds across all years. The melanoma probability should be calibrated on local data before an operating point is chosen.
 </Callout>

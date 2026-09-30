@@ -1,56 +1,104 @@
 ---
 id: recurrent-networks
-title: "Recurrent networks: RNN, LSTM and GRU"
+title: "Recurrent neural networks (RNN, LSTM and GRU)"
 kind: ml
-summary: "A recurrent network reads a sequence one step at a time and carries a hidden state forward. LSTMs and GRUs add gates that decide what to remember, which lets them use context from far back."
+summary: "A recurrent neural network processes a sequence one step at a time and carries a hidden state from each step to the next. The primer defines the simple recurrent network, derives why its gradients vanish or explode over long sequences, and describes the gated LSTM and GRU cells and bidirectional networks."
 ---
+
+### Sequences and hidden states
+
+A sequence input is a list of vectors $x_1, x_2, \dots, x_T$, with $x_t \in \mathbb{R}^{d_x}$ for each step $t$. The steps may be time samples of a signal, frames of a video, or slices of a CT scan in order. A **recurrent neural network** (RNN) maintains a **hidden state** $h_t \in \mathbb{R}^{d_h}$, a vector that summarises the inputs up to step $t$. The initial state $h_0$ is usually the zero vector.
 
 ### The simple recurrent network
 
-At each step $t$ the network combines the new input $x_t$ with its previous state $h_{t-1}$:
+At each step the network combines the new input with the previous state:
 
 $$
-h_t = \tanh(W_x x_t + W_h h_{t-1} + b).
+h_t = \tanh\big(W_x x_t + W_h h_{t-1} + b\big),
 $$
 
-The same weights are applied at every step, so the network handles sequences of any length. Training backpropagates through time, and the repeated multiplication by $W_h$ makes gradients vanish or explode over long sequences.
+where $W_x \in \mathbb{R}^{d_h \times d_x}$ and $W_h \in \mathbb{R}^{d_h \times d_h}$ are weight matrices, $b \in \mathbb{R}^{d_h}$ is a bias, and $\tanh$ is applied to each component. The same $W_x$, $W_h$ and $b$ are used at every step, so the number of parameters does not depend on $T$ and the network accepts sequences of any length. An output at step $t$ is computed from $h_t$, for example by a linear layer.
+
+### Vanishing and exploding gradients
+
+Training uses **backpropagation through time**: the recurrence is unrolled into a feed-forward computation over $T$ steps and differentiated with the chain rule. A loss at step $t$ depends on an earlier state $h_{t-k}$ through the product of the step-to-step Jacobians.
+
+*One step.* Write $a_t = W_x x_t + W_h h_{t-1} + b$, so that $h_t = \tanh(a_t)$. The derivative of $\tanh$ is $1 - \tanh^2$, so
+
+$$
+\frac{\partial h_t}{\partial h_{t-1}} = \mathrm{diag}\big(1 - h_t^{2}\big)\,W_h ,
+$$
+
+where $h_t^{2}$ is squared component-wise and $\mathrm{diag}(v)$ is the diagonal matrix with $v$ on its diagonal.
+
+*$k$ steps.* By the chain rule,
+
+$$
+\frac{\partial h_t}{\partial h_{t-k}} = \prod_{s=t-k+1}^{t} \mathrm{diag}\big(1 - h_s^{2}\big)\,W_h .
+$$
+
+*Bound.* Each diagonal factor has entries in $[0, 1]$, so its operator norm is at most 1. With $\lVert W_h \rVert$ the operator norm of $W_h$,
+
+$$
+\Big\lVert \frac{\partial h_t}{\partial h_{t-k}} \Big\rVert \le \lVert W_h \rVert^{k} .
+$$
+
+If $\lVert W_h \rVert = 0.9$, the bound after $k = 50$ steps is $0.9^{50} \approx 0.005$, and the gradient from 50 steps back is negligible. If the largest singular value of $W_h$ exceeds 1 and the $\tanh$ units are not saturated, the product can instead grow; for a factor of 1.1 per step, $1.1^{50} \approx 117$. The first case is called **vanishing** and the second **exploding** gradients. Exploding gradients are commonly limited by gradient clipping. Vanishing gradients motivated the gated cells below.
 
 ### LSTM
 
-The long short-term memory cell (Hochreiter and Schmidhuber, 1997) adds a cell state $c_t$ that is updated additively, controlled by three gates with sigmoid outputs in $(0,1)$:
+The long short-term memory cell (Hochreiter and Schmidhuber, 1997; the forget gate was added by Gers, Schmidhuber and Cummins, 2000) keeps a second state, the **cell state** $c_t \in \mathbb{R}^{d_h}$, which is updated additively. Write $[x_t, h_{t-1}] \in \mathbb{R}^{d_x + d_h}$ for the concatenation of the input and the previous hidden state, $\sigma(a) = 1/(1 + e^{-a})$ for the logistic sigmoid, and $\odot$ for component-wise multiplication. Each gate is a vector with entries in $(0,1)$:
 
 $$
 \begin{aligned}
 f_t &= \sigma(W_f[x_t, h_{t-1}] + b_f) &&\text{forget gate}\\
 i_t &= \sigma(W_i[x_t, h_{t-1}] + b_i) &&\text{input gate}\\
 o_t &= \sigma(W_o[x_t, h_{t-1}] + b_o) &&\text{output gate}\\
-\tilde c_t &= \tanh(W_c[x_t, h_{t-1}] + b_c) &&\text{candidate}\\
+\tilde c_t &= \tanh(W_c[x_t, h_{t-1}] + b_c) &&\text{candidate cell state}\\
 c_t &= f_t\odot c_{t-1} + i_t\odot\tilde c_t\\
 h_t &= o_t\odot\tanh(c_t).
 \end{aligned}
 $$
 
-Because $c_t$ depends on $c_{t-1}$ through multiplication by $f_t$ rather than through a weight matrix, the gradient along the cell state can pass many steps without shrinking when the forget gate stays near 1.
+Each $W_\bullet \in \mathbb{R}^{d_h \times (d_x + d_h)}$ and $b_\bullet \in \mathbb{R}^{d_h}$. The forget gate sets the fraction of each component of $c_{t-1}$ that is kept, the input gate the fraction of the candidate that is written, and the output gate the fraction of the cell state that is exposed as $h_t$.
+
+Along the direct path through the cell state, holding the gates fixed,
+
+$$
+\frac{\partial c_t}{\partial c_{t-1}} = \mathrm{diag}(f_t).
+$$
+
+No weight matrix appears in this factor. If the forget gate stays near 1, the product over many steps stays near 1: for $f = 0.99$ in every component, $0.99^{50} \approx 0.61$. Information and gradient can therefore pass over many more steps than in the simple recurrent network.
 
 ### GRU
 
-The gated recurrent unit (Cho et al., 2014) merges cell and hidden state and uses two gates:
+The gated recurrent unit (Cho et al., 2014) has a single state $h_t$ and two gates:
 
 $$
 \begin{aligned}
-z_t &= \sigma(W_z[x_t, h_{t-1}]) &&\text{update gate}\\
-r_t &= \sigma(W_r[x_t, h_{t-1}]) &&\text{reset gate}\\
-\tilde h_t &= \tanh(W[x_t,\; r_t\odot h_{t-1}])\\
+z_t &= \sigma(W_z[x_t, h_{t-1}] + b_z) &&\text{update gate}\\
+r_t &= \sigma(W_r[x_t, h_{t-1}] + b_r) &&\text{reset gate}\\
+\tilde h_t &= \tanh(W[x_t,\; r_t\odot h_{t-1}] + b) &&\text{candidate state}\\
 h_t &= (1-z_t)\odot h_{t-1} + z_t\odot\tilde h_t .
 \end{aligned}
 $$
 
-It has fewer parameters than an LSTM and often performs the same.
+The new state is a component-wise interpolation between the old state and the candidate. The reset gate controls how much of the old state enters the candidate. Libraries differ in whether $z_t$ multiplies the old state or the candidate; the two conventions are equivalent after replacing $z_t$ by $1 - z_t$.
+
+### Parameter count
+
+An LSTM has four blocks of the form $(W_\bullet, b_\bullet)$ and a GRU three, each with $d_h(d_x + d_h) + d_h$ parameters. For $d_x = d_h = 256$, one block has $256 \times 512 + 256 = 131{,}328$ parameters, so
+
+$$
+\text{LSTM: } 4 \times 131{,}328 = 525{,}312, \qquad \text{GRU: } 3 \times 131{,}328 = 393{,}984 .
+$$
+
+The GRU has three quarters of the LSTM's parameters. Empirical comparisons, beginning with Chung et al. (2014), have found the two cells to perform similarly on many tasks, with neither consistently better.
 
 ### Bidirectional networks
 
-A bidirectional RNN runs one recurrence forwards and one backwards and concatenates their states, so every position sees context from both sides. For a CT series or an overnight accelerometer recording, the whole sequence is available at once, and bidirectional models are the norm.
+A **bidirectional** RNN runs one recurrence from $t = 1$ to $T$ and a second, with separate weights, from $t = T$ to $1$. The output at step $t$ is the concatenation $[\overrightarrow{h}_t, \overleftarrow{h}_t] \in \mathbb{R}^{2 d_h}$, which depends on inputs on both sides of $t$. This requires the whole sequence to be available before any output is produced, which holds for a stored CT series or a recorded accelerometer trace and does not hold for real-time streaming.
 
-### Where they appear
+### Use in the reports
 
-In these reports RNNs are rarely applied to raw data. They sit on top of a CNN: the CNN turns each slice or frame into an embedding, and a bidirectional LSTM or GRU reads the sequence of embeddings. This pattern won the 2019 haemorrhage competition and recurs in spine fractures, pulmonary embolism, abdominal trauma and lumbar spine grading. In the sleep-state competition, a GRU placed between convolutional downsampling and upsampling layers read multi-day accelerometer signals directly.
+In most of the reports an RNN is applied to learned features. A convolutional network converts each slice or frame into an embedding vector, and a recurrent network reads the sequence of embeddings. In the 2019 intracranial haemorrhage competition, the first-place team added a GRU over slice embeddings and the second-place team trained LSTMs over them, and similar CNN-plus-RNN designs appear in solutions to the cervical spine fracture, pulmonary embolism, abdominal trauma and lumbar spine competitions. In the sleep-state detection competition, the winners' base model placed a residual GRU between convolutional downsampling and upsampling layers and read the accelerometer signal directly.

@@ -1,6 +1,6 @@
 ---
 slug: hms-harmful-brain-activity-classification
-title: "HMS Harmful Brain Activity Classification (2024): predicting how experts vote on EEG"
+title: "HMS Harmful Brain Activity Classification (2024)"
 shortTitle: HMS Harmful Brain Activity
 kaggleSlug: hms-harmful-brain-activity-classification
 kaggleUrl: https://www.kaggle.com/competitions/hms-harmful-brain-activity-classification
@@ -26,8 +26,8 @@ metric:
   name: KL divergence
   summary: "Kullback–Leibler divergence from the distribution of expert votes over six EEG patterns to the predicted distribution, averaged over test samples."
 constraints: { runtime: "Code competition: notebook inference within the Kaggle time limit", hardware: "Kaggle GPU notebook", internet: false }
-summary: "Classify 50-second EEG segments from critically ill patients into seizure, four periodic or rhythmic patterns, or other, where the target is the distribution of votes from several expert reviewers. The winners converted the raw EEG montages into time–frequency images with continuous wavelet or superlet transforms (or into stacked raw-signal images), trained many small image models with a KL loss in two stages (all samples, then only samples with at least ten votes), and combined them with non-negative weights."
-winningIdea: "Treat the task as predicting expert opinion: train on high-vote-count samples in a second stage, turn each bipolar EEG channel into a wavelet or superlet scalogram, stack the channels into one image for a small vision backbone, and ensemble diverse models because KL divergence punishes a single confident mistake heavily."
+summary: "The competition asked participants to estimate, for 50-second segments of scalp EEG from critically ill patients, how a group of expert reviewers distributed their votes over six patterns: seizure, four periodic or rhythmic patterns, and other. The winning solution converts the bipolar EEG channels into time–frequency images with superlet or continuous wavelet transforms, or into images of the raw signals, trains small image models with a KL-divergence loss in two stages, and combines them per class by non-negative linear regression. The strongest single model in the ensemble reached a cross-validation KL divergence of 0.2229."
+winningIdea: "Each bipolar EEG channel is converted into a superlet or wavelet scalogram, and the channels are stacked into one image for a small vision backbone. Models are trained first on all samples with more than one vote and then only on samples with at least ten votes, which resemble the expert-labelled test set. Many such models are combined per class by non-negative linear regression on out-of-fold predictions."
 solutions:
   - rank: 1
     team: Team Sony
@@ -45,10 +45,10 @@ solutions:
     team: Chris Deotte
     members: [{ name: "Chris Deotte" }]
     writeup: https://www.kaggle.com/competitions/hms-harmful-brain-activity-classification/writeups/chris-deotte-8th-place-gold-one-mega-model
-    note: "A single 'mega model' combining spectrogram, waveform-plot and raw-signal backbones; also the author of the validation scheme most teams used."
+    note: "One model that combines spectrogram, waveform-plot and raw-signal backbones. The winning team used his validation scheme."
 deployability:
   score: 3
-  verdict: "The individual models are small (ConvNeXt-atto, Swin-V2-tiny and similar) and run on 50-second windows, so inference is cheap. The winning submission is a large ensemble of diverse models, and the output is a distribution over patterns rather than a decision; clinical use needs continuous monitoring over hours, calibration on local EEG equipment, and integration with review software."
+  verdict: "The individual models are small (ConvNeXt-atto, Swin-V2-tiny and similar) and process 50-second windows, so inference per window is inexpensive. The winning submission is a large ensemble, and its output is a distribution over patterns. Clinical use would require continuous analysis of many hours of EEG, calibration on local recording equipment and integration with EEG review software."
   inference: "Per 50-second window: signal filtering, a wavelet or superlet transform (the most expensive step), and one pass of a small image model; well under a second per window per model on a GPU."
   models: "Dozens of small image models across four team members' pipelines (CNNs, Swin-V2, MaxViT, CAFormer and others), combined with non-negative linear regression per class."
   training: "Hours per model on one GPU; the ensemble totals days."
@@ -58,9 +58,9 @@ deployability:
     data: "Competition data under Kaggle competition terms."
     weights: "See the inference notebook for the model files it loads."
   risks:
-    - "The target is annotator agreement, not ground truth; patterns at the boundaries of the ACNS definitions are genuinely ambiguous."
-    - "The training population's seizure rate differs strongly from that of the expert-labelled test set; priors must be re-estimated for a new population."
-    - "EEG montage, amplifiers, sampling rates and artefacts vary between hospitals."
+    - "The target is the distribution of reviewer votes. Segments near the boundaries of the ACNS definitions receive split votes even from experts, so the target itself carries uncertainty."
+    - "The proportion of seizure differed strongly between the training labels and the expert-labelled test set (18.8% and 1.5%, from the host paper as cited by Chris Deotte). Class priors have to be re-estimated for a new patient population."
+    - "EEG montages, amplifiers, sampling rates and artefacts vary between hospitals."
 related:
   - child-mind-institute-detect-sleep-states
   - birdclef-2024
@@ -75,14 +75,14 @@ dataLinks:
   - { label: "Competition data (Kaggle)", url: "https://www.kaggle.com/competitions/hms-harmful-brain-activity-classification/data" }
   - { label: "Superlets implementation (irhum/superlets)", url: "https://github.com/irhum/superlets" }
 priority: 18
-updated: "2026-09-28"
+updated: "2026-09-29"
 ---
 
-## The problem in its field
+## Clinical background
 
-Patients in intensive care, after cardiac arrest, stroke, brain injury or with severe infection, frequently have **seizures that produce no visible convulsions**. The only way to detect them is continuous **electroencephalography (EEG)**: electrodes on the scalp record the brain's electrical activity for hours or days. Untreated seizures, and some seizure-like patterns, are associated with brain injury, so these recordings must be reviewed promptly.
+Patients in intensive care, for example after cardiac arrest, stroke or brain injury, or with severe infection, can have seizures that produce no visible convulsions. Such seizures are detected with continuous **electroencephalography (EEG)**, in which electrodes on the scalp record the electrical activity of the brain for hours or days. Untreated seizures, and some seizure-like patterns, are associated with brain injury, so the recordings need prompt review.
 
-Review is done by neurologists trained in EEG. It is slow (a day of EEG is hours of reading), expensive, subject to fatigue, and variable between readers. The patterns of interest are defined by the American Clinical Neurophysiology Society's critical care terminology (ACNS, 2021 version), and even experts disagree on many segments. The host group at Massachusetts General Hospital (Brandon Westover's laboratory) had built an expert-level classifier, SPaRCNet, and published it in *Neurology* in 2023; the competition used the same data to seek better models.
+The review is done by neurologists trained in EEG. The competition description names it as a bottleneck: it is slow and expensive, readers tire, and different readers classify the same segment differently. The patterns of interest are defined in the American Clinical Neurophysiology Society's critical care EEG terminology (ACNS, 2021 version), and experts disagree on many segments. The host group at Massachusetts General Hospital (Brandon Westover's laboratory) had developed an expert-level classifier, SPaRCNet, published in *Neurology* in 2023 (Jing, Ge et al.). The competition used the same data.
 
 <Deep title="The six classes and the ictal–interictal–injury continuum" kind="domain">
 
@@ -93,12 +93,12 @@ Review is done by neurologists trained in EEG. It is slow (a day of EEG is hours
 - **Generalised rhythmic delta activity (GRDA):** rhythmic slow waves over both hemispheres.
 - **Other:** none of the above.
 
-The four periodic and rhythmic patterns lie on what is called the **ictal–interictal–injury continuum (IIIC)**: they are not seizures, but they are associated with brain injury and some of them carry seizure risk. The boundaries between them, and between them and seizure, are defined by frequency, spatial extent and evolution, and a segment can fit two definitions reasonably well.
+The four periodic and rhythmic patterns lie on the **ictal–interictal–injury continuum (IIIC)**. They are not seizures, but they are associated with brain injury, and some carry a risk of seizure. The definitions separate them by frequency, spatial extent and evolution over time, and a segment can satisfy two definitions approximately.
 </Deep>
 
-<Deep title="EEG montages: why the models use channel differences" kind="domain">
+<Deep title="EEG montages and bipolar channels" kind="domain">
 
-The 19 scalp electrodes of the international 10–20 system are named by region (Fp = frontopolar, F = frontal, C = central, T = temporal, P = parietal, O = occipital) and side (odd numbers left, even numbers right, z midline).
+The 19 scalp electrodes of the international 10–20 system are named by region (Fp frontopolar, F frontal, C central, T temporal, P parietal, O occipital) and side (odd numbers left, even numbers right, z midline).
 
 A **bipolar montage** displays the voltage difference between adjacent electrodes. The standard **longitudinal bipolar ("double banana") montage** forms four chains from front to back:
 
@@ -107,196 +107,304 @@ A **bipolar montage** displays the voltage difference between adjacent electrode
 - Left parasagittal: Fp1–F3, F3–C3, C3–P3, P3–O1
 - Right parasagittal: Fp2–F4, F4–C4, C4–P4, P4–O2
 
-plus two midline channels (Fz–Cz, Cz–Pz), giving 18 signals. Differences cancel activity common to both electrodes (distant sources, reference electrode noise) and highlight local activity. A discharge maximal at T3 appears as a **phase reversal**: positive in F7–T3 and negative in T3–T5. Neurologists read EEG in this montage, which is why most teams computed the same differences.
+Two midline channels (Fz–Cz, Cz–Pz) complete the montage, giving 18 signals. Let $V_a(t)$ be the potential recorded at electrode $a$. The channel F7–T3 is
 
-The chain structure also defines natural augmentations: swapping the left and right chains mirrors the brain, and swapping temporal with parasagittal chains preserves the anatomy of each chain.
+$$
+V_{\mathrm{F7}}(t) - V_{\mathrm{T3}}(t).
+$$
+
+A component common to both electrodes, such as activity from a distant source or noise on the reference electrode, cancels in the difference, and activity local to one of the two electrodes remains. A discharge with its maximum at T3 lowers $V_{\mathrm{F7}} - V_{\mathrm{T3}}$ and raises $V_{\mathrm{T3}} - V_{\mathrm{T5}}$, so it appears with opposite sign in the two adjacent channels (a **phase reversal**). Neurologists read EEG in this montage, and most of the solutions described here computed the same differences.
+
+The chain structure defines augmentations that preserve anatomy: exchanging the left and right chains mirrors the brain, and exchanging the temporal with the parasagittal chains keeps each chain intact.
 </Deep>
 
-## The data
+## Data
 
-Each training row is a 50-second EEG window (19 channels plus ECG, 200 Hz) whose central 10 seconds were labelled, together with a 10-minute spectrogram provided by Kaggle. Many rows come from the same recording (`eeg_id`) and overlap in time; there are about 107,000 rows from about 17,000 recordings.
+Each training row is a 50-second EEG window (19 channels plus ECG, sampled at 200 Hz) whose central 10 seconds were labelled, together with a 10-minute spectrogram provided by Kaggle. Many rows come from the same recording (`eeg_id`) and overlap in time. There are about 107,000 rows from about 17,000 recordings. At 200 Hz, a 50-second window has $50 \times 200 = 10{,}000$ samples per channel.
 
-**The labels are vote counts.** Each window was labelled by several reviewers, and the target is the distribution of their votes over the six classes. The host paper describes three kinds of segments: idealised patterns with high agreement, "proto-patterns" where about half the votes go to Other, and edge cases split between two named patterns.
+Each window was labelled by several reviewers, and the target is the distribution of their votes over the six classes. The host paper describes three kinds of segment: idealised patterns with high agreement, "proto-patterns" in which about half the votes go to Other, and edge cases whose votes are split between two named patterns.
 
-**The test set differs from training.** Chris Deotte pointed out, from the host paper, that the training labels came from 119 annotators of varying experience, while the test set was labelled by 20 experts, and that class frequencies differ greatly (for example, seizure at 18.8% in one and 1.5% in the other). Training rows with at least 10 votes resemble the expert-labelled test distribution most closely.
+The test labels differ in origin from the training labels. Chris Deotte pointed out, from the host paper, that the training labels came from 119 annotators of varying experience and the test set was labelled by 20 experts, and that class frequencies differ between the two (seizure at 18.8% in one and 1.5% in the other). Training rows with at least 10 votes resemble the expert-labelled test distribution most closely.
 
 <Foundation id="spectrograms" />
 
-## The metric
+## Evaluation metric
 
 <Foundation id="kl-divergence" />
 
-For each test sample with vote distribution $q$ and predicted distribution $p$ over six classes,
-$$
-\mathrm{KL}(q\,\|\,p) = \sum_{k=1}^{6} q_k \log\frac{q_k}{p_k} = \underbrace{-\sum_k q_k \log p_k}_{\text{cross-entropy}} - \underbrace{\Big(-\sum_k q_k\log q_k\Big)}_{\text{entropy of the votes}}.
-$$
-The entropy term does not depend on $p$, so minimising KL is the same as minimising cross-entropy with soft targets. The minimum, 0, is at $p = q$.
+For one test sample, let $q = (q_1, \dots, q_6)$ be the vote distribution, with $q_k \ge 0$ and $\sum_k q_k = 1$, and let $p = (p_1, \dots, p_6)$ be the predicted distribution, with $p_k > 0$ and $\sum_k p_k = 1$. The index $k$ runs over the six classes, and terms with $q_k = 0$ contribute zero. The score for the sample is
 
-<Deep title="Why KL rewards caution and diverse ensembles" kind="math">
-
-For a class with $q_k > 0$, the contribution $q_k \log(q_k/p_k)$ grows without bound as $p_k \to 0$. If two of ten experts voted LPD ($q = 0.2$) and the model predicts $p = 0.001$, that class alone contributes $0.2 \log(200) \approx 1.06$ nats, roughly four times a gold-medal average score. One confident error on one sample costs as much as many correct predictions gain.
-
-Averaging models protects against this. KL is convex in $p$, so by Jensen's inequality,
 $$
-\mathrm{KL}\Big(q \,\Big\|\, \tfrac1M\textstyle\sum_m p^{(m)}\Big) \le \tfrac1M \sum_m \mathrm{KL}\big(q\,\|\,p^{(m)}\big).
+\mathrm{KL}(q\,\|\,p) = \sum_{k=1}^{6} q_k \log\frac{q_k}{p_k}.
 $$
-The ensemble is never worse than the average member, and it is much better when members make confident mistakes on different samples: an average of probabilities cannot be near zero unless every member is. Team Sony noted that diversity mattered more than individual model strength for this reason, and found that smaller backbones worked better.
-</Deep>
+
+Writing the logarithm of the quotient as a difference of logarithms,
+
+$$
+\mathrm{KL}(q\,\|\,p) = \sum_{k=1}^{6} q_k \log q_k - \sum_{k=1}^{6} q_k \log p_k .
+$$
+
+With the entropy $H(q) = -\sum_k q_k \log q_k$ and the cross-entropy $H(q, p) = -\sum_k q_k \log p_k$, this is
+
+$$
+\mathrm{KL}(q\,\|\,p) = H(q, p) - H(q).
+$$
+
+The entropy $H(q)$ does not depend on $p$, so minimising KL divergence over $p$ is the same as minimising cross-entropy with soft targets $q$. The minimum, zero, is attained at $p = q$. The competition score is the mean of $\mathrm{KL}(q\,\|\,p)$ over test samples, with natural logarithms.
 
 <Foundation id="softmax-cross-entropy" />
 
-## Validation: the scheme almost everyone used
+<Deep title="Cost of a confident error, and the effect of averaging models" kind="math">
 
-Chris Deotte published the validation method adopted by the winners:
+For a class with $q_k > 0$, the term $q_k \log(q_k / p_k)$ grows without bound as $p_k \to 0$. Suppose two of ten reviewers voted LPD, so $q_{\mathrm{LPD}} = 0.2$, and the model predicts $p_{\mathrm{LPD}} = 0.001$. That class alone contributes
 
-1. For each `eeg_id`, sum the votes over all its rows and normalise, giving one target distribution per recording.
-2. Use the middle 50 seconds (10,000 samples) of the recording.
-3. Split with group K-fold by patient (5 folds).
-4. Evaluate only on recordings with **at least 10 votes**, the subset that best matches the expert-labelled test set.
+$$
+0.2 \log\frac{0.2}{0.001} = 0.2 \log 200 = 0.2 \times 5.298 = 1.060
+$$
+
+nats, about 3.7 times the private-leaderboard score of 0.290 reported for the eighth-place single model (a mean over all test samples). A prediction of $p_{\mathrm{LPD}} = 0.1$ would contribute $0.2 \log 2 = 0.139$.
+
+**Convexity.** For fixed $q$, the first sum in $\mathrm{KL}(q\,\|\,p)$ is a constant and the second is $-\sum_k q_k \log p_k$. Each $-\log p_k$ is a convex function of $p_k$, and a sum of convex functions with non-negative weights $q_k$ is convex, so $\mathrm{KL}(q\,\|\,p)$ is convex in $p$. For $M$ models with predictions $p^{(1)}, \dots, p^{(M)}$ and their mean $\bar p = \tfrac{1}{M}\sum_m p^{(m)}$, Jensen's inequality then gives
+
+$$
+\mathrm{KL}(q\,\|\,\bar p) \le \frac{1}{M} \sum_{m=1}^{M} \mathrm{KL}\big(q\,\|\,p^{(m)}\big).
+$$
+
+The equal-weight ensemble scores no worse than the average of its members. It also bounds the damage from a single member. All terms in the mean are non-negative, so for every $m$
+
+$$
+\bar p_k \ge \tfrac{1}{M}\, p^{(m)}_k ,
+$$
+
+and $\bar p_k$ is small only if every member's $p_k$ is small. In the example above, with $M = 5$ models of which four predict $p_{\mathrm{LPD}} = 0.2$ and one predicts $0.001$,
+
+$$
+\bar p_{\mathrm{LPD}} = \frac{4 \times 0.2 + 0.001}{5} = \frac{0.801}{5} = 0.1602,
+$$
+
+and the contribution of LPD falls from 1.060 for the fifth model alone to
+
+$$
+0.2 \log\frac{0.2}{0.1602} = 0.2 \log 1.2484 = 0.2 \times 0.2219 = 0.044 .
+$$
+
+Muku's part of the winning write-up states that smaller backbones worked better, and that diversity between models mattered because KL divergence is sensitive to extreme errors.
+</Deep>
+
+## Validation
+
+Chris Deotte published a validation method, which the winning team adopted:
+
+1. For each `eeg_id`, the votes over all its rows are summed and normalised, giving one target distribution per recording.
+2. The middle 50 seconds (10,000 samples) of the recording are used.
+3. The recordings are split with group K-fold by patient (5 folds).
+4. Only recordings with at least 10 votes are evaluated, the subset that best matches the expert-labelled test set.
 
 <Foundation id="cross-validation" />
 
-## How the winning solution works
+## Winning solution
 
-Team Sony (suguuuuu, kfuji, Jow, Muku and yamash) combined models from four members, each with a different way of turning EEG into an image.
+Team Sony (suguuuuu, kfuji, Jow, Muku and yamash) combined models from several members, each of whom converted the EEG into an image in a different way. The write-up describes pipelines from Muku, suguuuuu, yamash and kfuji; the first three are described below.
 
 <Pipeline steps={[
   {tag: "Signal", title: "Bipolar montage", detail: "18 differences (or 16); band-pass and clipping"},
-  {tag: "Transform", title: "To an image", detail: "superlets, CWT, or stacked raw signals"},
+  {tag: "Transform", title: "Conversion to an image", detail: "superlets, CWT, or stacked raw signals"},
   {tag: "Model", title: "Small vision backbone", detail: "Swin-V2, MaxViT, ConvNeXt-atto, others"},
   {tag: "Train", title: "Two stages", detail: "all samples with >1 vote, then ≥10 votes; KL loss"},
-  {tag: "Ensemble", title: "Non-negative regression", detail: "per class, then entmax output"}
-]} caption="The overall structure of Team Sony's solution." />
+  {tag: "Ensemble", title: "Non-negative regression", detail: "per class; entmax output in yamash's models"}
+]} caption="Overall structure of Team Sony's solution." />
 
 <Foundation id="models-and-loss" />
 
 ### Muku: superlet scalograms
 
-**Montage and filtering.** A 16-channel anterior–posterior montage; a Butterworth low-pass with a random cut-off between 30 and 40 Hz as augmentation. High-frequency noise (muscle artefact) tends to make reviewers vote Other, so its handling affects the label.
+**Montage and filtering.** Muku used a 16-channel anterior–posterior montage and, as augmentation, a Butterworth low-pass filter with a random cut-off between 30 and 40 Hz. The write-up states that high-frequency noise (for example muscle artefact) tends to raise the number of votes for Other, so the filtering affects how the input relates to the label.
 
-**Superlets instead of the STFT.** A superlet combines wavelets of increasing cycle count at each frequency by geometric mean, sharpening both time and frequency resolution. Muku computed superlets between 0.5 and 20 Hz (32 frequencies, base cycle 1, order 1 to 16) with the MIT-licensed `irhum/superlets` code; they outperformed the short-time Fourier transform. Each channel's scalogram $(32 \times 10{,}000)$ was stored downsampled to $(32 \times 1{,}000)$; at training time a centre window of 256, 512 or 768 columns (with a ±5-second shift as augmentation) was resized to $(16 \times 256)$ per channel, and the 16 channels were stacked into a $256 \times 256$ image.
+**Superlets.** A superlet combines, at each frequency, wavelets with increasing numbers of cycles by a geometric mean, which improves time and frequency resolution together (see the box below). Muku computed superlets between 0.5 and 20 Hz (32 frequencies, base cycle 1, order 1 to 16) with the MIT-licensed `irhum/superlets` code, and reports that they outperformed the short-time Fourier transform (STFT).
 
-<Deep title="From Fourier to wavelets to superlets" kind="math">
+**Image construction.** Each channel's scalogram, of size $32 \times 10{,}000$ (frequencies × samples), was stored downsampled to $32 \times 1{,}000$. One stored column then covers $50\ \text{s} / 1{,}000 = 50$ ms. At training time a centre window of 256, 512 or 768 columns (12.8, 25.6 or 38.4 s) was cut out, shifted randomly by up to ±5 s (±100 columns) as augmentation, and resized to $16 \times 256$ per channel. The 16 channels were stacked vertically into a $256 \times 256$ image ($16 \times 16 = 256$ rows).
 
-**Short-time Fourier transform.** A window $g$ of fixed length slides along the signal $x$:
+<Deep title="From the Fourier transform to wavelets and superlets" kind="math">
+
+**Short-time Fourier transform.** Let $x(t)$ be the signal and $g(t)$ a window function of fixed width. The STFT at time $\tau$ and frequency $f$ is
+
 $$
-X(\tau, f) = \int x(t)\, g(t - \tau)\, e^{-2\pi i f t}\, dt.
+X(\tau, f) = \int_{-\infty}^{\infty} x(t)\, g(t - \tau)\, e^{-2\pi i f t}\, dt .
 $$
-The window length $T$ fixes both resolutions: time resolution about $T$, frequency resolution about $1/T$. Their product is bounded below (the Gabor limit), so a single window cannot resolve both a brief spike and a slow 1 Hz rhythm well.
 
-**Continuous wavelet transform (CWT).** A Morlet wavelet at frequency $f$ with $c$ cycles is a Gaussian-windowed complex exponential whose width scales as $c/f$:
-$$
-\psi_{f,c}(t) \propto \exp\!\Big(-\frac{t^2}{2\sigma_t^2}\Big)\, e^{2\pi i f t}, \qquad \sigma_t = \frac{c}{2\pi f} \cdot k
-$$
-for a constant $k$ that depends on convention. The transform $W(\tau, f) = \int x(t)\,\overline{\psi_{f,c}(t - \tau)}\,dt$ uses long windows at low frequencies and short ones at high frequencies, which suits EEG: delta rhythms need many seconds, spikes need milliseconds. But for a fixed $c$, frequency resolution is still limited: few cycles give good time resolution and poor frequency resolution, many cycles the reverse.
+Let $\sigma_t$ be the standard deviation of $|g(t)|^2$ over time and $\sigma_f$ that of its Fourier transform over frequency, both normalised as distributions. The uncertainty principle (the Gabor limit) states
 
-**Superlets** (Moca et al., 2021) take a set of wavelets at the same frequency with increasing cycle counts $c_1 < c_2 < \dots < c_o$ (the order $o$) and combine their magnitudes by geometric mean:
+$$
+\sigma_t\, \sigma_f \ge \frac{1}{4\pi}.
+$$
+
+One window has one pair $(\sigma_t, \sigma_f)$ at all frequencies, so it cannot resolve both a brief spike, which needs small $\sigma_t$, and a slow 1 Hz rhythm, which needs small $\sigma_f$ relative to 1 Hz.
+
+**Continuous wavelet transform (CWT).** A Morlet wavelet at frequency $f > 0$ with $c > 0$ cycles is a complex exponential under a Gaussian envelope:
+
+$$
+\psi_{f,c}(t) = A \exp\!\Big(-\frac{t^2}{2\sigma_t^2}\Big)\, e^{2\pi i f t}, \qquad \sigma_t = \frac{c}{2\pi f},
+$$
+
+where $A$ is a normalising constant and $\sigma_t$ is the standard deviation of the Gaussian envelope; this is a common convention for the width. The Fourier transform of $\psi_{f,c}$ is a Gaussian centred at $f$ whose envelope has standard deviation
+
+$$
+\sigma_f = \frac{1}{2\pi \sigma_t} = \frac{f}{c}.
+$$
+
+(Measured on $|\psi_{f,c}|^2$ and on the squared spectrum instead, both widths are smaller by a factor $\sqrt 2$, and their product equals the bound $1/(4\pi)$; Gaussian windows attain the Gabor limit.)
+
+The transform is $W_c(\tau, f) = \int x(t)\,\overline{\psi_{f,c}(t - \tau)}\,dt$, where the bar denotes complex conjugation. The envelope is long at low frequencies and short at high frequencies. For example, with $c = 7$ cycles, $\sigma_t = 7/(2\pi) = 1.11$ s at 1 Hz and $\sigma_t = 7/(40\pi) = 0.056$ s at 20 Hz. The frequency spread is $\sigma_f = 0.14$ Hz at 1 Hz and $2.9$ Hz at 20 Hz. For a fixed $c$, the product $\sigma_t \sigma_f = 1/(2\pi)$ is the same at every frequency, so a small $c$ gives good time resolution and poor frequency resolution, and a large $c$ the reverse.
+
+**Superlets** (Moca et al., 2021). A superlet of order $o$ at frequency $f$ is a set of $o$ wavelets with cycle counts $c_1 < c_2 < \dots < c_o$; in the multiplicative form, $c_j = j\,c_1$. With base cycle $c_1 = 1$ and order 16, the cycle counts are $1, 2, \dots, 16$. The superlet response is the geometric mean of the magnitudes:
+
 $$
 S(\tau, f) = \Big(\prod_{j=1}^{o} |W_{c_j}(\tau, f)|\Big)^{1/o}.
 $$
-A geometric mean is large only where all members are large. The short wavelets localise in time, the long ones in frequency; the product keeps only energy that is sharp in both, giving "super-resolution" beyond a single wavelet. Adaptive superlets let the order increase with frequency, as in Muku's setting (order 1 at low frequency up to 16).
+
+A geometric mean is large only where every factor is large. The short wavelets localise energy in time and the long ones in frequency, so the product retains energy that is concentrated in both. In adaptive superlets the order increases with frequency; Muku's setting used orders from 1 to 16 across the 0.5–20 Hz range.
 </Deep>
 
-**Backbones.** The best was Swin-V2-tiny (window 16), with cross-validation KL 0.2229. Also used: Swin-V2-tiny (window 8), CAFormer-S18, GC-ViT-xtiny and xxtiny, ConvNeXt-V2-atto, MaxViT-pico, InceptionNeXt-tiny, PoolFormerV2-S12 and NextViT-small.
+**Backbones.** The best backbone was Swin-V2-tiny with window 16, with a cross-validation KL divergence of 0.2229. Muku also trained Swin-V2-tiny (window 8), CAFormer-S18, GC-ViT-xtiny and xxtiny, ConvNeXt-V2-atto, MaxViT-pico, InceptionNeXt-tiny, PoolFormerV2-S12 and NextViT-small.
 
 <Foundation id="attention-transformers" />
 
-**Learned temporal convolution.** Another of his variants replaced the fixed transform with a learned one: 1D convolutions over each channel with kernel length 200 (one second at 200 Hz), inspired by EEGNet and by the first-place solution to the G2Net gravitational-wave competition, with the feature maps stacked into an image for a timm backbone. A GRU variant was also trained.
+**Learned temporal convolution.** Another of Muku's variants replaced the fixed transform with a learned one. 1D convolutions with kernel length 200 (one second at 200 Hz) are applied to each channel, and the resulting feature maps are stacked into an image for a timm backbone. The write-up cites EEGNet and the first-place solution to the G2Net gravitational-wave competition as inspiration. A GRU variant was also trained.
 
 **Two-stage training and label smoothing.**
 
 - Stage 1: all samples with more than one vote, learning rate $10^{-3}$.
 - Stage 2: only samples with at least 10 votes, learning rate $10^{-4}$.
 
-Samples with a single vote were excluded. Label smoothing added 0.02 to every class's vote count **before** normalising.
+Samples with a single vote were excluded. Label smoothing added 0.02 to every class's vote count before the counts were normalised.
 
 <Deep title="Additive smoothing of vote counts" kind="math">
 
-With vote counts $n_k$ and total $N = \sum_k n_k$, the smoothed target is
+Let $n_k \ge 0$ be the number of votes for class $k$, $K = 6$ the number of classes and $N = \sum_k n_k$ the total number of votes. With a pseudo-count $\alpha > 0$ added to each class, the smoothed target is
+
 $$
-\tilde q_k = \frac{n_k + \alpha}{N + K\alpha}, \qquad K = 6,\; \alpha = 0.02.
+\tilde q_k = \frac{n_k + \alpha}{N + K\alpha}, \qquad K = 6, \quad \alpha = 0.02 .
 $$
-This is the posterior mean of the class probabilities under a symmetric Dirichlet($\alpha$) prior (Laplace smoothing uses $\alpha = 1$). Its effect depends on $N$:
 
-- With $N = 3$ votes all for seizure: $\tilde q_{\text{SZ}} = 3.02/3.12 = 0.968$, and each other class gets $0.02/3.12 = 0.0064$.
-- With $N = 15$ votes all for seizure: $\tilde q_{\text{SZ}} = 15.02/15.12 = 0.993$, others $0.0013$.
+The denominator is the sum of the numerators over $k$, so $\sum_k \tilde q_k = 1$. This is the posterior mean of the class probabilities under a symmetric Dirichlet prior with parameter $\alpha$ (Laplace smoothing is the case $\alpha = 1$). Here $K\alpha = 0.12$, and the effect depends on $N$:
 
-Samples with few votes are smoothed more, which is appropriate: three votes are weaker evidence of a unanimous expert opinion than fifteen. Ordinary label smoothing, which mixes every target with a uniform distribution by a fixed fraction, would treat both cases the same.
+- With $N = 3$ votes, all for seizure: $\tilde q_{\mathrm{SZ}} = 3.02 / 3.12 = 0.968$, and each other class receives $0.02 / 3.12 = 0.0064$.
+- With $N = 15$ votes, all for seizure: $\tilde q_{\mathrm{SZ}} = 15.02 / 15.12 = 0.993$, and each other class receives $0.02 / 15.12 = 0.0013$.
 
-Keeping every $\tilde q_k > 0$ also avoids training the model to predict exact zeros, which the KL metric punishes heavily at test time.
+Samples with few votes are therefore smoothed more than samples with many. Uniform label smoothing, $\tilde q = (1 - \varepsilon)\,q + \tfrac{\varepsilon}{K}\mathbf{1}$ with a fixed $\varepsilon$, would move both examples by the same amount. Every $\tilde q_k$ is positive, so the model is not trained towards predicting an exact zero, which the metric penalises without bound when the true $q_k$ is positive.
 </Deep>
 
 <Foundation id="soft-labels" />
 
-Other details: KL-divergence loss plus an auxiliary loss, the Adan optimiser, cosine schedule, and augmentations (time shift of ±5 s, random band-pass on the waveforms, XY masking on the scalograms).
+Muku trained with a KL-divergence loss plus an auxiliary loss, the Adan optimiser and a cosine learning-rate schedule. Augmentations were a time shift of ±5 s, a random band-pass filter on the waveforms, and XY masking (masking random bands of rows and columns) on the scalograms.
 
 <Foundation id="data-augmentation" />
 
 ### suguuuuu: CWT scalograms at 512 × 512
 
-Continuous wavelet transforms (code adapted from G2Net; wavelet width 7, 40 scales between 0.5 and 40 Hz, stride 16) of the 18 bipolar channels, stacked into $18 \times 40 \times 625$ and arranged as a $512 \times 512$ image; inputs clipped to ±1024 and divided by 32. Using 0.5–40 Hz was better than 0.5–20 Hz, and the middle 50 seconds better than 25 or 10. MaxViT-base was the best backbone (CV 0.2399; 0.2381 with yamash's preprocessing). STFT, the Kaggle-provided spectrograms, the constant-Q transform and plotted waveform images did not work for him.
+suguuuuu computed continuous wavelet transforms of the 18 bipolar channels with code adapted from G2Net, using wavelet width 7, 40 scales between 0.5 and 40 Hz, and stride 16. With 10,000 samples per channel and stride 16, each scalogram has $10{,}000 / 16 = 625$ time columns, so the transform gives an array of $18 \times 40 \times 625$, which was stacked into a $512 \times 512$ image. The inputs were clipped to ±1024 and divided by 32.
+
+He reports that 0.5–40 Hz worked better than 0.5–20 Hz, and the middle 50 seconds better than 25 or 10 seconds. MaxViT-base was the best backbone, with a cross-validation KL divergence of 0.2399, or 0.2381 with yamash's 50-second preprocessing. Training had two stages of 5 and 15 epochs, with XY masking, Mixup, the Adan optimiser and a cosine schedule. The STFT, the Kaggle-provided spectrograms, the constant-Q transform and images of plotted waveforms did not work for him.
 
 ### yamash: raw signals as an image
 
-The 18 bipolar signals, cropped at 2,000, 5,000 and 10,000 samples around the centre, resized and concatenated into a single 2D image, with no time–frequency transform at all: the CNN learns its own filters along the time axis. Four ConvNeXt-atto models (different seeds and band-pass settings; CV 0.2351–0.2457) and one InceptionNeXt-tiny (0.2309).
+yamash cropped the 18 bipolar signals to 2,000, 5,000 and 10,000 samples around the centre (10, 25 and 50 s), resized the crops and concatenated them into one 2D image, with no time–frequency transform. The first convolutional layers of the 2D CNN then act as learned filters along the time axis. The early models reached a cross-validation score of about 0.24. The final set was four ConvNeXt-atto models with different seeds and band-pass settings (cross-validation 0.2452, 0.2385, 0.2457 and 0.2351) and one InceptionNeXt-tiny (0.2309).
+
+yamash also replaced the softmax at the output with α-entmax with $\alpha \approx 1.03$, which improved both the public and the private score by about 0.004.
 
 <Foundation id="cnn-backbones" />
 
-### Ensembling and entmax
+<Deep title="α-entmax" kind="math">
 
-Models were combined per class by **non-negative linear regression** on out-of-fold predictions: for each class $k$, weights $\beta_{mk} \ge 0$ are fitted so that $\sum_m \beta_{mk} p^{(m)}_k$ approximates $q_k$; the combined vector is then renormalised.
+Let $z \in \mathbb{R}^K$ be the vector of logits and $\Delta = \{p \in \mathbb{R}^K : p_k \ge 0,\ \sum_k p_k = 1\}$ the probability simplex. Softmax is the solution of an entropy-regularised maximisation:
 
-At the output, **softmax was replaced by α-entmax** with $\alpha \approx 1.03$, which improved both public and private scores by about 0.004.
+$$
+\operatorname{softmax}(z) = \arg\max_{p \in \Delta} \; \Big( p^\top z + H(p) \Big), \qquad H(p) = -\sum_k p_k \log p_k .
+$$
 
-<Deep title="α-entmax: between softmax and sparsemax" kind="math">
+**α-entmax** (Peters et al., 2019) replaces the Shannon entropy $H$ with the Tsallis entropy, for $\alpha > 1$:
 
-Softmax is the solution of an entropy-regularised argmax:
 $$
-\operatorname{softmax}(z) = \arg\max_{p \in \Delta} \; p^\top z + H(p), \qquad H(p) = -\sum_k p_k \log p_k.
+H_\alpha(p) = \frac{1}{\alpha(\alpha-1)} \sum_k \big(p_k - p_k^{\alpha}\big),
 $$
-**α-entmax** replaces Shannon entropy with the Tsallis entropy
-$$
-H_\alpha(p) = \frac{1}{\alpha(\alpha-1)} \sum_k \big(p_k - p_k^{\alpha}\big), \quad \alpha > 1,
-$$
-which tends to Shannon entropy as $\alpha \to 1$. The solution has the closed form
+
+which tends to $H(p)$ as $\alpha \to 1$. The maximiser has the form
+
 $$
 \operatorname{entmax}_\alpha(z)_k = \big[(\alpha - 1)\,z_k - \tau\big]_+^{1/(\alpha-1)},
 $$
-with the threshold $\tau$ chosen so the outputs sum to one. At $\alpha = 2$ this is sparsemax, a Euclidean projection onto the simplex that sets many probabilities exactly to zero. At $\alpha = 1.03$ the output is very close to softmax, but with a slightly different shape in the tail.
 
-Exact zeros would be disastrous under KL, so a value this close to 1 is the only safe choice. The gain of 0.004 reflects a small reshaping of the tails of the predicted distribution, which better matched the vote distributions of the expert test set. With several models averaged afterwards, no class ends at exactly zero.
+where $[u]_+ = \max(u, 0)$ and the threshold $\tau \in \mathbb{R}$ is chosen so that the outputs sum to one. At $\alpha = 2$ this is sparsemax, the Euclidean projection of $z$ onto $\Delta$, which sets many probabilities exactly to zero.
+
+**Limit $\alpha \to 1$.** Write the threshold as $\tau = (\alpha - 1)\,c - 1$ for a constant $c$. Substituting,
+
+$$
+(\alpha - 1)\,z_k - \tau = 1 + (\alpha - 1)(z_k - c),
+$$
+
+and with $h = \alpha - 1$,
+
+$$
+\operatorname{entmax}_\alpha(z)_k = \big[1 + h\,(z_k - c)\big]_+^{1/h} \;\longrightarrow\; e^{\,z_k - c} \quad (h \to 0),
+$$
+
+by the limit $(1 + h u)^{1/h} \to e^{u}$. Normalisation fixes $c = \log \sum_j e^{z_j}$, which is softmax.
+
+**Which classes are set to zero at $\alpha = 1.03$.** Let $z_{\max}$ be the largest logit and $p_{\max}$ its probability. From the closed form, $p_{\max}^{\alpha - 1} = (\alpha - 1)\,z_{\max} - \tau$, so
+
+$$
+\tau = (\alpha - 1)\,z_{\max} - p_{\max}^{\alpha - 1}.
+$$
+
+Class $k$ has $p_k > 0$ exactly when $(\alpha - 1)\,z_k > \tau$. Substituting $\tau$,
+
+$$
+p_k > 0 \iff (\alpha - 1)(z_{\max} - z_k) < p_{\max}^{\alpha - 1}.
+$$
+
+With six classes, $1/6 \le p_{\max} \le 1$, so $p_{\max}^{0.03}$ lies between $(1/6)^{0.03} = 0.948$ and 1. At $\alpha = 1.03$, a class is set to zero only if its logit is at least $0.948 / 0.03 = 31.6$ below the largest, and every class within 31.6 of the largest keeps a positive probability. Softmax at a logit gap of 33 gives a ratio $e^{-33} \approx 4.7 \times 10^{-15}$, so in the range where entmax at this $\alpha$ produces zeros, softmax already produces values that are negligible. For logits within the usual range, the two differ only in the shape of the distribution, and the write-up reports the effect on the score (about 0.004).
 </Deep>
+
+### Ensembling
+
+The write-up describes combining the models per class by **non-negative linear regression** on out-of-fold predictions. Let $i$ index training samples, $m = 1, \dots, M$ models, $p^{(m)}_{ik}$ the out-of-fold prediction of model $m$ for class $k$ on sample $i$, and $q_{ik}$ the target. For each class $k$, the weights $\beta_{1k}, \dots, \beta_{Mk}$ solve
+
+$$
+\min_{\beta_{1k}, \dots, \beta_{Mk} \ge 0} \; \sum_i \Big( \sum_{m=1}^{M} \beta_{mk}\, p^{(m)}_{ik} - q_{ik} \Big)^2 .
+$$
+
+The constraint $\beta_{mk} \ge 0$ sets the weights of unhelpful models to zero rather than allowing them to enter with negative sign. The fitted combinations for the six classes do not in general sum to one, and the sources used for this report do not state how the combined vector was rescaled to a distribution.
 
 <Foundation id="ensembling-tta" />
 
-## Eighth place: one mega model
+## Eighth place: one combined model
 
-Chris Deotte, who finished eighth with a single model, framed the task explicitly: the target is the annotators' opinion, and **annotators look at spectrograms and waveform plots**, so the model should look at the same things.
+Chris Deotte finished eighth with a single model. He described the target as the annotators' opinion and noted that annotators look at spectrograms and waveform plots, so his model received the same kinds of input.
 
-- **Preprocessing** with MNE: double-banana bipolar differences, a 60 Hz notch filter, band-pass 0.5–40 Hz, clipping at ±500 µV, missing values set to 0.
-- **Three backbones:** (1) mel spectrograms computed on the GPU with torchaudio, of the full 50 s and of the middle 10 s, into TinyViT-21M at 512; (2) matplotlib plots of the montage waveforms, as a neurologist would see them, into TinyViT-21M at 224; (3) the raw 1D signals into a 1D EEGNet (contributed by Nischay Dhankhar).
-- **Pseudo-labels** for low-vote samples: the new target was $0.1 \times$ the original votes $+ 0.3 \times$ each of the three models' predictions.
-- **The mega model:** the three backbones with heads removed, embeddings concatenated, a new head, trained on the high-vote samples (twice) and the pseudo-labelled samples (once).
-- **Augmentations** on the raw signals: left–right brain flip, temporal–parasagittal chain swap, crop and rescale, inversion, and frequency dropout.
+- **Preprocessing** with MNE: double-banana bipolar differences, a 60 Hz notch filter, a 0.5–40 Hz band-pass filter, clipping at ±500 µV, and missing values set to 0.
+- **Three backbones.** (1) Mel spectrograms computed on the GPU with torchaudio in the data loader, of the full 50 s (FFT size 2048, window 1280, hop 19, 0–20 Hz, 64 mel bands) and of the middle 10 s (FFT size 1280, window 32, hop 4), fed to TinyViT-21M at 512 pixels. With hops of 19 and 4 samples, the two spectrograms have about $10{,}000 / 19 \approx 526$ and $2{,}000 / 4 = 500$ time frames. (2) Matplotlib plots of the montage waveforms, as a neurologist would see them, fed to TinyViT-21M at 224 pixels. (3) The raw 1D signals fed to a 1D EEGNet, contributed by Nischay Dhankhar.
+- **Pseudo-labels** for samples with fewer than 10 votes. With original vote distribution $q$ and the predictions $p^{(1)}, p^{(2)}, p^{(3)}$ of the three models, the new target is $\tilde q = 0.1\,q + 0.3\,(p^{(1)} + p^{(2)} + p^{(3)})$. The weights sum to $0.1 + 3 \times 0.3 = 1$, so $\tilde q$ is a distribution.
+- **Combined model.** The heads of the three backbones were removed, their embeddings concatenated and a new head attached. It was trained on the samples with at least 10 votes (included twice) and on the pseudo-labelled samples (once). All 107,000 rows were used, with one row sampled per `eeg_id` in each epoch.
+- **Augmentations** on the raw signals: left–right brain flip, temporal–parasagittal chain exchange, crop and rescale, inversion, and frequency dropout.
 
 <Foundation id="pseudo-labelling" />
 
-His single model scored 0.246 in cross-validation, 0.243 public and 0.290 private, a gold medal.
+The single model scored 0.246 in cross-validation, 0.243 on the public leaderboard and 0.290 on the private leaderboard, which was within the gold-medal range.
 
-## How this compares with other competitions
+## Comparison with other competitions
 
-- **BirdCLEF 2024** and **CMI sleep states** are the other signal competitions in the collection. BirdCLEF used mel spectrograms of audio and 2D CNNs; CMI used 1D models on accelerometer data. In HMS, spectrograms, wavelet scalograms and raw-signal images all worked, and diversity across them was the winning strategy.
-- **Soft targets from annotator votes** make HMS unusual. Most competitions give hard labels and treat disagreement as noise; here disagreement is the target, and the key insight was which annotators the test set represents.
-- **The shift between training and test annotators** parallels PANDA (student versus expert graders). The responses were similar: train or fine-tune on the part of the training data that resembles the test labels.
+- **BirdCLEF 2024** and **CMI sleep states** are the other signal competitions in the collection. The BirdCLEF winners used 2D CNNs on mel spectrograms of audio, and the CMI winners used 1D convolutional and recurrent models on accelerometer data. In HMS, models on spectrograms, wavelet scalograms and raw-signal images all reached competitive scores, and the winning team combined all three.
+- **Soft targets from annotator votes.** Most competitions give one hard label per sample. In HMS the target is the distribution of votes, and the solutions described here selected training samples by the number of votes so that the training targets resembled the expert-labelled test set.
+- **Different annotators for training and test labels.** PANDA (prostate cancer grading) also had training labels from less experienced annotators (trained students at one centre) and test labels from expert panels. In HMS the winners finished training on the high-vote samples that resemble the test labels; in PANDA, top teams removed training labels that disagreed strongly with out-of-fold predictions.
 
 ## Compute and deployment
 
-| Setting | What the solution needs |
+| Setting | Requirements |
 | --- | --- |
 | Competition | Kaggle notebook; the wavelet or superlet transform is the heaviest step for each window. |
 | Research group | One GPU trains a small backbone on scalograms in hours. |
-| ICU monitoring | Continuous windowed inference over days of EEG, alerting for seizure probability, integration with EEG review software, and regulatory approval. |
+| ICU monitoring | Continuous windowed inference over days of EEG, alerts based on seizure probability, integration with EEG review software, and regulatory approval. |
 
-<Callout kind="deploy" title="The minimum useful version">
-Double-banana montage, band-pass 0.5–40 Hz, CWT or superlet scalograms stacked into one image, one small backbone (Swin-V2-tiny or ConvNeXt-atto) trained with KL loss in two stages (all votes, then at least 10 votes) and additive vote smoothing. Output the full distribution rather than the top class, since the distribution conveys how ambiguous the segment is.
+<Callout kind="deploy" title="Reduced configuration">
+Double-banana montage, band-pass filter at 0.5–40 Hz, CWT or superlet scalograms stacked into one image, and one small backbone (Swin-V2-tiny or ConvNeXt-atto) trained with a KL loss in two stages (all samples with more than one vote, then samples with at least 10 votes) and additive smoothing of the vote counts. The output is the full distribution over the six classes, which indicates how ambiguous a segment is.
 </Callout>

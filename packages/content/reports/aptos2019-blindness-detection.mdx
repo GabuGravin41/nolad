@@ -1,6 +1,6 @@
 ---
 slug: aptos2019-blindness-detection
-title: "APTOS 2019 Blindness Detection: regression on retinal grade with external data"
+title: "APTOS 2019 Blindness Detection (2019)"
 shortTitle: APTOS 2019 Blindness Detection
 kaggleSlug: aptos2019-blindness-detection
 kaggleUrl: https://www.kaggle.com/competitions/aptos2019-blindness-detection
@@ -25,10 +25,10 @@ techniques:
   - tta
 metric:
   name: Quadratic weighted kappa
-  summary: "Agreement between predicted and reference diabetic retinopathy grade (0–4), with each disagreement penalised by the square of its distance."
+  summary: "Agreement between the predicted and the reference grade of diabetic retinopathy (0 to 4), corrected for chance agreement. Each disagreement is penalised in proportion to the square of the difference between the two grades."
 constraints: { runtime: "Kernels-only competition; inference in a Kaggle notebook", hardware: "Kaggle GPU notebook", internet: false }
-summary: "Grade diabetic retinopathy from retinal photographs taken in rural India, on a five-level scale. The winner trained eight standard CNNs as regressors on the combined 2015 and 2019 Kaggle datasets without special preprocessing, added soft pseudo-labels and two further public datasets in a second stage, and shifted one rounding threshold. The competition is a clear case of a small, shifted target dataset where external data and a regression formulation carry the result."
-winningIdea: "Treat the grade as a continuous target, train on the much larger 2015 EyePACS dataset together with the 2019 data, and round with tuned thresholds; then refine with soft pseudo-labels and relabelled external datasets."
+summary: "The competition asked participants to grade the severity of diabetic retinopathy on a five-level scale from colour photographs of the retina, taken by Aravind Eye Hospital in rural India. The winning solution trains eight ImageNet CNNs as regressors of the grade on the 2019 data combined with the 2015 Kaggle diabetic retinopathy dataset, adds soft pseudo-labels and two further public datasets in a second stage, and converts the averaged output to a grade with thresholds. It reached a quadratic weighted kappa of 0.936 on the private test set."
+winningIdea: "The grade is treated as a continuous target and learned with a smooth L1 loss, on the 3,662 photographs of 2019 combined with about 35,000 from the 2015 EyePACS competition. A second stage adds the public test set with the first stage's predictions as soft labels, and the IDRiD and Messidor datasets with labels adjusted towards those predictions. The averaged prediction is rounded with thresholds, of which the first was raised from 0.5 to 0.7."
 solutions:
   - rank: 1
     team: Guanshuo Xu
@@ -38,10 +38,10 @@ solutions:
     team: ods.ai
     members: [{ name: "Artur Ispiriants" }, { name: "Mykhailo Matviiv" }]
     writeup: https://www.kaggle.com/competitions/aptos2019-blindness-detection/writeups/ods-ai-eye-of-private-lb-4th-place-solution-2nd-af
-    note: "Finished fourth; second after the leaderboard was cleaned of teams that broke the rules."
+    note: "Finished fourth on the private leaderboard and was placed second after teams that broke the competition rules were removed."
 deployability:
   score: 4
-  verdict: "Standard ImageNet CNNs at 384–512 pixels on single photographs, with no preprocessing: this is the easiest deployment in the collection technically, and diabetic retinopathy screening is the area where autonomous AI first received regulatory approval. The limitation is that the winning ensemble has eight models and that the grade scale differs between datasets."
+  verdict: "The winning models are standard ImageNet CNNs applied to single photographs at 384 to 512 pixels, with resizing as the only preprocessing. Diabetic retinopathy screening is the application in which an autonomous AI diagnostic system first received approval from the US FDA (IDx-DR, 2018). The winning ensemble has eight models, and the grading scales of the datasets used for training differ."
   inference: "One CNN pass per photograph per model; tens of milliseconds on a GPU, feasible on a CPU."
   models: "8 models: 2 × Inception-ResNet-v2 (512), 2 × Inception-v4 (512), 2 × SE-ResNeXt-50 (512), 2 × SE-ResNeXt-101 (384)."
   training: "About 38,000 images (2015 + 2019); hours per model on one GPU."
@@ -51,9 +51,9 @@ deployability:
     data: "Competition data under Kaggle competition terms; EyePACS 2015, IDRiD and Messidor each have their own terms."
     weights: "Not released."
   risks:
-    - "Fundus cameras, image quality and patient populations differ between the 2015 (US) and 2019 (India) data; a new site introduces another shift."
-    - "Grading standards differ between datasets and graders; the boundary between mild and moderate is the least reliable."
-    - "Screening also needs gradability detection (is the photo good enough?) and detection of other eye disease, which the competition did not include."
+    - "The training data combine photographs from the United States (EyePACS, 2015) and India (2019), and the winner found that validation on one did not predict the leaderboard score on the other. A new site, camera or population introduces a further shift, which has to be measured."
+    - "The external datasets were graded by different graders, and Messidor uses a different four-level scale. The winner adjusted their labels towards his own model's predictions, so the final model partly learns from itself."
+    - "A screening programme also needs to detect ungradable photographs and other eye diseases. The competition included neither task."
 related:
   - prostate-cancer-grade-assessment
   - siim-isic-melanoma-classification
@@ -67,121 +67,179 @@ dataLinks:
   - { label: "Diabetic Retinopathy Detection 2015 (Kaggle)", url: "https://www.kaggle.com/competitions/diabetic-retinopathy-detection" }
   - { label: "IDRiD (IEEE DataPort)", url: "https://ieee-dataport.org/open-access/indian-diabetic-retinopathy-image-dataset-idrid" }
 priority: 16
-updated: "2026-09-28"
+updated: "2026-09-29"
 ---
 
-## The problem in its field
+## Clinical background
 
-**Diabetic retinopathy** is damage to the small blood vessels of the retina caused by long-standing high blood sugar. It is a leading cause of blindness in working-age adults. Vision loss is largely preventable if the disease is found early and treated with laser or injections, which is why people with diabetes are advised to have their retinas examined regularly.
+**Diabetic retinopathy** is damage to the small blood vessels of the retina caused by long-standing high blood glucose. The competition description names it a leading cause of blindness among adults of working age. Loss of vision can largely be prevented if the disease is detected early and treated with laser or with injections into the eye, and people with diabetes are therefore advised to have their retinas examined at regular intervals.
 
-Examination requires an ophthalmologist or a trained grader to look at **fundus photographs** of the back of the eye. Aravind Eye Hospital in India runs outreach in which technicians travel to rural areas, photograph patients' retinas, and send the images to doctors for remote review. There are far more patients than graders. The hospital hosted this competition through the Asia Pacific Tele-Ophthalmology Society (APTOS) to obtain a model that could screen and grade the images automatically.
+The examination is a review of **fundus photographs**, images of the back of the eye, by an ophthalmologist or a trained grader. Aravind Eye Hospital in India runs an outreach programme in which technicians travel to rural areas, photograph patients' retinas, and send the images to doctors for remote review. The hospital hosted this competition, through the 4th symposium of the Asia Pacific Tele-Ophthalmology Society (APTOS), to obtain a model that detects the disease and grades its severity automatically.
 
 <Deep title="The five grades of diabetic retinopathy" kind="domain">
 
-The competition used the International Clinical Diabetic Retinopathy scale:
+The labels follow the International Clinical Diabetic Retinopathy scale.
 
 | Grade | Name | Typical findings |
 | --- | --- | --- |
 | 0 | No DR | normal retina |
-| 1 | Mild non-proliferative | microaneurysms only (tiny red dots, bulges in capillary walls) |
+| 1 | Mild non-proliferative | microaneurysms only (small red dots, bulges in capillary walls) |
 | 2 | Moderate non-proliferative | more than microaneurysms: haemorrhages, hard exudates (yellow lipid deposits), cotton-wool spots |
 | 3 | Severe non-proliferative | many haemorrhages in all four quadrants, venous beading, or intraretinal microvascular abnormalities |
 | 4 | Proliferative | new abnormal vessels (neovascularisation) or vitreous haemorrhage |
 
-Grade 2 and above is usually "referable": the patient should see an ophthalmologist. Grade 4 needs urgent treatment. The smallest diagnostic features, microaneurysms, are only a few pixels wide in a downsampled photograph, which is why resolution matters.
+Grade 2 and above is usually considered referable: the patient should be seen by an ophthalmologist. Grade 4 requires urgent treatment. Microaneurysms, the earliest lesions, cover only a few pixels in a downsampled photograph, so the input resolution limits which lesions a model can resolve.
 </Deep>
 
-## The data
+## Data
 
-The training set contains 3,662 photographs graded 0–4 by clinicians. The test photographs were hidden and processed by the submitted notebook. Images came from several clinics and cameras over time, and quality varies: some are out of focus, poorly lit or cropped differently.
+The training set contains 3,662 photographs graded 0 to 4 by clinicians. The test photographs were hidden and were processed by the submitted notebook, without internet access.
 
-The 2019 data are small for deep learning. A much larger labelled set was available: the **2015 Kaggle Diabetic Retinopathy Detection** competition (EyePACS, United States), with about 35,000 training images and 53,000 test images on the same five-grade scale. Two smaller public datasets, **IDRiD** (India) and **Messidor** (France), were also permitted.
+A larger labelled dataset was allowed as external data: that of the **2015 Kaggle Diabetic Retinopathy Detection** competition (EyePACS, United States), with about 35,000 training and 53,000 test images graded on the same five-level scale. Two smaller public datasets, **IDRiD** (India) and **Messidor** (France), were also permitted.
 
-After the competition closed, several teams near the top were removed for breaking the rules, and the leaderboard was revised.
+After the competition closed, several teams near the top of the leaderboard were removed for breaking the rules, and the final ranking was revised.
 
-## The metric
+## Evaluation metric
 
 <Foundation id="quadratic-weighted-kappa" />
 
-<Plot series={[{fn: "qwk-weight", params: {n: 5}, label: "w = (i − j)² / 16"}]} x={[0, 4]} y={[0, 1]} xLabel="|predicted − true| grade" yLabel="penalty weight" caption="QWK penalises a disagreement by the square of its distance. Missing by two grades costs four times as much as missing by one." />
+With $N = 5$ grades, the disagreement weight is $w_{ij} = (i-j)^2 / 16$. A prediction one grade away from the reference has weight $1/16 = 0.0625$, two grades away $4/16 = 0.25$, three grades away $9/16 \approx 0.56$, and four grades away $1$.
 
-## Regression instead of classification
+<Plot series={[{fn: "qwk-weight", params: {n: 5}, label: "w = (i − j)² / 16"}]} x={[0, 4]} y={[0, 1]} xLabel="|predicted − true| grade" yLabel="penalty weight" caption="The quadratic weight as a function of the distance between the predicted and the true grade. A disagreement of two grades has four times the weight of a disagreement of one." />
 
-Every top solution treated the grade as a **number** and trained a regressor, then converted the output to a class with thresholds. Three reasons:
+<Deep title="Quadratic weighted kappa in terms of means, variances and covariance" kind="math">
 
-1. **The metric is a squared-distance agreement.** QWK is closely related to squared error between the grade and the prediction (see the derivation in the PANDA report, where QWK on continuous values reduces to Lin's concordance correlation). A regression loss directly optimises this distance; cross-entropy treats "predict 0 for a 4" and "predict 3 for a 4" as equally wrong.
-2. **The classes are ordered.** Regression encodes the order automatically.
-3. **Thresholds can be tuned.** The mapping from a continuous score to a grade can be adjusted after training, which exploits the metric's structure.
+Let $n$ be the number of images, $y_1, \dots, y_n \in \{0, \dots, 4\}$ the reference grades and $\hat y_1, \dots, \hat y_n \in \{0, \dots, 4\}$ the predicted grades. Write $\mu_y, \mu_{\hat y}$ for their means, $\sigma_y^2, \sigma_{\hat y}^2$ for their variances and $\sigma_{y\hat y}$ for their covariance, all computed with the factor $1/n$.
+
+**Step 1: remove the constant.** The factor $1/(N-1)^2$ appears in every weight of both sums and cancels:
+
+$$
+\kappa = 1 - \frac{\sum_{i,j} (i-j)^2\, O_{ij}}{\sum_{i,j} (i-j)^2\, E_{ij}} .
+$$
+
+**Step 2: the numerator.** $O_{ij}$ counts the images with reference grade $i$ and predicted grade $j$, so summing $(i-j)^2 O_{ij}$ over all cells is the same as summing $(y_t - \hat y_t)^2$ over all images $t$. Dividing by $n$ gives the mean squared error:
+
+$$
+\mathrm{MSE} = \frac{1}{n}\sum_{i,j} (i-j)^2\, O_{ij} = \frac{1}{n}\sum_{t=1}^{n} (y_t - \hat y_t)^2 .
+$$
+
+**Step 3: the denominator.** $E_{ij} = n\,P_y(i)\,P_{\hat y}(j)$, where $P_y$ and $P_{\hat y}$ are the two histograms normalised to sum to 1. Dividing by $n$ gives the expected squared difference between two independent random variables $Y$ and $\hat Y'$ with these distributions:
+
+$$
+D = \frac{1}{n}\sum_{i,j} (i-j)^2\, E_{ij} = \mathbb{E}\big[(Y - \hat Y')^2\big].
+$$
+
+For independent variables, the variance of the difference is the sum of the variances, so
+
+$$
+D = \operatorname{Var}(Y - \hat Y') + \big(\mathbb{E}[Y - \hat Y']\big)^2 = \sigma_y^2 + \sigma_{\hat y}^2 + (\mu_y - \mu_{\hat y})^2 .
+$$
+
+**Step 4: expand the MSE** in the same moments:
+
+$$
+\mathrm{MSE} = \sigma_y^2 + \sigma_{\hat y}^2 - 2\sigma_{y\hat y} + (\mu_y - \mu_{\hat y})^2 = D - 2\sigma_{y\hat y}.
+$$
+
+**Step 5: combine.** Dividing numerator and denominator of Step 1 by $n$ gives $\kappa = 1 - \mathrm{MSE}/D$, and with Step 4
+
+$$
+\kappa = \frac{D - \mathrm{MSE}}{D} = \frac{2\,\sigma_{y\hat y}}{\sigma_y^2 + \sigma_{\hat y}^2 + (\mu_y - \mu_{\hat y})^2} .
+$$
+
+This is Lin's concordance correlation coefficient between the reference and the predicted grades. Quadratic weighted kappa is therefore one minus the squared error, measured relative to the squared error expected by chance. For fixed histograms of predicted grades, $D$ is fixed and maximising $\kappa$ is equivalent to minimising the squared error. The histogram of predictions also enters $D$, so the two objectives are not identical in general.
+</Deep>
+
+## Regression on the grade
+
+The winner treated the grade as a real number, trained the networks as regressors, and converted the continuous output to a grade with thresholds. Three properties of the task relate to this choice.
+
+1. **The metric penalises squared distance.** From the derivation above, $\kappa = 1 - \mathrm{MSE}/D$. A regression loss penalises the distance between the prediction and the grade. The cross-entropy loss of a classifier depends only on the probability assigned to the correct grade, so it does not distinguish between a prediction of 0 and a prediction of 3 for an image of grade 4.
+2. **The grades are ordered.** A single real-valued output represents the order of the grades.
+3. **Thresholds can be adjusted after training.** The mapping from the continuous output to a grade can be tuned without retraining.
 
 <Foundation id="soft-labels" />
 
-The winner used the **smooth L1 (Huber) loss**.
+The winner used the **smooth L1 loss**, also called the Huber loss.
 
-<Deep title="Smooth L1: squared near zero, absolute far away" kind="math">
+<Deep title="Smooth L1 loss" kind="math">
 
-For residual $r = \hat y - y$ and threshold $\beta$ (1 by default in PyTorch):
+Let $\hat y \in \mathbb{R}$ be the prediction, $y$ the target, $r = \hat y - y$ the residual and $\beta > 0$ a threshold (1 by default in PyTorch). The loss is
+
 $$
 \ell_\beta(r) =
 \begin{cases}
-\dfrac{r^2}{2\beta}, & |r| < \beta,\\[2mm]
-|r| - \dfrac{\beta}{2}, & |r| \ge \beta.
+r^2 / (2\beta), & |r| < \beta,\\[1mm]
+|r| - \beta / 2, & |r| \ge \beta.
 \end{cases}
 $$
-At $|r| = \beta$, both branches equal $\beta/2$, so the loss is continuous. Its derivative is
+
+At $|r| = \beta$ the first branch gives $\beta^2 / (2\beta) = \beta/2$ and the second gives $\beta - \beta/2 = \beta/2$, so the loss is continuous. Its derivative is
+
 $$
 \ell_\beta'(r) =
 \begin{cases}
-r/\beta, & |r| < \beta,\\
+r / \beta, & |r| < \beta,\\
 \operatorname{sign}(r), & |r| \ge \beta,
 \end{cases}
 $$
-which is also continuous at $|r| = \beta$ (both sides equal $\pm 1$).
 
-Near the target, the loss is quadratic, like MSE: the gradient shrinks as the prediction approaches the label, which gives stable convergence. Far from the target, the gradient has constant magnitude, like L1, so a mislabelled image (a grade-4 photograph labelled 0) cannot dominate training with a gradient proportional to the error. With noisy labels from different graders and datasets, this robustness is useful.
+and at $r = \pm\beta$ both branches give $\pm 1$, so the derivative is continuous as well.
+
+For $|r| < \beta$ the loss is quadratic, as in mean squared error, and the gradient decreases as the prediction approaches the target. For $|r| \ge \beta$ the gradient has magnitude 1 whatever the size of the error. A grade-4 photograph labelled 0 therefore contributes a gradient of magnitude 1 to the regressor, where mean squared error would contribute one proportional to the error of 4. This limits the influence of wrongly labelled images, which are more likely when the training data come from several datasets and graders.
 </Deep>
 
-<Deep title="Choosing rounding thresholds" kind="math">
+<Deep title="Rounding thresholds" kind="math">
 
-The regressor outputs $\hat y \in \mathbb{R}$. Grades are assigned by thresholds $t_1 < t_2 < t_3 < t_4$:
+The regressor outputs $\hat y \in \mathbb{R}$. A grade is assigned with thresholds $t_1 < t_2 < t_3 < t_4$ by counting the thresholds that $\hat y$ reaches:
+
 $$
-\text{grade}(\hat y) = \#\{k : \hat y \ge t_k\}.
+\mathrm{grade}(\hat y) = \#\{\, k \in \{1,2,3,4\} : \hat y \ge t_k \,\}.
 $$
-The default is $t = (0.5, 1.5, 2.5, 3.5)$, i.e. rounding. Because QWK depends on the whole confusion matrix, the thresholds that maximise it are generally not the midpoints. Common practice in 2019 was to optimise $t$ on validation predictions with a coordinate search or Nelder–Mead.
 
-The winner changed only the first threshold, from 0.5 to 0.7, which raised his private score from 0.935 to 0.936. Raising $t_1$ means an image needs a higher score to be called "mild" rather than "no DR", which reduces false positives in the large grade-0 class.
+The choice $t = (0.5, 1.5, 2.5, 3.5)$ is ordinary rounding. Because $\kappa$ depends on the whole confusion matrix, the thresholds that maximise it are in general not the midpoints between grades. They can be optimised on validation predictions, for example by coordinate search or with the Nelder–Mead method, at the risk of fitting the noise of a small validation set.
 
-With a small validation set, threshold tuning overfits easily; changing one threshold by a small amount is the cautious choice.
+The winner changed only the first threshold, from 0.5 to 0.7, which raised his private score from 0.935 to 0.936. Images with $0.5 \le \hat y < 0.7$, graded 1 (mild) before the change, are graded 0 after it.
 </Deep>
 
-## How the winning solution works
+## Winning solution
 
-Guanshuo Xu, who also won the 2020 pulmonary embolism competition, won alone.
+Guanshuo Xu, who also won the 2020 RSNA pulmonary embolism competition, competed alone.
 
 <Pipeline steps={[
   {tag: "Data", title: "2015 + 2019 combined", detail: "about 38,000 images"},
-  {tag: "Train", title: "8 CNN regressors", detail: "smooth L1, GeM pooling, heavy colour and geometric augmentation"},
+  {tag: "Train", title: "8 CNN regressors", detail: "smooth L1, GeM pooling, colour and geometric augmentation"},
   {tag: "Stage 2", title: "Add pseudo-labels and external sets", detail: "public test, IDRiD, Messidor with soft labels"},
   {tag: "Ensemble", title: "Average the 8 outputs", detail: "one continuous score"},
   {tag: "Round", title: "Thresholds 0.7, 1.5, 2.5, 3.5", detail: "grade 0–4"}
-]} caption="The winning pipeline." />
+]} caption="The winning pipeline, from the combined training data to a grade per photograph." />
 
 <Foundation id="models-and-loss" />
 
-### Validation: when nothing correlates
+### Validation
 
-The obvious scheme, training on 2015 data and validating on the 2019 training set, did not correlate with the public leaderboard: the two datasets differ in cameras, population and grading. He therefore combined 2015 and 2019 data for training and used the **public leaderboard** as the validation set. To limit overfitting to it, he evaluated pairs of seeds together and compared epochs only in steps of 5.
-
-This is a deliberate exception to the usual advice never to validate on the public leaderboard. It worked here because the public test set came from the same distribution as the private one, and he restricted how many decisions he made with it.
+The author first trained on the 2015 data and validated on the 2019 training set. Scores on this validation set did not correlate with the public leaderboard. The write-up does not identify the cause; the two datasets come from different countries and programmes. He then combined the 2015 and 2019 data for training and used the **public leaderboard** as the validation set. To reduce overfitting to it, he evaluated models in pairs of random seeds and compared training epochs only in steps of 5.
 
 <Foundation id="cross-validation" />
 
 ### Models and training
 
-No preprocessing beyond resizing: no circular cropping and no colour normalisation of the kind popularised by Ben Graham in the 2015 competition. The augmentation did the work instead: contrast (±0.2), brightness (±20), hue (±10), saturation (±20), blur and sharpening, rotation up to 180°, scale (±0.2), shear (±0.2), shift (±0.2) and mirroring. A fundus photograph has no canonical orientation, so full rotation is valid; the colour changes simulate different cameras and exposure.
+The only preprocessing was resizing. The author did not crop the circular field of the fundus or normalise its colour, as Ben Graham, winner of the 2015 competition, had done. The augmentation consisted of changes to contrast (±0.2), brightness (±20), hue (±10) and saturation (±20), blurring and sharpening, rotation by up to 180°, scaling (±0.2), shearing (±0.2), shifting (±0.2) and mirroring. A fundus photograph has no fixed orientation, so rotations by any angle produce valid images.
 
 <Foundation id="data-augmentation" />
 
-**GeM pooling** replaced average pooling and worked better. Lesions such as microaneurysms and haemorrhages are small and scattered; GeM pooling, which interpolates between average and max, gives more weight to strong local activations.
+The author replaced global average pooling with **generalised-mean (GeM) pooling** (Radenović et al., 2018) and reports that it performed better.
+
+<Deep title="Generalised-mean pooling" kind="math">
+
+Let $x_{c,v} \ge 0$ be the activation of channel $c$ at spatial position $v$ in the last feature map, after the ReLU, and let $\Omega$ be the set of positions. GeM pooling with exponent $p \ge 1$ gives, for each channel,
+
+$$
+\mathrm{GeM}_p(x_c) = \Big( \frac{1}{|\Omega|} \sum_{v \in \Omega} x_{c,v}^{\,p} \Big)^{1/p} .
+$$
+
+For $p = 1$ this is the average. As $p \to \infty$ it tends to the maximum $\max_v x_{c,v}$, because the largest term dominates the sum. Intermediate values give strong local activations more weight than the average does. Radenović et al. learn $p$ with the network; the write-up does not state the value used.
+</Deep>
 
 <Foundation id="cnn-backbones" />
 
@@ -193,62 +251,88 @@ No preprocessing beyond resizing: no circular cropping and no colour normalisati
 | SE-ResNeXt-101 (384) | 0.819 | 0.923 |
 | Ensemble of 8 | 0.844 | 0.934 |
 
-Two models of each architecture, trained with different seeds, were averaged. Public and private scores differ by about 0.1 for every model, so the gap is a property of the two test splits rather than of any one model; the ranking of the models is not the same on both, which is why an ensemble was the safer choice.
+Each architecture was trained twice with different random seeds, and the eight models were averaged. For every model the private score exceeds the public one by 0.096 to 0.105, which indicates a difference between the two test splits more than a property of any model. The ranking of the architectures differs between the splits: Inception-ResNet-v2 is best on the public split and SE-ResNeXt-50 on the private split. The ensemble scored higher than every single model on both.
 
 <Foundation id="ensembling-tta" />
 
-### Stage 2: soft pseudo-labels and relabelled external data
+### Stage 2: soft pseudo-labels and adjusted external labels
 
-Three further sources were added for 10 more epochs of training:
+Three further sources were added, and training continued for 10 more epochs.
 
-- **The public test set**, labelled with the stage-1 ensemble's continuous predictions (**soft pseudo-labels**).
-- **IDRiD**, whose provided grades were averaged with the stage-1 predictions.
-- **Messidor**, which uses a different four-level scale. For each Messidor grade, the mean stage-1 prediction over its images was computed, and each image's pseudo-label was bounded to stay near that mean. The write-up's example: in a group with mean 2.2, an image predicted at 1.1 received 1.7; as we read it, predictions were clipped to within 0.5 of their group's mean.
+- **The public test set**, labelled with the continuous predictions of the stage-1 ensemble (**soft pseudo-labels**).
+- **IDRiD**, with the provided grades averaged with the stage-1 predictions.
+- **Messidor**, which uses a four-level scale. For each Messidor grade, the mean stage-1 prediction over its images was computed, and the pseudo-label of each image was bounded to stay near that mean. In the write-up's example, in a group with mean 2.2, an image predicted at 1.1 received the label 1.7. The example is consistent with clipping each prediction to within 0.5 of its group's mean ($2.2 - 0.5 = 1.7$); this is Nolad's reading and not a statement of the write-up.
 
 <Foundation id="pseudo-labelling" />
 
-<Deep title="Why average a label with a prediction" kind="math">
+<Deep title="Averaging a label with a prediction" kind="math">
 
-Suppose an external dataset's grade $g$ differs systematically from the target scale, and the stage-1 model's prediction $\hat y$ is a noisy estimate on the target scale. A convex combination
-$$
-\tilde y = \lambda g + (1 - \lambda)\hat y
-$$
-has lower variance than either alone if the errors are not perfectly correlated. For independent errors with variances $\sigma_g^2$ and $\sigma_{\hat y}^2$, the variance of the combination is $\lambda^2\sigma_g^2 + (1-\lambda)^2\sigma_{\hat y}^2$; setting its derivative $2\lambda\sigma_g^2 - 2(1-\lambda)\sigma_{\hat y}^2$ to zero gives $\lambda^* = \sigma_{\hat y}^2 / (\sigma_g^2 + \sigma_{\hat y}^2)$, which is $1/2$ when both are equally reliable. Averaging with $\lambda = 1/2$ is the natural choice when neither source is known to be better.
+Let $g$ be the grade given in an external dataset and $\hat y$ the stage-1 prediction, and suppose that both are unbiased estimates of the true grade $y$ on the competition's scale, with independent errors of variances $\sigma_g^2$ and $\sigma_{\hat y}^2$. Consider the combination
 
-For Messidor, the grade is on a different scale, so it is used only to constrain the prediction to the right region: bounding keeps the model's fine-grained ranking within a grade while preventing it from drifting into another grade's range.
+$$
+\tilde y = \lambda g + (1 - \lambda)\hat y, \qquad \lambda \in [0,1].
+$$
+
+Its error is $\lambda (g - y) + (1-\lambda)(\hat y - y)$, and for independent errors its variance is
+
+$$
+V(\lambda) = \lambda^2\sigma_g^2 + (1-\lambda)^2\sigma_{\hat y}^2 .
+$$
+
+Setting the derivative to zero,
+
+$$
+V'(\lambda) = 2\lambda\sigma_g^2 - 2(1-\lambda)\sigma_{\hat y}^2 = 0,
+$$
+
+and collecting the terms in $\lambda$ gives $\lambda(\sigma_g^2 + \sigma_{\hat y}^2) = \sigma_{\hat y}^2$, so
+
+$$
+\lambda^* = \frac{\sigma_{\hat y}^2}{\sigma_g^2 + \sigma_{\hat y}^2} .
+$$
+
+When the two variances are equal, $\lambda^* = 1/2$, which is the plain average used for IDRiD, and $V(1/2) = \sigma^2/2$, half the variance of either source. If the errors are correlated, the reduction is smaller.
+
+For Messidor the given grade is on a different scale, so it cannot be averaged with a prediction on the competition's scale. It is used instead to bound the prediction: the model's ordering of images within a Messidor grade is kept, while the label is kept near the group's mean.
 </Deep>
 
-The stage-2 ensemble scored 0.850 public and 0.935 private; with the first threshold moved to 0.7, the final private score was 0.936.
+The stage-2 ensemble scored 0.850 on the public and 0.935 on the private test set. With the first threshold moved to 0.7, the final private score was 0.936.
 
-## Second place after the cleanup: EfficientNet and pseudo-labelling
+## Second place: EfficientNet and pseudo-labelling
 
-Artur Ispiriants and Mykhailo Matviiv (team ods.ai) originally finished fourth and moved to second after the leaderboard was cleaned.
+Artur Ispiriants and Mykhailo Matviiv (team ods.ai) finished fourth on the private leaderboard and were placed second after it was revised.
 
-- **Pre-training on the 2015 data** at full size (this alone scored 0.73–0.75 public), then fine-tuning on 2019 data.
-- **EfficientNet-B3 (300 px), B4 (460), B5 (456)**: they report EfficientNet as the only family that worked for them; SE-ResNeXt and DenseNet were worse.
-- Cropping of black background; Ben Graham's colour preprocessing did not help.
-- Heavy augmentation with albumentations: blur, flips, brightness-contrast, shift-scale-rotate, elastic and grid distortion, transposition, HSV shifts, CLAHE and coarse dropout.
-- Pre-training for about 80 epochs (B3) or 15 (B5), then about 50 or 15 epochs on 2019 data; averaging of the best epochs; flip TTA.
+- **Pre-training on the 2015 data** at full size, which alone scored 0.73–0.75 on the public leaderboard, followed by fine-tuning on the 2019 data.
+- **EfficientNet-B3 (300 pixels), B4 (460) and B5 (456).** They report that EfficientNet was the only architecture family that worked for them; SE-ResNeXt and DenseNet gave worse results.
+- Cropping of the black background around the fundus. Ben Graham's colour preprocessing did not help.
+- Augmentation with the albumentations library: blur, flips, brightness and contrast, shift–scale–rotate, elastic and grid distortion, transposition, HSV shifts, CLAHE and coarse dropout.
+- About 80 (B3) or 15 (B5) epochs of pre-training, followed by about 50 or 15 epochs on the 2019 data; averaging of the best epochs; test-time augmentation with flips.
 - **Two rounds of pseudo-labelling** on the 2019 test set and the 2015 test set, which they describe as a large gain.
 
 <Foundation id="transfer-learning" />
 
-The two solutions differ in architecture and preprocessing but agree on the essentials: use the 2015 data, regress the grade, augment heavily, and add pseudo-labels.
+Both solutions used the 2015 data, strong augmentation and pseudo-labels on the test data. They differ in architecture and in preprocessing: the winner resized the images without cropping, and the second-place team cropped the background.
 
-## How this compares with other competitions
+## Comparison with other competitions
 
-- **PANDA prostate grading** is the other ordinal competition in the collection with QWK. There the difficulty was label noise and gigapixel images; here it is domain shift and a small target dataset. Both winners regressed the grade.
-- **SIIM-ISIC melanoma (2020)** also relied heavily on an earlier competition's data (ISIC 2017–2019) to supplement a small and shifted target set.
-- **Diabetic retinopathy** is the application in which autonomous AI screening was first approved by the US FDA (IDx-DR, 2018, supported by the pivotal trial of Abràmoff et al.). The Kaggle competitions of 2015 and 2019 were part of the path to that point.
+- **PANDA prostate cancer grading (2020)** is the other competition in the collection scored by quadratic weighted kappa. Its input was gigapixel pathology slides with noisy labels, and its solutions also used regression heads.
+- **SIIM-ISIC melanoma classification (2020)** also relied on data from earlier challenges (ISIC 2017–2019) to supplement a small target dataset.
+- **Diabetic retinopathy** is the application in which the US FDA first authorised an autonomous AI diagnostic system, IDx-DR, in 2018, supported by the pivotal trial of Abràmoff et al. (2018).
 
 ## Compute and deployment
 
-| Setting | What the solution needs |
+| Setting | Requirements |
 | --- | --- |
-| Competition | Kaggle notebook inference for 8 models on the hidden test set. |
-| Screening clinic | One model runs on a CPU in under a second per image; a mobile or edge device is feasible after quantisation. |
-| Screening programme | Image-quality gating, detection of other eye disease, local validation, and regulatory approval. |
+| Kaggle | Notebook inference of 8 models on the hidden test set. |
+| Screening clinic | One CNN pass per photograph and model at 384 to 512 pixels. The write-ups do not report inference times. |
+| Screening programme | Detection of ungradable photographs and of other eye diseases, validation at each site, and regulatory approval. |
 
-<Callout kind="deploy" title="The minimum useful version">
-One SE-ResNeXt-50 or EfficientNet-B4 at around 500 pixels, trained as a regressor with smooth L1 on the 2015 and 2019 data combined, with heavy colour and rotation augmentation and thresholds tuned conservatively on held-out data. Add a separate classifier for ungradable images before deployment.
+<Callout kind="deploy" title="Reduced configuration">
+A configuration not evaluated in the write-ups, built from their components: one SE-ResNeXt-50 or EfficientNet-B4 at around 500 pixels, trained as a regressor with smooth L1 loss on the 2015 and 2019 data combined, with colour and rotation augmentation, and thresholds tuned on held-out data with few free parameters. A separate classifier for ungradable photographs is needed before deployment.
 </Callout>
+
+### Considerations for deployment
+
+1. **Domain shift.** Validation on the 2019 data did not predict leaderboard scores for a model trained on the 2015 data. Performance at a new site, with its own cameras and population, has to be measured there.
+2. **Label scales.** The external datasets were graded by different graders, and their labels were adjusted towards the model's own predictions. A deployed model should be validated against grades from the programme that will use it.
+3. **Scope.** The competition asked only for the grade of diabetic retinopathy. Image-quality assessment and detection of other eye disease are required in screening and were not part of the task.
