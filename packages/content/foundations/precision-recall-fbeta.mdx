@@ -2,16 +2,18 @@
 id: precision-recall-fbeta
 title: "Precision, recall, F-beta and average precision"
 kind: math
-summary: "Precision asks how many flagged cases are real; recall asks how many real cases were flagged. F-beta combines them with a chosen emphasis, and average precision summarises the whole precision–recall trade-off."
+summary: "Defines precision, recall and the F-beta score, derives the relative cost of false negatives and false positives implied by beta, and defines the probabilistic F1 score and average precision used in several competitions."
 ---
 
 ### Precision and recall
 
+With $\mathrm{TP}$, $\mathrm{FP}$ and $\mathrm{FN}$ the numbers of true positives, false positives and false negatives,
+
 $$
-P = \frac{TP}{TP+FP}, \qquad R = \frac{TP}{TP+FN}.
+P = \frac{\mathrm{TP}}{\mathrm{TP} + \mathrm{FP}}, \qquad R = \frac{\mathrm{TP}}{\mathrm{TP} + \mathrm{FN}}.
 $$
 
-A screening tool wants high recall (few missed cancers); a tool that triggers surgery wants high precision (few unnecessary operations).
+Precision is the fraction of flagged cases that are positive; recall is the fraction of positive cases that are flagged. A screening test is usually operated at high recall (few missed cancers), and a test that leads to surgery at high precision (few unnecessary operations).
 
 ### The F-beta score
 
@@ -19,33 +21,45 @@ $$
 F_\beta = \frac{(1+\beta^2)\,P\,R}{\beta^2 P + R}.
 $$
 
-$F_1$ is the harmonic mean of $P$ and $R$. Larger $\beta$ favours recall.
+$F_1$ is the harmonic mean of $P$ and $R$. Larger $\beta$ gives more weight to recall. Equivalently, $1/F_\beta$ is a weighted mean of $1/P$ and $1/R$:
 
-<Deep title="What β means" kind="math">
+$$
+\frac{1}{F_\beta} = \frac{1}{1 + \beta^2}\cdot\frac{1}{P} + \frac{\beta^2}{1 + \beta^2}\cdot\frac{1}{R},
+$$
 
-Rewrite $F_\beta$ with counts:
+as can be checked by putting the right-hand side over the common denominator $(1+\beta^2)PR$.
+
+<Deep title="The relative cost of errors implied by β" kind="math">
+
+Substitute $1/P = (\mathrm{TP} + \mathrm{FP})/\mathrm{TP}$ and $1/R = (\mathrm{TP} + \mathrm{FN})/\mathrm{TP}$ into the weighted mean above:
+
+$$
+\frac{1}{F_\beta} = \frac{(\mathrm{TP} + \mathrm{FP}) + \beta^2(\mathrm{TP} + \mathrm{FN})}{(1 + \beta^2)\,\mathrm{TP}}.
+$$
+
+Inverting:
 
 $$
 F_\beta = \frac{(1+\beta^2)\,TP}{(1+\beta^2)\,TP + \beta^2 FN + FP}.
 $$
 
-A false negative costs $\beta^2$ times as much as a false positive. With $\beta=4$ (CZII cryo-ET), missing a particle costs sixteen times as much as a spurious detection, so a good submission predicts generously. With $\beta = 0.5$ (Vesuvius ink detection), a false positive costs four times as much as a missed pixel, because spurious ink blurs letters into illegibility.
+In the denominator a false negative has weight $\beta^2$ and a false positive weight 1, so a false negative costs $\beta^2$ times as much as a false positive. With $\beta = 4$ (CZII cryo-ET), a missed particle costs 16 times as much as a spurious detection, and the optimal submission includes many uncertain detections. With $\beta = 0.5$ (Vesuvius ink detection), a false positive costs 4 times as much as a missed pixel; the organisers chose this weighting because spurious ink makes letters harder to read.
 </Deep>
 
 <Plot series={[{fn: "fbeta-recall", params: {beta: 0.5, precision: 0.6}, label: "β = 0.5"}, {fn: "fbeta-recall", params: {beta: 1, precision: 0.6}, label: "β = 1"}, {fn: "fbeta-recall", params: {beta: 4, precision: 0.6}, label: "β = 4"}]} x={[0, 1]} y={[0, 1]} xLabel="recall (precision fixed at 0.6)" yLabel="F-beta" caption="With precision held at 0.6, F-beta for β = 4 keeps rising with recall almost linearly; for β = 0.5 it saturates near precision." />
 
 ### Probabilistic F1
 
-The RSNA mammography competition used a probabilistic F1 in which a prediction $p$ counts as $p$ of a true positive and $p$ of a false positive: $pTP = \sum_{y=1} p_i$, $pFP = \sum_{y=0} p_i$. Soft predictions on the many negatives accumulate false-positive mass, so binarising predictions at a well-chosen threshold usually scored higher than submitting probabilities. The winner's final choice among thresholds 0.31 and 0.34 moved his private score by 0.02, about the gap between first and fourth place.
+The RSNA mammography competition used a probabilistic F1 score in which a prediction $p_i$ on a positive case counts as $p_i$ true positives and on a negative case as $p_i$ false positives: $\mathrm{pTP} = \sum_{i: y_i = 1} p_i$ and $\mathrm{pFP} = \sum_{i: y_i = 0} p_i$, while the recall denominator is the number of positive cases. Small probabilities on the many negative cases add up to a large false-positive mass, so binarising the predictions at a suitable threshold usually scored higher than submitting probabilities. The winner's choice between thresholds 0.31 and 0.34 changed his private score by 0.02 (the breast cancer report gives the derivation).
 
 ### Average precision
 
-Sweep the threshold, record precision at each recall level, and average:
+Sort the predictions by decreasing confidence. With $P_k$ and $R_k$ the precision and recall of the first $k$ predictions,
 
 $$
 \mathrm{AP} = \sum_k (R_k - R_{k-1})\,P_k ,
 $$
 
-the area under the precision–recall curve. Unlike AUC, AP depends heavily on prevalence and rewards models whose top-ranked predictions are correct. It is the metric of Leash BELKA (per protein and split) and, averaged over time tolerances, of the sleep-state competition. For detection tasks, mean average precision (mAP) averages AP over classes, with a prediction counted as correct only if it overlaps a true object sufficiently.
+which approximates the area under the precision–recall curve. The terms with $R_k > R_{k-1}$ are those where prediction $k$ is a true positive, so AP is the mean of the precision values at the ranks of the true positives. For a random ranking the expected AP is close to the prevalence of positives, whereas the expected AUC is 0.5; AP is dominated by the correctness of the highest-ranked predictions. It is the metric of Leash BELKA (per protein and split) and, averaged over time tolerances, of the sleep-state competition. For detection tasks, mean average precision (mAP) averages AP over classes, with a prediction counted as correct only if it overlaps a true object sufficiently.
 
-A property exploited by several winners: under AP, adding extra low-confidence predictions after all confident ones never lowers the precision at recall levels already reached, so it cannot hurt and may add recall.
+Several winners used the following property: appending predictions with lower confidence than all existing ones does not change any existing term $P_k$, because the order of the earlier predictions is unchanged, and it can only add terms for new true positives. Such predictions therefore cannot lower AP.

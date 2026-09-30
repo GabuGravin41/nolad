@@ -2,30 +2,30 @@
 id: transfer-learning
 title: "Transfer learning, self-supervised pretraining and foundation models"
 kind: ml
-summary: "Starting from weights learned on a large dataset, then fine-tuning on the task, needs far less labelled data than training from scratch. Self-supervised methods learn those starting weights without labels."
+summary: "Describes supervised pretraining and fine-tuning, self-supervised pretraining by masked modelling, self-distillation and prediction of derived quantities, and the use of large pretrained networks as fixed feature extractors, with examples from the reports."
 ---
 
 ### Supervised pretraining
 
-A backbone trained to classify ImageNet photographs has learned filters for edges, textures and shapes. Fine-tuning it on medical images starts from those filters instead of random numbers, converges faster and overfits less. This is standard in almost every image solution here.
+A backbone trained to classify ImageNet photographs has learned filters that respond to edges, textures and shapes. Fine-tuning it on another task starts from these filters instead of random weights, which usually converges faster and overfits less on small datasets. Nearly all image solutions in these reports start from pretrained weights.
 
-When the new task looks nothing like the pretraining data, what transfers is mostly low-level. A pretraining task closer to the target helps more:
+When the target data differ strongly from the pretraining data, mainly the early, low-level filters transfer. Pretraining on a task closer to the target can transfer more:
 
-- The aneurysm winner pretrained his classifier's backbone on **vessel segmentation** in the same scans; removing that pretraining cut his score from 0.902 to 0.794, the largest effect in his ablation.
-- The lumbar spine winner pretrained coordinate models on a community dataset of spine landmarks, which beat ImageNet initialisation.
+- The aneurysm winner initialised the classifier backbone from a model trained for **vessel segmentation** on the same scans; without this initialisation his ablation score fell from 0.902 to 0.794, the largest effect in the ablation.
+- The lumbar spine winner pretrained coordinate models on a public dataset of spine landmarks, which gave better results than ImageNet initialisation.
 
 ### Self-supervised pretraining
 
-Labels are expensive; raw data are not. Self-supervised methods invent a task from the data itself:
+Self-supervised methods construct a training task from unlabelled data, so that large unlabelled collections can be used for pretraining:
 
 - **Masked modelling:** hide parts of the input and predict them. BERT hides 15% of tokens and predicts them from context; the BELKA winner did the same with SMILES strings of molecules.
 - **Self-distillation (DINO, iBOT):** train a network so that its output on one augmented view matches a slowly updated copy's output on another view. Owkin's Phikon, used by the UBC-OCEAN winners, is a ViT-Base trained with iBOT on 40 million tiles from The Cancer Genome Atlas.
-- **Predicting a derived quantity:** the BELKA winner's second pretraining stage predicted each molecule's ECFP fingerprint from its SMILES string, a task hard enough to force the encoder to learn chemical structure.
+- **Predicting a derived quantity:** the BELKA winner's second pretraining stage predicted each molecule's ECFP fingerprint from its SMILES string, which requires the encoder to recover the substructures of the molecular graph from the string.
 
 ### Foundation models as feature extractors
 
-A **foundation model** is a large pretrained network used for many downstream tasks, often frozen. In UBC-OCEAN, every tile of a whole-slide image was passed through Phikon to produce a 768-dimensional embedding, and only a small multiple-instance model was trained on top. In CAFA 5, protein language models (ESM, ProtT5) turned each amino-acid sequence into an embedding for downstream classifiers. Training costs fall from days of GPU time to minutes, and small labelled datasets become usable.
+A **foundation model** is a large pretrained network used for many downstream tasks, often frozen. In UBC-OCEAN, every tile of a whole-slide image was passed through Phikon to produce a 768-dimensional embedding, and only a small multiple-instance model was trained on top. In CAFA 5, protein language models (ESM, ProtT5) turned each amino-acid sequence into an embedding for downstream classifiers. Only the small downstream model is trained, which reduces training time from days of GPU time to minutes and makes small labelled datasets usable.
 
-### Licences travel with weights
+### Licences of pretrained weights
 
-Pretrained weights come with licences. SegFormer's weights, Phikon's weights and some ESM models restrict commercial use. A model fine-tuned from them inherits the restriction, which is recorded on the relevant deployability cards.
+Pretrained weights are distributed under licences. The weights of SegFormer, Phikon and some ESM models restrict commercial use, and a model fine-tuned from them is subject to the same restriction. The deployability card of each report records these licences.

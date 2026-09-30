@@ -2,7 +2,7 @@
 id: gradient-descent-backprop
 title: "Gradient descent and backpropagation"
 kind: math
-summary: "Training moves every parameter a small step against the slope of the loss. Backpropagation is the chain rule applied in reverse order to compute all those slopes at once."
+summary: "Derives the gradient descent update from a first-order Taylor expansion, describes stochastic mini-batch gradients, and derives backpropagation as the chain rule applied in reverse, with a worked example for a sigmoid unit with binary cross-entropy."
 ---
 
 ### The gradient
@@ -13,7 +13,7 @@ $$
 \nabla_\theta L = \left(\frac{\partial L}{\partial \theta_1}, \dots, \frac{\partial L}{\partial \theta_P}\right).
 $$
 
-Each component says how fast the loss changes when that one parameter is nudged. By Taylor's theorem, for a small step $\Delta\theta$,
+Each component is the rate of change of the loss when that parameter alone is changed. By Taylor's theorem, for a small step $\Delta\theta$,
 
 $$
 L(\theta + \Delta\theta) \approx L(\theta) + \nabla_\theta L \cdot \Delta\theta .
@@ -25,7 +25,7 @@ $$
 \theta_{t+1} = \theta_t - \eta \, \nabla_\theta L(\theta_t),
 $$
 
-with **learning rate** $\eta > 0$. Too large an $\eta$ overshoots and diverges; too small an $\eta$ makes no progress.
+with **learning rate** $\eta > 0$. For the quadratic $L(\theta) = \tfrac{a}{2}\theta^2$ with $a > 0$, the update is $\theta_{t+1} = \theta_t - \eta a\,\theta_t = (1 - \eta a)\,\theta_t$. It converges to the minimum at 0 if $|1 - \eta a| < 1$, that is $0 < \eta < 2/a$, and diverges for $\eta > 2/a$; very small $\eta$ converges slowly.
 
 ### Stochastic gradients
 
@@ -35,7 +35,7 @@ $$
 g_t = \frac{1}{b}\sum_{i \in B} \nabla_\theta \, \ell\big(f_\theta(x_i), y_i\big).
 $$
 
-Because the batch is sampled at random, $\mathbb{E}[g_t]$ equals the full gradient: the estimate is unbiased. Its variance shrinks as $1/b$. One pass through the whole training set is an **epoch**.
+Because the batch is sampled uniformly at random, $\mathbb{E}[g_t]$ equals the full gradient: the estimate is unbiased. If the per-example gradients have covariance $\Sigma$ and the batch is sampled with replacement, the covariance of $g_t$ is $\Sigma/b$, so the noise decreases as $1/b$. One pass through the whole training set is an **epoch**.
 
 ### Backpropagation
 
@@ -91,9 +91,9 @@ $$
 \nabla_w L = (p-y)\,x, \qquad \frac{\partial L}{\partial b} = p - y .
 $$
 
-The error signal is simply the prediction minus the label. A confident wrong prediction ($p$ near 1 when $y=0$) produces the largest correction.
+The error signal with respect to $z$ is the prediction minus the label. For $y = 0$, it ranges from 0 for $p$ near 0 to nearly 1 for a confident wrong prediction with $p$ near 1.
 </Deep>
 
 ### Vanishing and exploding gradients
 
-The backward pass multiplies many Jacobians. If their typical size is below one, gradients shrink exponentially with depth; above one, they explode. Residual connections, normalisation layers, careful initialisation and activations such as ReLU exist largely to keep this product near one, which is why networks with hundreds of layers can be trained.
+The backward pass multiplies many Jacobians. If their typical size is below one, gradients shrink exponentially with depth; above one, they explode. Residual connections, normalisation layers, scaled initialisation and activations such as ReLU keep the magnitude of this product closer to one, which allows networks with hundreds of layers to be trained.

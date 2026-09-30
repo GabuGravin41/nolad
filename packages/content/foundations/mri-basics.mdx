@@ -2,7 +2,7 @@
 id: mri-basics
 title: "MRI sequences and what they show"
 kind: domain
-summary: "MRI images the behaviour of hydrogen nuclei in a magnetic field. Different pulse sequences weight the signal by different tissue properties, so the same anatomy looks different in T1, T2 and other series."
+summary: "Describes how MRI signal arises from hydrogen nuclei in a magnetic field, how the repetition and echo times of a pulse sequence weight the image by T1 or T2 relaxation, the appearance of tissues in common sequences, and the practical consequences for machine learning."
 ---
 
 ### The signal
@@ -12,7 +12,15 @@ Hydrogen nuclei (mostly in water and fat) align with a strong magnetic field. A 
 - **T1**, the recovery of alignment along the field, is short in fat and long in water.
 - **T2**, the decay of the transverse signal, is long in water and fluid and shorter in most solid tissue.
 
-A pulse sequence chooses timing parameters (repetition time TR, echo time TE) that make the image intensity depend mostly on one of these.
+A pulse sequence sets timing parameters, the repetition time $\mathrm{TR}$ and the echo time $\mathrm{TE}$, that make the image intensity depend mainly on one of these. For a spin-echo sequence the signal of a tissue is approximately
+
+$$
+S \approx \rho\,\big(1 - e^{-\mathrm{TR}/T_1}\big)\,e^{-\mathrm{TE}/T_2},
+$$
+
+where $\rho$ is the proton density. A short $\mathrm{TR}$ and short $\mathrm{TE}$ make the first factor differ strongly between tissues and the second close to 1 (T1 weighting); a long $\mathrm{TR}$ and long $\mathrm{TE}$ make the first factor close to 1 and the second differ (T2 weighting).
+
+**Example.** With $\mathrm{TR} = 500$ ms and $\mathrm{TE} = 15$ ms, and approximate values at 1.5 T of $T_1 = 250$ ms, $T_2 = 80$ ms for fat and $T_1 = 3000$ ms, $T_2 = 2000$ ms for cerebrospinal fluid (CSF), the first factor is $1 - e^{-2} \approx 0.86$ for fat and $1 - e^{-1/6} \approx 0.15$ for CSF, while the second is $e^{-15/80} \approx 0.83$ and $e^{-15/2000} \approx 0.99$. Fat is therefore much brighter than CSF (T1 weighting). With $\mathrm{TR} = 4000$ ms and $\mathrm{TE} = 100$ ms, the first factors become about 1.0 and 0.74, and the second $e^{-100/80} \approx 0.29$ and $e^{-100/2000} \approx 0.95$: CSF is now brighter than fat (T2 weighting).
 
 | Sequence | Bright | Dark | Typical use in these reports |
 | --- | --- | --- | --- |
@@ -22,12 +30,12 @@ A pulse sequence chooses timing parameters (repetition time TR, echo time TE) th
 | T1 post-contrast | enhancing tissue, vessels | — | aneurysm detection |
 | MR angiography (time of flight) | flowing blood | static tissue | aneurysm detection |
 
-Unlike CT, MRI intensities have no absolute scale. The same tissue can have different values on different scanners, or in different parts of one image. Solutions therefore normalise each volume (for example to zero mean and unit variance, or to the 0–1 range) rather than use fixed windows.
+MRI intensities have no absolute scale, unlike CT values in Hounsfield units. The same tissue can have different values on different scanners and in different parts of one image. Solutions therefore normalise each volume, for example to zero mean and unit variance or to the range 0–1, instead of applying fixed windows.
 
 ### Planes and series
 
-Studies contain several series acquired in different planes: **sagittal** (side view, splitting left from right), **axial** (horizontal slices) and **coronal** (front view). In the lumbar spine competition, canal stenosis is best seen on sagittal T2, foraminal narrowing on sagittal T1, and subarticular stenosis on axial T2. A model must know which slice of which series to look at, which is why the winners built dedicated localisation stages.
+Studies contain several series acquired in different planes: **sagittal** (side view, splitting left from right), **axial** (horizontal slices) and **coronal** (front view). In the lumbar spine competition, canal stenosis is best seen on sagittal T2, foraminal narrowing on sagittal T1, and subarticular stenosis on axial T2. The winners built separate localisation stages to find the relevant slices and positions in each series.
 
 ### Practical difficulties
 
-Slice spacing, orientation and field of view vary between scanners; some series are stored as multi-frame DICOM files; slices can be missing. The aneurysm finalists spent much of their effort making every test series load correctly, and the winner's pipeline fell back to average predictions whenever a series could not be processed.
+Slice spacing, orientation and field of view vary between scanners; some series are stored as multi-frame DICOM files; slices can be missing. The top aneurysm solutions included extensive preprocessing to load every test series, and the winning pipeline returned average predictions for any series it could not process.

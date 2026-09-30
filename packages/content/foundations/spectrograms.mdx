@@ -2,7 +2,7 @@
 id: spectrograms
 title: "Spectrograms, mel scales and wavelets"
 kind: math
-summary: "A spectrogram shows how the frequency content of a signal changes over time. It turns audio or EEG into an image that convolutional networks can read."
+summary: "Derives the short-time Fourier transform and the resulting spectrogram, the trade-off between time and frequency resolution, the mel scale and mel spectrograms, and wavelet and superlet scalograms, as used to turn audio and EEG into inputs for convolutional networks."
 ---
 
 ### The short-time Fourier transform
@@ -13,11 +13,11 @@ $$
 X[m, k] = \sum_{n=0}^{N-1} x[n + mH]\,w[n]\,e^{-2\pi i kn/N}.
 $$
 
-$m$ indexes time frames and $k$ frequency bins, with bin $k$ at frequency $k f_s/N$. The **power spectrogram** is $|X[m,k]|^2$. Taking a logarithm (decibels) compresses its range to something closer to perception and easier for networks.
+$m$ indexes time frames and $k$ frequency bins, with bin $k$ at frequency $k f_s/N$. The **power spectrogram** is $|X[m,k]|^2$. It is usually converted to decibels, $10\log_{10}\big(|X[m,k]|^2 + \epsilon\big)$, which compresses its range of several orders of magnitude.
 
 ### Time–frequency trade-off
 
-A long frame resolves nearby frequencies but blurs when they occur; a short frame localises events in time but smears frequency. Frequency resolution is $f_s/N$ and time resolution is about $N/f_s$; their product is fixed. This limitation is why the HMS winners moved from STFT to wavelets and superlets.
+A long frame separates nearby frequencies but spreads events over its duration; a short frame localises events in time but merges nearby frequencies. The bin spacing is $\Delta f = f_s/N$ and the frame duration $\Delta t = N/f_s$, so $\Delta f \cdot \Delta t = 1$ for every choice of $N$. For audio at $f_s = 32$ kHz with $N = 1024$, $\Delta f = 31.25$ Hz and $\Delta t = 32$ ms. For EEG at $f_s = 200$ Hz, resolving 0.5 Hz requires $N = 400$ samples, a frame of 2 s. Members of the winning HMS team replaced the STFT with wavelet and superlet transforms, which vary the frame length with frequency.
 
 ### The mel scale
 
@@ -27,12 +27,12 @@ $$
 m = 2595\,\log_{10}\!\left(1 + \frac{f}{700}\right)
 $$
 
-is approximately linear below 1 kHz and logarithmic above. A **mel spectrogram** sums the power spectrum through triangular filters spaced evenly in mels, producing, for example, 128 bands. The BirdCLEF 2024 winners used $n_{\text{fft}}=1024$, hop 500, 128 mel bands between 40 Hz and 15 kHz at 32 kHz sampling, so a 10-second clip became a $128\times640$ image.
+is approximately linear below 1 kHz and logarithmic above; $f = 1000$ Hz maps to $m = 2595\log_{10}(1 + 1000/700) \approx 1000$ mels. A **mel spectrogram** sums the power spectrum through triangular filters spaced evenly in mels, producing, for example, 128 bands. The BirdCLEF 2024 winners used $N = 1024$, hop $H = 500$ and 128 mel bands between 40 Hz and 15 kHz at 32 kHz sampling. A 10-second clip has $320\,000$ samples and therefore $320\,000 / 500 = 640$ frames, giving a $128 \times 640$ image.
 
 ### Wavelets and superlets
 
-A **continuous wavelet transform** correlates the signal with scaled copies of a short oscillating wavelet. Scales that match low frequencies use long wavelets (good frequency resolution); scales for high frequencies use short ones (good time resolution). The resulting **scalogram** adapts its resolution to frequency, which suits EEG, where slow rhythmic delta activity and sharp spikes carry different information. **Superlets** (Moca et al., 2021) combine several wavelets of increasing cycle count at each frequency to sharpen resolution further; one HMS team member found them clearly better than STFT.
+A **continuous wavelet transform** correlates the signal with scaled copies of a short oscillating wavelet. Scales that match low frequencies use long wavelets (good frequency resolution); scales for high frequencies use short ones (good time resolution). The resulting **scalogram** has a resolution that varies with frequency, which suits EEG, in which slow delta rhythms and brief spikes both carry information. **Superlets** (Moca et al., 2021) combine several wavelets with increasing numbers of cycles at each frequency by a geometric mean; one member of the winning HMS team found them better than the STFT (the HMS report gives the equations).
 
 ### From spectrogram to CNN input
 
-A spectrogram is a single-channel image with time on one axis and frequency on the other. It is resized, normalised, sometimes stacked with other channels, and given to an ImageNet-pretrained CNN. Augmentations are adapted: **XY-masking** (SpecAugment) blanks random time columns and frequency rows; horizontal CutMix splices two clips in time.
+A spectrogram is a single-channel image with time on one axis and frequency on the other. It is resized, normalised, sometimes stacked with other channels, and passed to an ImageNet-pretrained CNN. Augmentations are adapted to this format: **XY-masking** (SpecAugment) sets random time columns and frequency rows to zero, and horizontal CutMix joins two clips in time.

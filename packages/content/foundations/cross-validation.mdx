@@ -2,28 +2,34 @@
 id: cross-validation
 title: "Cross-validation, leakage and the public leaderboard"
 kind: ml
-summary: "Validation estimates how a model will do on data it has not seen. It only works if the validation data are as different from the training data as real new cases will be, which usually means splitting by patient or subject."
+summary: "Describes K-fold cross-validation and out-of-fold predictions, grouped and stratified splits, the handling of duplicates, and the statistical noise of small public leaderboards, with the measures the winning solutions used against overfitting to validation data."
 ---
 
 ### K-fold cross-validation
 
-Split the training data into $K$ folds (commonly 4 or 5). Train on $K-1$ folds, evaluate on the remaining one, and rotate. Every example receives exactly one **out-of-fold (OOF)** prediction from a model that never saw it. The mean OOF score estimates generalisation, and the OOF predictions themselves can train second-stage models (stacking), tune thresholds, or flag noisy labels.
+The training data are split into $K$ disjoint folds $F_1, \dots, F_K$ (commonly $K = 4$ or 5). For each $k$, a model $f^{(-k)}$ is trained on all folds except $F_k$ and evaluated on $F_k$. Every example $i$ then has exactly one **out-of-fold (OOF)** prediction,
+
+$$
+\hat y_i^{\mathrm{OOF}} = f^{(-k(i))}(x_i),
+$$
+
+where $k(i)$ is the fold containing $i$, from a model that did not see it during training. The metric computed on all OOF predictions estimates performance on new data. The OOF predictions are also used to train second-stage models (stacking), to choose thresholds and to detect label errors.
 
 ### Grouped splits
 
-If a patient contributes several images, placing some in training and others in validation lets the model recognise the patient rather than the disease. Validation scores become optimistic and useless for model selection. Every medical solution in these reports splits by patient (`GroupKFold`), and the same logic applies elsewhere: by signer for sign language, by experiment for tomograms, by building block for chemistry, by sequence cluster for RNA.
+If a patient contributes several images and some of them fall in the training folds and others in the validation fold, the model can score well by recognising the patient instead of the disease. The validation score then overestimates performance on new patients and becomes unreliable for choosing between models. The medical solutions in these reports split by patient (`GroupKFold`); other domains use the corresponding unit: signer for sign language, experiment for tomograms, building block for chemistry, sequence cluster for RNA.
 
 **Stratification** additionally keeps the class balance equal across folds, which matters when positives are rare. The "triple stratified leak-free" folds used in both ISIC competitions group by patient and stratify by both the target and the number of images per patient.
 
 ### Duplicates
 
-Datasets assembled from several sources contain near-duplicates. PANDA solutions used perceptual image hashes to find duplicate biopsies and forced each duplicate group into one fold; the winners noted their label-denoising method would fail otherwise, because a duplicate in another fold would confirm its own wrong label.
+Datasets assembled from several sources contain near-duplicates. PANDA solutions used perceptual image hashes to find duplicate biopsies and kept each group of duplicates within one fold. The winners note that their label-denoising method depends on this: if a duplicate were in a training fold, the out-of-fold prediction for its copy would reproduce the copy's label, including a wrong one.
 
 ### The public leaderboard
 
-Kaggle scores submissions on a public subset of the test set during the competition and on a private subset at the end. When the public subset is small, choosing models by public score overfits it. Signs of trouble in these reports:
+Kaggle scores submissions on a public subset of the test set during the competition and on a private subset at the end. When the public subset is small, its score is noisy, and choosing models by it selects models that fit its noise. For a metric that averages $n$ independent per-example scores with standard deviation $\sigma$, the standard error of the average is $\sigma/\sqrt{n}$. For an accuracy of 0.65 on $n = 50$ problems, $\sigma = \sqrt{0.65 \times 0.35} \approx 0.48$ and the standard error is $0.48/\sqrt{50} \approx 0.067$, about 3.4 problems. Examples in these reports:
 
 - **Tiny test sets:** 50 problems in AIMO, about 500 slides in each PANDA split, around 10,000 skin lesions with a few dozen melanomas in SIIM-ISIC 2020.
-- **Large shake-ups:** teams that tuned to the public leaderboard drop hundreds of places.
+- **Large changes between public and private rankings**, in which teams that selected models by public score dropped many places.
 
-Winners' defences: trust cross-validation when it is stable; evaluate models in pairs of seeds; restrict how many settings are tried on the leaderboard; use paired statistical tests across repeated CV runs (the ISIC 2024 winner accepted a change only if a paired t-test over 10 seeds supported it); and zero out test rows that duplicate training data before comparing submissions (Ribonanza).
+Measures used by the winners: relying on cross-validation when it is stable; comparing models over pairs of seeds; limiting the number of settings evaluated on the leaderboard; paired statistical tests over repeated cross-validation (the ISIC 2024 winner accepted a change only if a paired t-test over 10 repetitions supported it); and setting predictions for test rows that duplicate training data to zero before comparing submissions (Ribonanza).
