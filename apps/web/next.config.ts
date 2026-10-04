@@ -11,6 +11,7 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.join(__dirname, "../.."),
   },
+  staticPageGenerationTimeout: 300,
 };
 
 export default nextConfig;

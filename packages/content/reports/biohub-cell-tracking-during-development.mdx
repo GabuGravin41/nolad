@@ -1,0 +1,359 @@
+---
+slug: biohub-cell-tracking-during-development
+title: "Biohub Cell Tracking During Development (2026)"
+shortTitle: Biohub Cell Tracking During Development
+kaggleSlug: biohub-cell-tracking-during-development
+kaggleUrl: https://www.kaggle.com/competitions/biohub-cell-tracking-during-development
+year: 2026
+dates: { start: "2026-06-29", end: "2026-09-29" }
+host: Chan Zuckerberg Biohub San Francisco
+domain: life-sciences
+dataTypes: [volumes, video]
+taskTypes: [detection, retrieval-matching]
+field: Cellular and developmental biology
+modality: [Light-sheet fluorescence microscopy]
+tasks: [cell detection, cell tracking, division detection, lineage reconstruction]
+techniques:
+  - point-detection
+  - 3d-volumes
+  - unet
+  - transformers
+  - pseudo-labelling
+  - self-supervised-pretraining
+  - ensembling
+  - threshold-tuning
+  - grouped-cv
+metric:
+  name: Composite Adjusted Edge Jaccard and Division Jaccard
+  summary: "The score is the sum of an adjusted edge Jaccard index (measuring tracking link accuracy and penalised for deviation from the estimated true node count) and 0.1 times a division Jaccard index evaluating mitotic parent-to-daughter branching events."
+constraints: { runtime: "9 h for hidden test volumes", hardware: "Kaggle GPU notebook (2 × T4)", internet: false }
+summary: "The competition challenged participants to detect, track, and reconstruct cell lineages across 3D time-lapse microscopy of developing zebrafish embryos under sparse annotations (~2.8% of cell lineages). The winning solution by Sergio Alvarez uses a tracking-by-detection framework: a vanilla 3D U-Net with a Cellpose-style flow head identifies cell centres, a compact CNN-transformer ('Soon Net') predicts cell division state and displacement across three-frame 3D crops, and a LightGlue-inspired transformer scores candidate links between consecutive frames. Greedy decoding turns edge affinities into a lineage graph within the 9-hour notebook limit."
+winningIdea: "Instead of relying on global integer linear programming over handcrafted distance thresholds, the solution pairs a high-precision 3D U-Net detector (pretrained with a 3D masked autoencoder and Cellpose flow fields) with a learned neural linker. A dedicated 'Soon Net' inspects three-frame subvolumes to anticipate mitotic divisions, and a LightGlue-style transformer scores candidate temporal edges using appearance, motion, and division features."
+solutions:
+  - rank: 1
+    team: Sergio Alvarez
+    members: [{ name: "Sergio Alvarez", handle: "salvarez" }]
+    writeup: https://www.kaggle.com/competitions/biohub-cell-tracking-during-development/discussion/536100
+    code: []
+    note: "Solo gold medal. Detailed write-up published on Kaggle discussions: 'Tracking-by-detection with a per-cell visual tracker'."
+  - rank: 2
+    team: Soheil Ayati
+    members: [{ name: "Soheil Ayati", handle: "soheilayati" }]
+    writeup: https://www.kaggle.com/competitions/biohub-cell-tracking-during-development/discussion
+    code: []
+  - rank: 3
+    team: yu4u
+    members: [{ name: "yu4u", handle: "yu4u" }]
+    writeup: https://www.kaggle.com/competitions/biohub-cell-tracking-during-development/discussion
+    code: []
+    note: "Employed 2.5D and 3D SegResNet detection, 3D optical flow, and global graph optimization."
+deployability:
+  score: 4
+  verdict: "The pipeline relies on small 3D patches and modular networks (detection U-Net, Soon Net, and LightGlue matcher) with greedy decoding that executes comfortably on standard laboratory GPUs without commercial solvers."
+  inference: "Processes 3D time-lapse volumes within the 9-hour limit on two T4 GPUs, taking roughly 15 to 25 minutes per developmental recording."
+  models: "3D U-Net with Cellpose vector flow head, Soon Net (compact 3D CNN + Transformer), and LightGlue-style edge scoring Transformer."
+  training: "Pretraining with a 3D Masked Autoencoder on unlabeled volumes, followed by supervised fine-tuning on annotated nodes and one round of pseudo-label retraining on unannotated cells."
+  externalData: "None used by top teams. The competition provided all required 3D Zarr recordings."
+  licences:
+    code: "Open source."
+    data: "Chan Zuckerberg Biohub San Francisco research dataset."
+    weights: "Competition models released via Kaggle models and datasets."
+  risks:
+    - "Ground truth in the competition was sparse (~2.8% of cells annotated); while pseudo-labelling recovers unlabeled cells, deployment to different microscope setups or fluorescent markers requires fine-tuning on the new optical point spread function."
+    - "The 0.1 weight on division Jaccard prioritises track continuity over branch precision; applications focused strictly on lineage differentiation must tune the division threshold separately."
+related:
+  - czii-cryo-et-object-identification
+  - child-mind-institute-detect-sleep-states
+papers:
+  - { label: "Bragantini et al. (2024). Large-scale cell tracking in developmental biology with Ultrack.", url: "https://doi.org/10.1101/2023.08.18.553920" }
+  - { label: "Stringer et al. (2021). Cellpose: a generalist algorithm for cellular segmentation. Nature Methods.", url: "https://doi.org/10.1038/s41592-020-01018-x" }
+  - { label: "Lindenberger et al. (2023). LightGlue: Local Feature Matching at Light Speed. ICCV.", url: "https://arxiv.org/abs/2306.13645" }
+dataLinks:
+  - { label: "Biohub - Cell Tracking During Development (Kaggle)", url: "https://www.kaggle.com/competitions/biohub-cell-tracking-during-development/data" }
+priority: 7
+status: complete
+updated: "2026-10-04"
+---
+
+## Scientific background
+
+In developmental biology, understanding how a fertilised egg transforms into a complex organism requires tracking every cell as it divides, moves and differentiates. The zebrafish (*Danio rerio*) is a primary vertebrate model for this study: its embryos develop externally and are optically transparent, allowing optical microscopes to capture whole-embryo cell dynamics in vivo.
+
+<Deep title="Light-sheet microscopy and volumetric embryogenesis" kind="domain">
+
+1. **Light-sheet illumination.** Conventional confocal microscopes illuminate the entire specimen along the optical axis, causing rapid photobleaching and phototoxicity. Light-sheet fluorescence microscopy (LSFM) illuminates only a thin plane (typically 1–3 µm) perpendicular to the detection objective. By stepping the light sheet through the sample, an entire 3D volume is recorded with minimal light exposure.
+2. **Volumetric time-lapse ($4\text{D}$).** Repeating the 3D scan every minute over 12 to 24 hours produces a 4D array $(T, Z, Y, X)$ of hundreds of gigabytes. Each frame captures thousands of fluorescently labelled cell nuclei.
+3. **Mitosis and lineage trees.** Cells continuously undergo mitosis: a single parent cell divides into two daughter cells. Reconstructing these relationships over time yields a directed temporal tree—the cell lineage graph.
+4. **The annotation bottleneck.** A single embryonic volume contains $10^3$ to $10^5$ cells. Manually tracking even a hundred cells across hundreds of timepoints requires tens of hours of manual curation. Automating this reconstruction is the core goal of the Chan Zuckerberg Biohub challenge.
+</Deep>
+
+Cell tracking in dense tissues poses three physical difficulties:
+- **Crowding and deformation:** Nuclei crowd closely together, deform, and undergo sudden spatial shifts during tissue folding.
+- **Signal-to-noise attenuation:** Fluorescence signal decays with depth in thick tissue due to light scattering and absorption.
+- **Sparse annotation:** Because dense manual tracking is impossible, ground-truth annotations cover only a tiny fraction of the lineages present in the data.
+
+## Data
+
+The competition dataset consisted of time-lapse 3D volumes of zebrafish embryogenesis provided by the Royer Group at the Chan Zuckerberg Biohub San Francisco.
+
+Each recording was stored as an OME-Zarr array with spatial coordinates $(Z, Y, X)$ across discrete time steps $T$:
+
+| Dimension | Description |
+| --- | --- |
+| $T$ | Time points (roughly 100 frames per video sequence) |
+| $Z$ | Axial slices (typically 60 to 120 planes per volume) |
+| $Y, X$ | Lateral field of view (typically $512 \times 512$ to $1024 \times 1024$ voxels) |
+| Voxel size | Anisotropic, with axial resolution lower than lateral resolution |
+
+### Ground-truth sparsity
+
+The ground truth provided by human curators covered only about **2.8%** of all cells in the embryo. The remaining ~97.2% of cells were unlabelled.
+
+Submissions represented the lineage graph in two CSV tables:
+1. **Nodes table:** Detections with coordinates: `dataset`, `node_id`, `t`, `z`, `y`, `x`.
+2. **Edges table:** Directed temporal links: `dataset`, `source_id`, `target_id`.
+
+A node at time $t$ can have:
+- At most 1 incoming edge from time $t-1$ (a cell cannot have two distinct biological origins).
+- At most 2 outgoing edges to time $t+1$ (either a single continuity edge, or 2 division edges indicating mitosis).
+
+<Foundation id="convolution" />
+
+## Evaluation metric
+
+The evaluation metric scores both cell continuity (tracking links) and mitotic events (divisions), while accounting for the extreme sparsity of the annotations.
+
+The final competition score is:
+
+$$
+\text{Score} = J_{\mathrm{adj}} + 0.1 \times J_{\mathrm{div}}
+$$
+
+where $J_{\mathrm{adj}}$ is the **Adjusted Edge Jaccard** index and $J_{\mathrm{div}}$ is the **Division Jaccard** index.
+
+### Adjusted Edge Jaccard ($J_{\mathrm{adj}}$)
+
+Let $\mathcal{E}_{\mathrm{gt}}$ be the set of annotated ground-truth edges and $\mathcal{E}_{\mathrm{pred}}$ the set of predicted edges. An edge is formed by a pair of nodes $(u, v)$ with $t_v = t_u + 1$. A predicted edge is matched to a ground-truth edge if both the source and target spatial locations fall within an acceptance distance tolerance $\delta$:
+
+$$
+J_{\mathrm{edge}} = \frac{|\mathcal{E}_{\mathrm{pred}} \cap \mathcal{E}_{\mathrm{gt}}|}{|\mathcal{E}_{\mathrm{pred}} \cup \mathcal{E}_{\mathrm{gt}}|} = \frac{\mathrm{TP}_{\mathrm{edge}}}{\mathrm{TP}_{\mathrm{edge}} + \mathrm{FP}_{\mathrm{edge}} + \mathrm{FN}_{\mathrm{edge}}}
+$$
+
+Because ground truth is sparse, evaluating $J_{\mathrm{edge}}$ only on annotated subgraphs could allow degenerate strategies (such as hallucinating millions of dense edges or pruning everything outside known tracks). To ensure global balance, the organisers introduced a graph-size penalty:
+
+$$
+J_{\mathrm{adj}} = \max\left(0,\, J_{\mathrm{edge}} \times \left(1 - 0.1 \times \frac{|N_{\mathrm{pred}} - N_{\mathrm{est}}|}{N_{\mathrm{est}}}\right)\right)
+$$
+
+where:
+- $N_{\mathrm{pred}}$ is the total number of predicted nodes in the submission.
+- $N_{\mathrm{est}}$ is the organisers' estimated true number of cells in the entire volume.
+
+If a model predicts 50% more or fewer nodes than $N_{\mathrm{est}}$, the factor is $1 - 0.1 \times 0.5 = 0.95$, shrinking the edge Jaccard by 5%.
+
+### Division Jaccard ($J_{\mathrm{div}}$)
+
+A cell division event occurs when a parent node $p$ at frame $t$ connects to two distinct daughter nodes $d_1, d_2$ at frame $t+1$:
+
+$$
+\text{Division: } (p, d_1) \in \mathcal{E} \quad \text{and} \quad (p, d_2) \in \mathcal{E}, \quad d_1 \neq d_2
+$$
+
+A predicted division is a true positive $\mathrm{TP}_{\mathrm{div}}$ if parent $p$ and both daughters $d_1, d_2$ match the corresponding ground-truth parent and daughters within spatial tolerance. Unmatched predicted divisions are $\mathrm{FP}_{\mathrm{div}}$, and missed ground-truth divisions are $\mathrm{FN}_{\mathrm{div}}$:
+
+$$
+J_{\mathrm{div}} = \frac{\mathrm{TP}_{\mathrm{div}}}{\mathrm{TP}_{\mathrm{div}} + \mathrm{FP}_{\mathrm{div}} + \mathrm{FN}_{\mathrm{div}}}
+$$
+
+The division term carries weight $0.1$, contributing up to 0.10 to the total score of approximately 1.10.
+
+<Deep title="Graph matching under sparse ground truth" kind="math">
+
+Consider a movie with $N_{\mathrm{est}} = 10{,}000$ estimated nodes, where human annotators tracked 280 nodes forming 270 true edges ($\mathcal{E}_{\mathrm{gt}}$) and 20 true divisions.
+
+**Submission 1 (Precise but incomplete):**
+The model outputs only the high-confidence subgraph: 260 true edges, 10 false edges, 18 true divisions, 2 false divisions, and $N_{\mathrm{pred}} = 5{,}000$ nodes.
+- $\mathrm{TP}_{\mathrm{edge}} = 260$, $\mathrm{FP}_{\mathrm{edge}} = 10$, $\mathrm{FN}_{\mathrm{edge}} = 10$.
+- $J_{\mathrm{edge}} = \frac{260}{260 + 10 + 10} = \frac{260}{280} \approx 0.9286$.
+- Size deviation: $\frac{|5{,}000 - 10{,}000|}{10{,}000} = 0.50$.
+- $J_{\mathrm{adj}} = 0.9286 \times (1 - 0.1 \times 0.50) = 0.9286 \times 0.95 = 0.8822$.
+- $J_{\mathrm{div}} = \frac{18}{18 + 2 + 2} = \frac{18}{22} \approx 0.8182$.
+- $\text{Score} = 0.8822 + 0.1 \times 0.8182 = 0.9640$.
+
+**Submission 2 (Calibrated full volume):**
+The model predicts cells across the full volume using pseudo-labels, detecting $N_{\mathrm{pred}} = 9{,}800$ nodes, with 265 true edges and 12 false edges in the annotated regions, plus 18 true divisions and 3 false divisions:
+- $J_{\mathrm{edge}} = \frac{265}{265 + 12 + 5} = \frac{265}{282} \approx 0.9397$.
+- Size deviation: $\frac{|9{,}800 - 10{,}000|}{10{,}000} = 0.02$.
+- $J_{\mathrm{adj}} = 0.9397 \times (1 - 0.1 \times 0.02) = 0.9397 \times 0.998 = 0.9378$.
+- $J_{\mathrm{div}} = \frac{18}{18 + 3 + 2} = \frac{18}{23} \approx 0.7826$.
+- $\text{Score} = 0.9378 + 0.1 \times 0.7826 = 1.0161$.
+
+Calibration to the estimated global density $N_{\mathrm{est}}$ is necessary to avoid losing up to $0.05$ points on the node adjustment factor.
+</Deep>
+
+<Foundation id="precision-recall-fbeta" />
+
+## Winning solution
+
+Sergio Alvarez took first place with a solo score of **0.97759**. The pipeline uses a tracking-by-detection framework in four stages:
+
+<Pipeline steps={[
+  {tag: "Stage 1", title: "3D U-Net detection", detail: "Cellpose-style vector flow head + foreground probability, 3D MAE pretraining"},
+  {tag: "Stage 2", title: "Soon Net (division & motion)", detail: "3-frame 3D bounding crops, compact CNN + Transformer predicting mitotic state"},
+  {tag: "Stage 3", title: "Learned Linker", detail: "LightGlue-inspired Transformer scoring candidate edges between frames t and t+1"},
+  {tag: "Stage 4", title: "Greedy graph decoding", detail: "Enforcing max 1 incoming edge and at most 2 outgoing edges"}
+]} caption="Sergio Alvarez's first-place tracking-by-detection pipeline." />
+
+<Foundation id="models-and-loss" />
+
+### Stage 1: 3D U-Net Detection
+
+Rather than regressing 3D bounding boxes, the detector follows the **Cellpose** formulation (Stringer et al., 2021) extended to 3D.
+
+**Architecture.** A vanilla 3D U-Net processes overlapping $Z \times Y \times X$ subvolume crops. The network outputs two heads:
+1. **Foreground probability map:** $p(\mathbf{x}) \in [0, 1]$ indicating whether voxel $\mathbf{x} = (z, y, x)$ belongs to a cell nucleus.
+2. **3D Flow field:** $\mathbf{v}(\mathbf{x}) = (v_z, v_y, v_x) \in \mathbb{R}^3$, a unit-length vector field pointing from each voxel toward the centroid of its enclosing nucleus.
+
+<Foundation id="unet" />
+
+**Pretraining and supervision.**
+- **Self-supervised 3D MAE:** A lightweight 3D Masked Autoencoder was trained on unlabelled 3D volume patches to learn spatial image representations under variable fluorescence attenuation.
+- **Ground-truth stamps:** Supervised fine-tuning used spheres of radius $4.305\ \mu\text{m}$ placed at each annotated ground-truth coordinate.
+- **Pseudo-labelling:** After training on the 2.8% annotated nodes, the detector predicted cell positions across unlabelled regions. High-confidence detections were converted into pseudo-labelled stamps, and the U-Net was retrained.
+
+<Foundation id="pseudo-labelling" />
+
+**Centre extraction.** Centroids are identified by tracing voxels along the flow field:
+
+$$
+\mathbf{x}_{k+1} = \mathbf{x}_k + \eta\,\mathbf{v}(\mathbf{x}_k)
+$$
+
+Voxels converge at local topological sinks corresponding to cell centres. Points with foreground probability $p(\mathbf{x}) > \tau_{\mathrm{fg}}$ form the candidate node set $\mathcal{V}_t = \{\mathbf{c}_i\}_{i=1}^{M_t}$ at each time step $t$.
+
+### Stage 2: Soon Net (Division & Motion Prediction)
+
+Tracking cells through mitosis fails when relying solely on frame-to-frame proximity: during late anaphase and telophase, two daughter cells separate rapidly from the parent location, while the parent nucleus disappears.
+
+Alvarez introduced a specialised model named **Soon Net**:
+- For every candidate centre $\mathbf{c}_i$ at frame $t$, a 3D crop of size $(D_z, D_y, D_x)$ is extracted across three consecutive frames: $t-1$, $t$, and $t+1$.
+- A compact 3D CNN extracts spatial feature maps from each crop, which are flattened into temporal tokens and processed by a small Transformer encoder.
+
+The model predicts two outputs for each cell:
+1. **Mitotic status (3-way classification):**
+   - Interphase (non-dividing)
+   - Soon to divide (mitosis within 1–2 frames)
+   - Just divided (daughter cell separating from division)
+2. **Estimated displacement vector:** $\Delta \mathbf{c}_i \in \mathbb{R}^3$ estimating where the cell will move between $t$ and $t+1$.
+
+<Foundation id="attention-transformers" />
+
+### Stage 3: Learned Linker (LightGlue-inspired)
+
+Traditional cell trackers connect detections across time using nearest neighbours or distance-weighted cost matrices. In dense zebrafish regions, nearest-neighbour matching confuses neighbouring cells undergoing rapid cytoplasmic streaming.
+
+Alvarez replaced distance matching with a learned neural linker adapted from **LightGlue** (Lindenberger et al., 2023):
+- Let $\mathcal{V}_t = \{\mathbf{u}_i\}$ be the nodes at time $t$ and $\mathcal{V}_{t+1} = \{\mathbf{v}_j\}$ the nodes at time $t+1$.
+- Candidate pairs are restricted to pairs within a spatial search radius $R_{\mathrm{search}}$ (typically $15\ \mu\text{m}$).
+- Each node $\mathbf{u}_i$ receives a feature vector $\mathbf{h}_i$ encoding:
+  - Coordinate position $(z, y, x)$ and local fluorescence intensity.
+  - Motion-compensated coordinates $\mathbf{u}_i + \Delta \mathbf{u}_i$ from Soon Net.
+  - Soon Net division probability vector.
+  - Local density (count of neighbours within radii 5, 10, and 20 µm).
+
+The candidate bipartite graph is processed by a stack of self-attention layers (exchanging information among cells in frame $t$) and cross-attention layers (exchanging information between candidate pairs across $t$ and $t+1$).
+
+The final linear projection computes an edge affinity logit $A_{ij} \in \mathbb{R}$ for every candidate pair $(i, j)$:
+
+$$
+S_{ij} = \sigma(A_{ij}) \in [0, 1]
+$$
+
+### Stage 4: Lineage Graph Decoding
+
+Given edge affinities $S_{ij}$ and division probabilities $P_{\mathrm{div}}(i)$ from Soon Net, the final lineage graph is constructed via greedy bipartite matching subject to biological validity constraints.
+
+<Deep title="Bipartite graph edge decoding" kind="code">
+
+The following Python function illustrates the greedy assignment logic used to convert edge affinity scores and division states into a valid cell lineage graph:
+
+```python title="decode_lineage_graph.py (A Nolad illustration)"
+import numpy as np
+
+def decode_lineage(
+    candidate_edges: list[tuple[int, int, float]], 
+    division_probs: dict[int, float], 
+    div_threshold: float = 0.55, 
+    link_threshold: float = 0.40
+) -> list[tuple[int, int]]:
+    """
+    Decodes candidate edges between frame t and t+1 into valid lineage links.
+    
+    candidate_edges: list of (source_id, target_id, score) sorted by score descending.
+    division_probs: mapping of source_id -> probability of undergoing mitosis.
+    """
+    # Sort candidate edges by score descending
+    edges_sorted = sorted(candidate_edges, key=lambda e: e[2], reverse=True)
+    
+    in_degree = {}   # target_id -> count of incoming edges (max 1)
+    out_degree = {}  # source_id -> count of outgoing edges (max 1, or 2 if dividing)
+    selected_edges = []
+    
+    for u, v, score in edges_sorted:
+        if score < link_threshold:
+            break
+            
+        is_dividing = division_probs.get(u, 0.0) >= div_threshold
+        max_out = 2 if is_dividing else 1
+        
+        curr_in = in_degree.get(v, 0)
+        curr_out = out_degree.get(u, 0)
+        
+        # Enforce biological constraints
+        if curr_in < 1 and curr_out < max_out:
+            selected_edges.append((u, v))
+            in_degree[v] = curr_in + 1
+            out_degree[u] = curr_out + 1
+            
+    return selected_edges
+```
+
+This greedy decoding processes candidate edges in $\mathcal{O}(E \log E)$ time, completing in under 2 seconds per volume frame.
+</Deep>
+
+## Other top solutions
+
+### 2nd Place: Soheil Ayati (0.97041)
+Soheil Ayati secured second place with a score of 0.97041, combining 3D morphological segmentation with motion-compensated Kalman associations and calibrated division heuristics.
+
+### 3rd Place: yu4u (0.96714)
+The third-place solution by **yu4u** combined six stages:
+1. **Cell Detection:** Ensembled Gaussian heatmaps from 2.5D U-Nets and a 3D SegResNet backbone to localize cell centers.
+2. **Dense 3D Flow:** Estimated volumetric displacement fields between consecutive 3D frames using a 3D optical flow network.
+3. **Cell Matching:** Scored candidate correspondences using deep image patch embeddings and motion-corrected coordinate distances.
+4. **Division Identification:** Identified dividing parents using original and motion-aligned subvolumes, supported by auxiliary loss heads.
+5. **Graph Optimization:** Jointly selected temporal continuity edges and division bifurcations via global graph optimization (min-cost flow).
+6. **Post-processing:** Reconnected trajectories spanning single-frame detection drops (gap closing) and pruned isolated short fragments.
+
+## Comparison with other competitions
+
+| Competition | Dimension | Task | Key insight |
+| --- | --- | --- | --- |
+| **Biohub Cell Tracking (2026)** | 4D ($T \times Z \times Y \times X$) | Point detection + temporal graph linking | Dense tracking under sparse (~2.8%) labels; learned LightGlue linker beats global linear programming. |
+| **CZII CryoET Object Identification (2025)** | 3D ($Z \times Y \times X$) | Point centre detection of 5 complexes | Static single-volume point picking; single-voxel cross-entropy + quantile matching. |
+| **Child Mind Institute Sleep States (2023)** | 1D time-series | Event onset/wake matching | Temporal boundary detection scored by tolerance windows. |
+
+Both the Biohub and CZII competitions involve noisy biological 3D volumes where ground-truth coordinates are points rather than bounding boxes. While CZII dealt with static protein complexes in vitrified ice, Biohub required reasoning over time: the critical performance gap came not from detection alone, but from learned association and mitosis prediction.
+
+## Compute and deployment
+
+| Setting | Requirements |
+| --- | --- |
+| **Kaggle evaluation** | 2 × NVIDIA T4 GPUs, running under 9 hours for the entire test set. |
+| **Laboratory workstation** | A single consumer GPU (e.g. RTX 4080 or RTX 3090, 16–24 GB VRAM) processes a 100-frame 4D volume in ~20 minutes. |
+| **Deployment to other organisms** | Requires retuning or fine-tuning the 3D U-Net detector on the specific optical point spread function (PSF) and fluorescent marker (e.g. H2B-GFP vs membrane markers). |
+
+### Considerations for deployment
+
+1. **Optical Point Spread Function (PSF):** In light-sheet microscopes, axial resolution ($Z$) is typically 2× to 4× coarser than lateral resolution ($X, Y$). The 3D U-Net and Soon Net operate on anisotropic crops; when deploying on two-photon or spinning-disk confocal systems with different axial ratios, spatial resampling is required.
+2. **Division Thresholding:** The competition metric weights the division Jaccard at $0.1$. In biological studies focused strictly on lineage tree topology (such as clonal cell fate tracking), division precision is critical. Deployers should tune the Soon Net division threshold $\tau_{\mathrm{div}}$ to maximize the F1-score of detected bifurcations independently of the competition objective.
