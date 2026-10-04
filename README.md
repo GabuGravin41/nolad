@@ -68,3 +68,9 @@ source; no rhetorical questions or announcements of what the text will do.
 
 Nolad's own text and diagrams: CC BY 4.0. Site code: MIT. Competition data, solution code and weights remain under
 their owners' licences, stated in each report.
+
+## Contact
+
+- Hausdorff Space: [hausdorffspace2@gmail.com](mailto:hausdorffspace2@gmail.com)
+- Dalton Omondi: [daltonomondi588@gmail.com](mailto:daltonomondi588@gmail.com)
+

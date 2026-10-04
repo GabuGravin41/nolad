@@ -3,6 +3,7 @@
 // technique and foundation ids. Exits non-zero on any problem.
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import matter from "gray-matter";
 import { compile } from "@mdx-js/mdx";
 import remarkGfm from "remark-gfm";
@@ -22,7 +23,7 @@ function noExpressions() {
   };
 }
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const content = path.join(root, "packages/content");
 const foundationIds = new Set(fs.readdirSync(path.join(content, "foundations")).map((f) => f.replace(/\.mdx$/, "")));
 const techSrc = fs.readFileSync(path.join(content, "data/techniques.ts"), "utf8");

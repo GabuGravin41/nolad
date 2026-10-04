@@ -10,5 +10,9 @@ export const site = {
     description: "A Nairobi intellectual collective",
   },
   repo: process.env.NEXT_PUBLIC_REPO_URL ?? "https://github.com/GabuGravin41/nolad",
-  contact: "hausdorfspaceT2@gmail.com",
+  contact: "hausdorffspace2@gmail.com",
+  emails: [
+    "hausdorffspace2@gmail.com",
+    "daltonomondi588@gmail.com",
+  ],
 };

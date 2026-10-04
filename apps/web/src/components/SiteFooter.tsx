@@ -43,7 +43,13 @@ export function SiteFooter() {
             weights belong to their owners under their own licences, which each report states.
           </p>
           <p>
-            Contact: <a href={`mailto:${site.contact}`}>{site.contact}</a>
+            Contact:{" "}
+            {site.emails.map((email, idx) => (
+              <span key={email}>
+                {idx > 0 && ", "}
+                <a href={`mailto:${email}`}>{email}</a>
+              </span>
+            ))}
           </p>
         </div>
       </div>
